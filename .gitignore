@@ -42,6 +42,12 @@ Thumbs.db
 # Logs
 *.log
 
+# PyInstaller
+build/
+dist/
+executable-files/
+*.ico
+
 # Minecraft Server files (en caso de que alguien ejecute un servidor en el directorio del proyecto)
 server.jar
 eula.txt
