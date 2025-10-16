@@ -4,6 +4,7 @@ Contiene toda la documentación y guías para usar PyCraft
 """
 
 import customtkinter as ctk
+import webbrowser
 from .base_tab import BaseTab
 
 
@@ -218,12 +219,80 @@ Problema: "Java no se encuentra"
             text_color="#4CAF50"
         ).pack(pady=10, padx=10, anchor="w")
 
-        # Contenido
-        content_label = ctk.CTkLabel(
-            section_frame,
-            text=content.strip(),
-            font=ctk.CTkFont(size=12),
-            justify="left",
-            anchor="w"
+        # Procesar contenido y buscar URLs
+        lines = content.strip().split('\n')
+        content_frame = ctk.CTkFrame(section_frame, fg_color="transparent")
+        content_frame.pack(pady=10, padx=20, anchor="w", fill="x")
+
+        for line in lines:
+            # Buscar URLs en la línea
+            if 'https://' in line or 'http://' in line:
+                self._create_line_with_link(content_frame, line)
+            else:
+                # Línea normal sin enlaces
+                ctk.CTkLabel(
+                    content_frame,
+                    text=line,
+                    font=ctk.CTkFont(size=12),
+                    justify="left",
+                    anchor="w"
+                ).pack(anchor="w")
+
+    def _create_line_with_link(self, parent, line):
+        """
+        Crea una línea de texto con un enlace clickeable
+
+        Args:
+            parent: El widget padre
+            line: Línea de texto que contiene una URL
+        """
+        line_frame = ctk.CTkFrame(parent, fg_color="transparent")
+        line_frame.pack(anchor="w", fill="x")
+
+        # Dividir la línea en texto antes y después del enlace
+        parts = line.split('https://')
+        if len(parts) < 2:
+            parts = line.split('http://')
+            protocol = 'http://'
+        else:
+            protocol = 'https://'
+
+        # Texto antes del enlace
+        if parts[0].strip():
+            ctk.CTkLabel(
+                line_frame,
+                text=parts[0],
+                font=ctk.CTkFont(size=12),
+                justify="left",
+                anchor="w"
+            ).pack(side="left")
+
+        # Extraer la URL completa
+        url_part = parts[1].split()[0] if parts[1] else ""
+        url = protocol + url_part
+
+        # Crear botón de enlace
+        link_button = ctk.CTkButton(
+            line_frame,
+            text=url,
+            font=ctk.CTkFont(size=12, underline=True),
+            fg_color="transparent",
+            text_color="#42A5F5",
+            hover_color="gray25",
+            cursor="hand2",
+            command=lambda u=url: webbrowser.open(u),
+            anchor="w",
+            width=len(url) * 7
         )
-        content_label.pack(pady=10, padx=20, anchor="w")
+        link_button.pack(side="left")
+
+        # Texto después del enlace (si existe)
+        remaining = ' '.join(parts[1].split()[1:]) if len(parts[1].split()) > 1 else ""
+        if remaining:
+            ctk.CTkLabel(
+                line_frame,
+                text=" " + remaining,
+                font=ctk.CTkFont(size=12),
+                justify="left",
+                anchor="w"
+            ).pack(side="left")
