@@ -289,32 +289,61 @@ class JavaManager:
 
             if log_callback:
                 log_callback("\nExtrayendo archivos...\n")
+                log_callback(f"Archivo descargado: {download_path}\n")
+                log_callback(f"Tamaño: {download_path.stat().st_size // (1024*1024)} MB\n")
 
             # Extract file
             extract_dir = self.java_installs_dir / f"java-{java_version}"
 
-            if self.system == "Windows":
-                with zipfile.ZipFile(download_path, 'r') as zip_ref:
-                    zip_ref.extractall(extract_dir)
-            else:
-                import tarfile
-                with tarfile.open(download_path, 'r:gz') as tar_ref:
-                    tar_ref.extractall(extract_dir)
+            try:
+                if self.system == "Windows":
+                    with zipfile.ZipFile(download_path, 'r') as zip_ref:
+                        if log_callback:
+                            log_callback(f"Extrayendo {len(zip_ref.namelist())} archivos...\n")
+                        zip_ref.extractall(extract_dir)
+                else:
+                    import tarfile
+                    with tarfile.open(download_path, 'r:gz') as tar_ref:
+                        tar_ref.extractall(extract_dir)
+
+                if log_callback:
+                    log_callback("✓ Extracción completada\n")
+            except zipfile.BadZipFile as e:
+                if log_callback:
+                    log_callback(f"✗ Error: Archivo ZIP corrupto\n")
+                    log_callback(f"  Detalles: {str(e)}\n")
+                return None
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"✗ Error durante la extracción: {str(e)}\n")
+                    log_callback(f"  Tipo: {type(e).__name__}\n")
+                return None
 
             # Clean up downloaded file
             download_path.unlink()
 
             # Find the bin/java directory
+            if log_callback:
+                log_callback("Buscando ejecutable de Java...\n")
+
             java_bin_path = self._find_java_executable(extract_dir)
 
             if java_bin_path:
                 if log_callback:
-                    log_callback(f"✓ Java {java_version} instalado correctamente en:\n")
-                    log_callback(f"  {extract_dir}\n")
+                    log_callback(f"✓ Java {java_version} instalado correctamente\n")
+                    log_callback(f"  Directorio: {extract_dir}\n")
+                    log_callback(f"  Ejecutable: {java_bin_path}\n")
                 return str(extract_dir)
             else:
                 if log_callback:
                     log_callback("✗ Error: No se encontró el ejecutable de Java después de la extracción\n")
+                    log_callback(f"  Contenido del directorio:\n")
+                    try:
+                        for item in extract_dir.rglob("*"):
+                            if item.is_dir():
+                                log_callback(f"    DIR: {item.relative_to(extract_dir)}\n")
+                    except:
+                        pass
                 return None
 
         except PermissionError as e:
@@ -355,7 +384,24 @@ class JavaManager:
                 bin_dir = Path(root) / "bin"
                 java_exe = bin_dir / ("java.exe" if self.system == "Windows" else "java")
                 if java_exe.exists():
-                    return java_exe
+                    # Verify the executable works
+                    try:
+                        creation_flags = 0
+                        if os.name == 'nt':
+                            creation_flags = subprocess.CREATE_NO_WINDOW
+
+                        result = subprocess.run(
+                            [str(java_exe), "-version"],
+                            capture_output=True,
+                            timeout=5,
+                            creationflags=creation_flags
+                        )
+                        # If it runs without error, return it
+                        if result.returncode == 0 or result.stderr:
+                            return java_exe
+                    except:
+                        # If verification fails, keep searching
+                        continue
         return None
 
     def get_java_executable(self, minecraft_version: str) -> Optional[str]:
@@ -432,17 +478,32 @@ class JavaManager:
 
             # Check if we already have Java downloaded
             install_dir = self.java_installs_dir / f"java-{required_version}"
+            if log_callback:
+                log_callback(f"Buscando Java en: {install_dir}\n")
+
             if install_dir.exists():
                 java_exe = self._find_java_executable(install_dir)
                 if java_exe:
                     if log_callback:
                         log_callback(f"✓ Usando Java {required_version} descargado previamente\n")
+                        log_callback(f"  Ruta: {java_exe}\n")
                     return str(java_exe)
+                else:
+                    if log_callback:
+                        log_callback(f"⚠ Directorio Java existe pero ejecutable no encontrado\n")
+                        log_callback(f"  Eliminando directorio corrupto...\n")
+                    # Remove corrupted directory
+                    import shutil
+                    try:
+                        shutil.rmtree(install_dir)
+                    except:
+                        pass
 
             # Download Java automatically
             if log_callback:
                 log_callback(f"\nDescargando Java {required_version} automáticamente...\n")
                 log_callback("Esto puede tomar varios minutos dependiendo de tu conexión.\n")
+                log_callback(f"Directorio de instalación: {self.java_installs_dir}\n")
 
             install_path = self.download_java(required_version, log_callback)
 
