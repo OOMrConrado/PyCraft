@@ -11,6 +11,7 @@ from ..core.api import MinecraftAPIHandler, ModrinthAPI, CurseForgeAPI, APIConfi
 from ..core.download import ServerDownloader
 from ..managers.server import ServerManager
 from ..managers.modpack import ModpackManager
+from ..managers.java import JavaManager
 from .tabs.info_tab import InfoTab
 
 
@@ -63,6 +64,7 @@ class PyCraftGUI:
         self.downloader = ServerDownloader()
         self.server_manager: Optional[ServerManager] = None
         self.modpack_manager = ModpackManager()
+        self.java_manager = JavaManager()
         self.api_config = APIConfig()
 
         # Cargar API key de CurseForge si existe
@@ -495,7 +497,7 @@ class PyCraftGUI:
         # Segmented button para elegir modo
         self.mods_mode_selector = ctk.CTkSegmentedButton(
             mode_frame,
-            values=["Instalación de Modpack", "Gestión de Servidor"],
+            values=["Instalación de Modpack", "Abrir Servidor con Mods Existente"],
             command=self._on_mods_mode_change,
             width=700,
             height=40,
@@ -520,40 +522,39 @@ class PyCraftGUI:
 
     def _create_modpack_install_tab(self):
         """Crea la pestaña de instalación de modpacks"""
-        # Frame principal con scroll
-        main_container = ctk.CTkScrollableFrame(self.modpack_install_frame, width=900, height=500)
+        # Frame principal SIN scroll (el scroll está en el nivel superior)
+        main_container = ctk.CTkFrame(self.modpack_install_frame, fg_color="transparent")
         main_container.pack(pady=5, padx=5, fill="both", expand=True)
 
-        # Título
-        ctk.CTkLabel(
-            main_container,
-            text="Instalación de Modpack",
-            font=ctk.CTkFont(size=22, weight="bold")
-        ).pack(pady=10)
+        # Encabezado compacto
+        header_frame = ctk.CTkFrame(main_container, fg_color="transparent")
+        header_frame.pack(pady=(5, 10), fill="x")
 
+        # Título e indicador en la misma línea
+        ctk.CTkLabel(
+            header_frame,
+            text="📦 Instalación de Modpack",
+            font=ctk.CTkFont(size=20, weight="bold")
+        ).pack(side="left", padx=(10, 20))
+
+        # Indicador de plataforma más pequeño
+        platform_badge = ctk.CTkFrame(header_frame, fg_color="green", corner_radius=5)
+        platform_badge.pack(side="left")
+
+        ctk.CTkLabel(
+            platform_badge,
+            text="Modrinth",
+            font=ctk.CTkFont(size=10, weight="bold"),
+            text_color="white"
+        ).pack(pady=3, padx=10)
+
+        # Subtítulo
         ctk.CTkLabel(
             main_container,
             text="Descarga e instala modpacks completos de Modrinth",
-            font=ctk.CTkFont(size=13),
-            text_color="gray"
-        ).pack(pady=(0, 5))
-
-        # Indicador pequeño de plataforma (solo informativo)
-        platform_indicator = ctk.CTkFrame(
-            main_container,
-            fg_color=self.colors["bg_tertiary"],
-            corner_radius=8,
-            border_width=1,
-            border_color=self.colors["border"]
-        )
-        platform_indicator.pack(pady=10)
-
-        ctk.CTkLabel(
-            platform_indicator,
-            text="📦 Usando: Modrinth",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color=self.colors["accent_light"]
-        ).pack(pady=5, padx=15)
+            font=ctk.CTkFont(size=12),
+            text_color="gray60"
+        ).pack(pady=(0, 10), padx=10, anchor="w")
 
         # Hidden platform selector for compatibility
         self.platform_selector = ctk.CTkSegmentedButton(
@@ -601,31 +602,34 @@ class PyCraftGUI:
         )
         self.search_modpacks_btn.pack(side="left")
 
-        # Resultados de búsqueda
-        ctk.CTkLabel(
-            search_frame,
-            text="Resultados:",
-            font=ctk.CTkFont(size=12),
-            text_color="gray"
-        ).pack(anchor="w", padx=20, pady=(15, 5))
+        # Resultados de búsqueda - Frame con scroll interno controlado
+        results_container = ctk.CTkFrame(search_frame, fg_color="gray20", corner_radius=10)
+        results_container.pack(pady=10, padx=10, fill="x")
 
+        ctk.CTkLabel(
+            results_container,
+            text="Resultados:",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="gray70"
+        ).pack(anchor="w", padx=15, pady=(10, 5))
+
+        # ScrollableFrame con altura fija para los resultados (evita overflow con muchos modpacks)
         self.modpack_results_frame = ctk.CTkScrollableFrame(
-            search_frame,
-            width=860,
-            height=180
+            results_container,
+            fg_color="transparent",
+            width=850,
+            height=200  # Altura fija para mostrar ~4-5 modpacks con scroll
         )
-        self.modpack_results_frame.pack(pady=5, padx=10)
-        # Fix scroll anidado
-        self._fix_scrollable_frame_scroll(self.modpack_results_frame)
+        self.modpack_results_frame.pack(pady=(5, 10), padx=10, fill="x")
 
         # Label inicial
         self.no_results_label = ctk.CTkLabel(
             self.modpack_results_frame,
             text="Usa la búsqueda para encontrar modpacks",
             font=ctk.CTkFont(size=12),
-            text_color="gray"
+            text_color="gray50"
         )
-        self.no_results_label.pack(pady=20)
+        self.no_results_label.pack(pady=30)
 
         # Modpack seleccionado
         self.selected_modpack_label = ctk.CTkLabel(
@@ -689,25 +693,26 @@ class PyCraftGUI:
         self.modpack_status_label.pack()
 
         # Separador
-        ctk.CTkFrame(main_container, height=2, fg_color="gray30").pack(pady=10, fill="x")
+        ctk.CTkFrame(main_container, height=2, fg_color="gray30").pack(pady=15, fill="x")
 
-        # Consola de instalación
+        # Consola de instalación - Más compacta
+        console_container = ctk.CTkFrame(main_container, fg_color="gray20", corner_radius=10)
+        console_container.pack(pady=10, padx=10, fill="both", expand=True)
+
         ctk.CTkLabel(
-            main_container,
+            console_container,
             text="Proceso de Instalación",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(pady=10)
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", pady=(10, 5), padx=15)
 
         self.modpack_log_text = ctk.CTkTextbox(
-            main_container,
-            width=900,
-            height=200,
-            font=ctk.CTkFont(family="Consolas", size=11),
+            console_container,
+            width=880,
+            height=280,  # Aumentado de 180 a 280
+            font=ctk.CTkFont(family="Consolas", size=11),  # Aumentado de 10 a 11
             wrap="word"
         )
-        self.modpack_log_text.pack(pady=5, padx=10)
-        # Fix scroll anidado - evitar que el scroll se propague al contenedor
-        self._fix_textbox_scroll(self.modpack_log_text)
+        self.modpack_log_text.pack(pady=(5, 10), padx=10)
 
         # Log inicial
         self._add_log_modpack("Bienvenido al instalador de Modpacks de PyCraft\n", "info")
@@ -720,8 +725,8 @@ class PyCraftGUI:
 
     def _create_modpack_management_tab(self):
         """Crea la pestaña de gestión de servidor con modpack"""
-        # Frame principal con scroll
-        main_container = ctk.CTkScrollableFrame(self.modpack_management_frame, width=900, height=500)
+        # Frame principal SIN scroll (el scroll está en el nivel superior)
+        main_container = ctk.CTkFrame(self.modpack_management_frame, fg_color="transparent")
         main_container.pack(pady=5, padx=5, fill="both", expand=True)
 
         # Título
@@ -790,30 +795,31 @@ class PyCraftGUI:
         ).pack(pady=(0, 15), padx=20)
 
         # Separador
-        ctk.CTkFrame(main_container, height=2, fg_color="gray30").pack(pady=10, fill="x")
+        ctk.CTkFrame(main_container, height=2, fg_color="gray30").pack(pady=15, fill="x")
 
-        # Consola y controles para servidor con modpack
+        # Consola y controles para servidor con modpack - Más compacta
+        console_container = ctk.CTkFrame(main_container, fg_color="gray20", corner_radius=10)
+        console_container.pack(pady=10, padx=10, fill="both", expand=True)
+
         ctk.CTkLabel(
-            main_container,
-            text="Consola del Servidor con Modpack",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(pady=10)
+            console_container,
+            text="Consola del Servidor",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(anchor="w", pady=(10, 5), padx=15)
 
         # TextBox para logs del servidor con modpack
         self.modpack_server_log_text = ctk.CTkTextbox(
-            main_container,
-            width=900,
-            height=200,
-            font=ctk.CTkFont(family="Consolas", size=11),
+            console_container,
+            width=880,
+            height=280,  # Aumentado de 180 a 280 (consistencia)
+            font=ctk.CTkFont(family="Consolas", size=11),  # Aumentado de 10 a 11
             wrap="word"
         )
-        self.modpack_server_log_text.pack(pady=5, padx=10)
-        # Fix scroll anidado
-        self._fix_textbox_scroll(self.modpack_server_log_text)
+        self.modpack_server_log_text.pack(pady=(5, 10), padx=10)
 
-        # Campo de input para comandos
-        modpack_command_frame = ctk.CTkFrame(main_container, fg_color="transparent")
-        modpack_command_frame.pack(pady=5, padx=10, fill="x")
+        # Campo de input para comandos - Dentro del console container
+        modpack_command_frame = ctk.CTkFrame(console_container, fg_color="transparent")
+        modpack_command_frame.pack(pady=(0, 10), padx=10, fill="x")
 
         ctk.CTkLabel(
             modpack_command_frame,
@@ -1102,12 +1108,29 @@ class PyCraftGUI:
                 self._add_log_new("Descarga completada exitosamente\n", "success")
                 self.progress_label.configure(text="Descarga completada")
 
+                # Verificar e instalar Java automáticamente
+                self.progress_label.configure(text="Verificando Java...")
+                java_executable = self.java_manager.ensure_java_installed(
+                    self.selected_version,
+                    log_callback=self._add_log_new_simple
+                )
+
+                if not java_executable:
+                    self._add_log_new("\nError: No se pudo obtener una versión compatible de Java\n", "error")
+                    messagebox.showerror(
+                        "Error de Java",
+                        "No se pudo instalar Java automáticamente.\n\n"
+                        "Por favor, instala Java manualmente desde:\n"
+                        "https://adoptium.net/temurin/releases/"
+                    )
+                    return
+
                 # Configurar servidor
                 self._add_log_new("\nConfigurando servidor (primera ejecución)...\n", "info")
                 self._add_log_new("Esto puede tomar un momento...\n", "warning")
                 self.progress_label.configure(text="Configurando servidor...")
 
-                self.server_manager = ServerManager(self.server_folder)
+                self.server_manager = ServerManager(self.server_folder, java_executable=java_executable)
                 success = self.server_manager.run_server_first_time(log_callback=self._add_log_new_simple)
 
                 if success:
@@ -1310,7 +1333,7 @@ class PyCraftGUI:
         # Crear ventana de configuración
         config_window = ctk.CTkToplevel(self.root)
         config_window.title("Configuración del Servidor")
-        config_window.geometry("400x300")
+        config_window.geometry("450x380")  # Aumentado para que los botones sean visibles
         config_window.resizable(False, False)
 
         # Centrar ventana
@@ -1318,38 +1341,41 @@ class PyCraftGUI:
         config_window.grab_set()
 
         # Título
-        ctk.CTkLabel(
+        title_label = ctk.CTkLabel(
             config_window,
-            text="Configuración del Servidor",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(pady=20)
+            text="⚙️ Configuración del Servidor",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        title_label.pack(pady=(20, 10))
 
         # Dificultad
-        difficulty_frame = ctk.CTkFrame(config_window)
-        difficulty_frame.pack(pady=10, padx=20, fill="x")
+        difficulty_frame = ctk.CTkFrame(config_window, fg_color="gray20")
+        difficulty_frame.pack(pady=15, padx=20, fill="both", expand=True)
 
         ctk.CTkLabel(
             difficulty_frame,
-            text="Dificultad:",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(pady=10)
+            text="Dificultad del Servidor:",
+            font=ctk.CTkFont(size=15, weight="bold")
+        ).pack(pady=(15, 10))
 
         difficulty_var = ctk.StringVar(value="normal")
 
         difficulties = [
-            ("Pacífica", "peaceful"),
+            ("Pacífica (sin monstruos)", "peaceful"),
             ("Fácil", "easy"),
             ("Normal", "normal"),
             ("Difícil", "hard")
         ]
 
         for text, value in difficulties:
-            ctk.CTkRadioButton(
+            radio = ctk.CTkRadioButton(
                 difficulty_frame,
                 text=text,
                 variable=difficulty_var,
-                value=value
-            ).pack(pady=5)
+                value=value,
+                font=ctk.CTkFont(size=13)
+            )
+            radio.pack(pady=8, padx=20, anchor="w")
 
         # Botones
         button_frame = ctk.CTkFrame(config_window, fg_color="transparent")
@@ -1357,14 +1383,18 @@ class PyCraftGUI:
 
         def apply_config():
             difficulty = difficulty_var.get()
-            success = self.server_manager.configure_server_properties(difficulty=difficulty)
+            success = self.server_manager.configure_server_properties(
+                difficulty=difficulty,
+                log_callback=self._add_log_existing_simple
+            )
 
             if success:
                 self._add_log_existing(f"\n✓ Configuración aplicada: Dificultad = {difficulty}\n", "success")
                 messagebox.showinfo("Éxito", f"Configuración aplicada correctamente!\n\nDificultad: {difficulty}")
                 config_window.destroy()
             else:
-                messagebox.showerror("Error", "No se pudo aplicar la configuración")
+                self._add_log_existing("\n✗ Error al aplicar configuración. Ver detalles arriba.\n", "error")
+                messagebox.showerror("Error", "No se pudo aplicar la configuración.\nRevisa los logs para más detalles.")
 
         ctk.CTkButton(
             button_frame,
@@ -1397,7 +1427,7 @@ class PyCraftGUI:
         # Crear ventana de configuración
         config_window = ctk.CTkToplevel(self.root)
         config_window.title("Configuración del Servidor con Modpack")
-        config_window.geometry("400x300")
+        config_window.geometry("450x380")  # Aumentado para que los botones sean visibles
         config_window.resizable(False, False)
 
         # Centrar ventana
@@ -1405,38 +1435,41 @@ class PyCraftGUI:
         config_window.grab_set()
 
         # Título
-        ctk.CTkLabel(
+        title_label = ctk.CTkLabel(
             config_window,
-            text="Configuración del Servidor",
-            font=ctk.CTkFont(size=18, weight="bold")
-        ).pack(pady=20)
+            text="⚙️ Configuración del Servidor",
+            font=ctk.CTkFont(size=20, weight="bold")
+        )
+        title_label.pack(pady=(20, 10))
 
         # Dificultad
-        difficulty_frame = ctk.CTkFrame(config_window)
-        difficulty_frame.pack(pady=10, padx=20, fill="x")
+        difficulty_frame = ctk.CTkFrame(config_window, fg_color="gray20")
+        difficulty_frame.pack(pady=15, padx=20, fill="both", expand=True)
 
         ctk.CTkLabel(
             difficulty_frame,
-            text="Dificultad:",
-            font=ctk.CTkFont(size=14, weight="bold")
-        ).pack(pady=10)
+            text="Dificultad del Servidor:",
+            font=ctk.CTkFont(size=15, weight="bold")
+        ).pack(pady=(15, 10))
 
         difficulty_var = ctk.StringVar(value="normal")
 
         difficulties = [
-            ("Pacífica", "peaceful"),
+            ("Pacífica (sin monstruos)", "peaceful"),
             ("Fácil", "easy"),
             ("Normal", "normal"),
             ("Difícil", "hard")
         ]
 
         for text, value in difficulties:
-            ctk.CTkRadioButton(
+            radio = ctk.CTkRadioButton(
                 difficulty_frame,
                 text=text,
                 variable=difficulty_var,
-                value=value
-            ).pack(pady=5)
+                value=value,
+                font=ctk.CTkFont(size=13)
+            )
+            radio.pack(pady=8, padx=20, anchor="w")
 
         # Botones
         button_frame = ctk.CTkFrame(config_window, fg_color="transparent")
@@ -1444,14 +1477,18 @@ class PyCraftGUI:
 
         def apply_config():
             difficulty = difficulty_var.get()
-            success = self.modpack_server_manager.configure_server_properties(difficulty=difficulty)
+            success = self.modpack_server_manager.configure_server_properties(
+                difficulty=difficulty,
+                log_callback=self._add_log_modpack_server_simple
+            )
 
             if success:
                 self._add_log_modpack_server(f"\n✓ Configuración aplicada: Dificultad = {difficulty}\n", "success")
                 messagebox.showinfo("Éxito", f"Configuración aplicada correctamente!\n\nDificultad: {difficulty}")
                 config_window.destroy()
             else:
-                messagebox.showerror("Error", "No se pudo aplicar la configuración")
+                self._add_log_modpack_server("\n✗ Error al aplicar configuración. Ver detalles arriba.\n", "error")
+                messagebox.showerror("Error", "No se pudo aplicar la configuración.\nRevisa los logs para más detalles.")
 
         ctk.CTkButton(
             button_frame,
@@ -1938,7 +1975,7 @@ class PyCraftGUI:
                     self._add_log_modpack("═══════════════════════════════════════════════════\n\n", "success")
                     self._add_log_modpack("El servidor está listo, pero necesitas instalar el modpack\n", "info")
                     self._add_log_modpack("para el cliente también.\n\n", "info")
-                    self._add_log_modpack("Baja a 'Gestionar Servidor con Modpack' y:\n", "info")
+                    self._add_log_modpack("Sube a 'Abrir Servidor con Mods Existente' y:\n", "info")
                     self._add_log_modpack("1. Selecciona la carpeta del servidor que acabas de instalar\n", "normal")
                     self._add_log_modpack("2. Haz clic en 'Instalar Modpack para Cliente'\n", "normal")
                     self._add_log_modpack("3. Luego podrás iniciar el servidor\n\n", "normal")
@@ -1947,7 +1984,7 @@ class PyCraftGUI:
                         "¡Servidor Instalado!",
                         f"El modpack del SERVIDOR se instaló correctamente en:\n{self.modpack_server_folder}\n\n"
                         "IMPORTANTE: Ahora debes instalarlo también para el CLIENTE.\n\n"
-                        "Baja a 'Gestionar Servidor con Modpack' en esta pestaña\n"
+                        "Sube a 'Abrir Servidor con Mods Existente' en esta pestaña\n"
                         "y sigue las instrucciones."
                     )
                 else:
@@ -2041,7 +2078,7 @@ class PyCraftGUI:
                 self._add_log_modpack_server("═══════════════════════════════════════════════════════\n\n", "info")
 
                 self._add_log_modpack_server("Acciones disponibles:\n", "info")
-                self._add_log_modpack_server("1. Instalar Modpack para Cliente (botón naranja arriba)\n", "normal")
+                self._add_log_modpack_server("1. Instalar Modpack para Cliente (botón azul arriba)\n", "normal")
                 self._add_log_modpack_server("2. Iniciar Servidor (botón verde abajo)\n\n", "normal")
 
             elif server_type == "vanilla":

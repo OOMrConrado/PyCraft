@@ -9,16 +9,16 @@ from pathlib import Path
 
 
 class JavaManager:
-    """Gestiona la detección, descarga e instalación de Java"""
+    """Manages Java detection, download, and installation"""
 
-    # URLs de Adoptium API
+    # Adoptium API URLs
     ADOPTIUM_API_BASE = "https://api.adoptium.net/v3"
 
-    # Versiones de Java requeridas por Minecraft
+    # Java versions required by Minecraft
     JAVA_REQUIREMENTS = {
-        # Minecraft < 1.17 requiere Java 8 o superior
-        # Minecraft 1.17 - 1.17.1 requiere Java 16
-        # Minecraft >= 1.18 requiere Java 17
+        # Minecraft < 1.17 requires Java 8 or higher
+        # Minecraft 1.17 - 1.17.1 requires Java 16
+        # Minecraft >= 1.18 requires Java 17
         "1.18": 17,
         "1.19": 17,
         "1.20": 17,
@@ -33,14 +33,14 @@ class JavaManager:
 
     def detect_java_version(self) -> Optional[Tuple[str, int]]:
         """
-        Detecta si Java está instalado y su versión
+        Detects if Java is installed and its version
 
         Returns:
-            Tupla de (versión completa, versión mayor) o None si no está instalado
+            Tuple of (full version, major version) or None if not installed
         """
         try:
-            # Ejecutar java -version
-            # Configurar flags para Windows
+            # Run java -version
+            # Configure flags for Windows
             creation_flags = 0
             if os.name == 'nt':
                 creation_flags = subprocess.CREATE_NO_WINDOW
@@ -53,21 +53,21 @@ class JavaManager:
                 creationflags=creation_flags
             )
 
-            # La salida está en stderr
+            # Output is in stderr
             output = result.stderr
 
-            # Parsear la versión (ejemplo: "17.0.9" o "1.8.0_392")
+            # Parse version (example: "17.0.9" or "1.8.0_392")
             for line in output.split('\n'):
                 if 'version' in line.lower():
-                    # Extraer versión entre comillas
+                    # Extract version between quotes
                     import re
                     match = re.search(r'"([^"]+)"', line)
                     if match:
                         version_str = match.group(1)
 
-                        # Parsear versión mayor
+                        # Parse major version
                         if version_str.startswith("1."):
-                            # Java 8 y anteriores (1.8.0_xxx)
+                            # Java 8 and earlier (1.8.0_xxx)
                             major_version = int(version_str.split('.')[1])
                         else:
                             # Java 9+ (17.0.9, 21.0.1, etc)
@@ -82,47 +82,47 @@ class JavaManager:
 
     def get_required_java_version(self, minecraft_version: str) -> int:
         """
-        Obtiene la versión de Java requerida para una versión de Minecraft
+        Gets the required Java version for a Minecraft version
 
         Args:
-            minecraft_version: Versión de Minecraft (ej: "1.20.1")
+            minecraft_version: Minecraft version (e.g., "1.20.1")
 
         Returns:
-            Versión mayor de Java requerida
+            Required Java major version
         """
-        # Obtener la versión base (1.20, 1.19, etc)
+        # Get base version (1.20, 1.19, etc)
         try:
             parts = minecraft_version.split('.')
             base_version = f"{parts[0]}.{parts[1]}"
 
-            # Buscar en el diccionario
+            # Search in dictionary
             if base_version in self.JAVA_REQUIREMENTS:
                 return self.JAVA_REQUIREMENTS[base_version]
 
-            # Si es >= 1.18, usar Java 17
+            # If >= 1.18, use Java 17
             if float(base_version) >= 1.18:
                 return 17
 
-            # Si es >= 1.17, usar Java 16
+            # If >= 1.17, use Java 16
             if float(base_version) >= 1.17:
                 return 16
 
-            # Versiones más antiguas usan Java 8
+            # Older versions use Java 8
             return 8
 
         except Exception:
-            # Por defecto, Java 17 (versión moderna estándar)
+            # Default to Java 17 (modern standard version)
             return 17
 
     def is_java_compatible(self, minecraft_version: str) -> bool:
         """
-        Verifica si la versión de Java instalada es compatible con Minecraft
+        Checks if the installed Java version is compatible with Minecraft
 
         Args:
-            minecraft_version: Versión de Minecraft
+            minecraft_version: Minecraft version
 
         Returns:
-            True si es compatible, False si no
+            True if compatible, False otherwise
         """
         java_info = self.detect_java_version()
         if not java_info:
@@ -131,8 +131,113 @@ class JavaManager:
         _, installed_major = java_info
         required_major = self.get_required_java_version(minecraft_version)
 
-        # Java instalado debe ser >= a la requerida
+        # Installed Java must be >= required version
         return installed_major >= required_major
+
+    def _download_with_retry(
+        self,
+        url: str,
+        dest_path: Path,
+        log_callback: Optional[Callable[[str], None]] = None,
+        max_retries: int = 3,
+        timeout: int = 60
+    ) -> bool:
+        """
+        Downloads a file with automatic retries
+
+        Args:
+            url: URL of the file to download
+            dest_path: Path where to save the file
+            log_callback: Function to report progress
+            max_retries: Maximum number of retries
+            timeout: Timeout in seconds per attempt
+
+        Returns:
+            True if download was successful, False otherwise
+        """
+        import time
+
+        for attempt in range(max_retries):
+            try:
+                if attempt > 0:
+                    if log_callback:
+                        log_callback(f"\n⚠ Reintentando descarga (intento {attempt + 1}/{max_retries})...\n")
+                    time.sleep(2)  # Wait before retrying
+
+                # Make request with timeout
+                response = requests.get(url, stream=True, timeout=timeout)
+                response.raise_for_status()
+
+                # Get total size
+                total_size = int(response.headers.get('content-length', 0))
+                downloaded = 0
+                last_reported_progress = -1
+
+                if log_callback and total_size > 0:
+                    log_callback(f"Descargando archivo ({total_size // (1024*1024)} MB)...\n")
+
+                # Download in chunks
+                with open(dest_path, 'wb') as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+
+                            # Report progress
+                            if log_callback and total_size > 0:
+                                progress = int((downloaded / total_size) * 100)
+                                if progress % 10 == 0 and progress != last_reported_progress:
+                                    log_callback(f"  Progreso: {progress}%\n")
+                                    last_reported_progress = progress
+
+                # Validate complete download
+                if total_size > 0:
+                    actual_size = dest_path.stat().st_size
+                    if actual_size < total_size * 0.95:  # Allow 5% margin
+                        if log_callback:
+                            log_callback(f"⚠ Descarga incompleta: {actual_size}/{total_size} bytes\n")
+                        continue  # Retry
+
+                if log_callback:
+                    log_callback("✓ Descarga completada\n")
+
+                return True
+
+            except requests.Timeout:
+                if log_callback:
+                    log_callback(f"\n⏱️ Timeout en la descarga (intento {attempt + 1}/{max_retries})\n")
+                    log_callback("  Esto puede deberse a una conexión lenta. El archivo puede ser grande (>50MB).\n")
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    if log_callback:
+                        log_callback("✗ Se agotaron los reintentos por timeout\n")
+                    return False
+
+            except requests.RequestException as e:
+                if log_callback:
+                    log_callback(f"\n✗ Error de red: {str(e)}\n")
+                    log_callback(f"  Código de estado HTTP: {getattr(e.response, 'status_code', 'N/A')}\n")
+                if attempt < max_retries - 1:
+                    continue
+                else:
+                    if log_callback:
+                        log_callback("✗ Se agotaron los reintentos\n")
+                    return False
+
+            except IOError as e:
+                if log_callback:
+                    log_callback(f"\n✗ Error escribiendo archivo: {str(e)}\n")
+                    log_callback(f"  Verifica que tienes espacio en disco y permisos de escritura.\n")
+                return False
+
+            except Exception as e:
+                if log_callback:
+                    log_callback(f"\n✗ Error inesperado: {str(e)}\n")
+                    log_callback(f"  Tipo: {type(e).__name__}\n")
+                return False
+
+        return False
 
     def download_java(
         self,
@@ -140,20 +245,20 @@ class JavaManager:
         log_callback: Optional[Callable[[str], None]] = None
     ) -> Optional[str]:
         """
-        Descarga e instala Java desde Adoptium
+        Downloads and installs Java from Adoptium
 
         Args:
-            java_version: Versión mayor de Java (8, 17, 21, etc)
-            log_callback: Función para reportar progreso
+            java_version: Java major version (8, 17, 21, etc)
+            log_callback: Function to report progress
 
         Returns:
-            Ruta al directorio de Java instalado, o None si falló
+            Path to the installed Java directory, or None if failed
         """
         try:
             if log_callback:
                 log_callback(f"Descargando Java {java_version} desde Adoptium...\n")
 
-            # Determinar OS y arquitectura para Adoptium API
+            # Determine OS and architecture for Adoptium API
             os_type = self._get_adoptium_os()
             arch_type = self._get_adoptium_arch()
 
@@ -162,7 +267,7 @@ class JavaManager:
                     log_callback("Error: Sistema operativo o arquitectura no soportados\n")
                 return None
 
-            # Construir URL de la API
+            # Build API URL
             api_url = (
                 f"{self.ADOPTIUM_API_BASE}/binary/latest/{java_version}/ga/"
                 f"{os_type}/{arch_type}/jre/hotspot/normal/eclipse"
@@ -171,34 +276,21 @@ class JavaManager:
             if log_callback:
                 log_callback(f"Obteniendo Java para {os_type} {arch_type}...\n")
 
-            # Descargar Java
-            response = requests.get(api_url, stream=True, timeout=30)
-            response.raise_for_status()
-
-            # Guardar archivo
+            # Save file
             file_extension = ".zip" if self.system == "Windows" else ".tar.gz"
             download_path = self.java_installs_dir / f"java-{java_version}{file_extension}"
 
-            total_size = int(response.headers.get('content-length', 0))
-            downloaded = 0
+            # Download with automatic retries (longer timeout for large file)
+            if not self._download_with_retry(api_url, download_path, log_callback, max_retries=3, timeout=300):
+                if log_callback:
+                    log_callback("\n✗ No se pudo completar la descarga de Java\n")
+                    log_callback("Verifica tu conexión a internet e intenta de nuevo.\n")
+                return None
 
             if log_callback:
-                log_callback(f"Descargando archivo ({total_size // (1024*1024)} MB)...\n")
+                log_callback("\nExtrayendo archivos...\n")
 
-            with open(download_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if log_callback and total_size > 0:
-                            progress = (downloaded / total_size) * 100
-                            if int(progress) % 10 == 0:  # Reportar cada 10%
-                                log_callback(f"  Progreso: {int(progress)}%\n")
-
-            if log_callback:
-                log_callback("Descarga completada. Extrayendo archivos...\n")
-
-            # Extraer archivo
+            # Extract file
             extract_dir = self.java_installs_dir / f"java-{java_version}"
 
             if self.system == "Windows":
@@ -209,29 +301,35 @@ class JavaManager:
                 with tarfile.open(download_path, 'r:gz') as tar_ref:
                     tar_ref.extractall(extract_dir)
 
-            # Limpiar archivo descargado
+            # Clean up downloaded file
             download_path.unlink()
 
-            # Encontrar el directorio bin/java
+            # Find the bin/java directory
             java_bin_path = self._find_java_executable(extract_dir)
 
             if java_bin_path:
                 if log_callback:
-                    log_callback(f"Java {java_version} instalado correctamente en:\n")
+                    log_callback(f"✓ Java {java_version} instalado correctamente en:\n")
                     log_callback(f"  {extract_dir}\n")
                 return str(extract_dir)
             else:
                 if log_callback:
-                    log_callback("Error: No se encontró el ejecutable de Java después de la extracción\n")
+                    log_callback("✗ Error: No se encontró el ejecutable de Java después de la extracción\n")
                 return None
 
+        except PermissionError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error de permisos: No se puede crear la carpeta de Java.\n")
+                log_callback(f"Detalles: {str(e)}\n")
+            return None
         except Exception as e:
             if log_callback:
-                log_callback(f"Error al descargar Java: {str(e)}\n")
+                log_callback(f"\n✗ Error inesperado al descargar Java: {str(e)}\n")
+                log_callback("Tipo de error: " + type(e).__name__ + "\n")
             return None
 
     def _get_adoptium_os(self) -> Optional[str]:
-        """Obtiene el identificador de OS para Adoptium API"""
+        """Gets the OS identifier for Adoptium API"""
         system_map = {
             "Windows": "windows",
             "Linux": "linux",
@@ -240,7 +338,7 @@ class JavaManager:
         return system_map.get(self.system)
 
     def _get_adoptium_arch(self) -> Optional[str]:
-        """Obtiene el identificador de arquitectura para Adoptium API"""
+        """Gets the architecture identifier for Adoptium API"""
         arch_map = {
             "AMD64": "x64",
             "x86_64": "x64",
@@ -250,8 +348,8 @@ class JavaManager:
         return arch_map.get(self.machine)
 
     def _find_java_executable(self, base_dir: Path) -> Optional[Path]:
-        """Encuentra el ejecutable de Java en el directorio extraído"""
-        # Buscar en subdirectorios
+        """Finds the Java executable in the extracted directory"""
+        # Search in subdirectories
         for root, dirs, files in os.walk(base_dir):
             if "bin" in dirs:
                 bin_dir = Path(root) / "bin"
@@ -262,29 +360,29 @@ class JavaManager:
 
     def get_java_executable(self, minecraft_version: str) -> Optional[str]:
         """
-        Obtiene la ruta al ejecutable de Java, instalándolo si es necesario
+        Gets the path to the Java executable, installing it if necessary
 
         Args:
-            minecraft_version: Versión de Minecraft
+            minecraft_version: Minecraft version
 
         Returns:
-            Ruta al ejecutable de Java, o None si falló
+            Path to the Java executable, or None if failed
         """
-        # Primero intentar usar Java del sistema
+        # First try to use system Java
         if self.is_java_compatible(minecraft_version):
-            return "java"  # Usar el Java del PATH
+            return "java"  # Use Java from PATH
 
-        # Si no hay Java compatible, descargar
+        # If no compatible Java, download it
         required_version = self.get_required_java_version(minecraft_version)
 
-        # Ver si ya lo descargamos antes
+        # Check if we already downloaded it before
         install_dir = self.java_installs_dir / f"java-{required_version}"
         if install_dir.exists():
             java_exe = self._find_java_executable(install_dir)
             if java_exe:
                 return str(java_exe)
 
-        # Descargar Java
+        # Download Java
         install_path = self.download_java(required_version)
         if install_path:
             java_exe = self._find_java_executable(Path(install_path))
@@ -299,20 +397,20 @@ class JavaManager:
         log_callback: Optional[Callable[[str], None]] = None
     ) -> Optional[str]:
         """
-        Asegura que Java esté instalado y sea compatible
+        Ensures that Java is installed and compatible
 
         Args:
-            minecraft_version: Versión de Minecraft
-            log_callback: Función para reportar progreso
+            minecraft_version: Minecraft version
+            log_callback: Function to report progress
 
         Returns:
-            Ruta al ejecutable de Java o "java" si usar el del sistema
+            Path to Java executable or "java" if using system Java
         """
         try:
             if log_callback:
                 log_callback("\n=== Verificando Java ===\n")
 
-            # Detectar Java instalado
+            # Detect installed Java
             java_info = self.detect_java_version()
             required_version = self.get_required_java_version(minecraft_version)
 
@@ -332,7 +430,7 @@ class JavaManager:
                 if log_callback:
                     log_callback("⚠ Java no está instalado en el sistema\n")
 
-            # Verificar si ya tenemos Java descargado
+            # Check if we already have Java downloaded
             install_dir = self.java_installs_dir / f"java-{required_version}"
             if install_dir.exists():
                 java_exe = self._find_java_executable(install_dir)
@@ -341,7 +439,7 @@ class JavaManager:
                         log_callback(f"✓ Usando Java {required_version} descargado previamente\n")
                     return str(java_exe)
 
-            # Descargar Java automáticamente
+            # Download Java automatically
             if log_callback:
                 log_callback(f"\nDescargando Java {required_version} automáticamente...\n")
                 log_callback("Esto puede tomar varios minutos dependiendo de tu conexión.\n")

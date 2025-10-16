@@ -12,16 +12,16 @@ from ..java import JavaManager
 
 
 class ModpackManager:
-    """Gestiona la descarga e instalación de modpacks completos"""
+    """Manages the download and installation of complete modpacks"""
 
     def __init__(self):
         self.modrinth_api = ModrinthAPI()
-        self.curseforge_api = None  # Se inicializa si hay API key
+        self.curseforge_api = None  # Initialized if API key is available
         self.loader_manager = LoaderManager()
         self.java_manager = JavaManager()
 
     def set_curseforge_api_key(self, api_key: str):
-        """Configura la API key de CurseForge"""
+        """Configures the CurseForge API key"""
         self.curseforge_api = CurseForgeAPI(api_key)
 
     # ==================== MODRINTH ====================
@@ -34,16 +34,16 @@ class ModpackManager:
         log_callback: Optional[Callable[[str], None]] = None
     ) -> bool:
         """
-        Instala un modpack de Modrinth
+        Installs a modpack from Modrinth
 
         Args:
-            project_id: ID del proyecto en Modrinth
-            version_id: ID de la versión a instalar
-            server_folder: Carpeta donde instalar el servidor
-            log_callback: Función para reportar progreso
+            project_id: Project ID on Modrinth
+            version_id: Version ID to install
+            server_folder: Folder where to install the server
+            log_callback: Function to report progress
 
         Returns:
-            True si la instalación fue exitosa
+            True if installation was successful
         """
         try:
             if log_callback:
@@ -51,10 +51,10 @@ class ModpackManager:
                 log_callback("║   INSTALACIÓN DE MODPACK DESDE MODRINTH       ║\n")
                 log_callback("╚════════════════════════════════════════════════╝\n\n")
 
-            # Crear carpeta si no existe
+            # Create folder if it doesn't exist
             os.makedirs(server_folder, exist_ok=True)
 
-            # Descargar modpack
+            # Download modpack
             if log_callback:
                 log_callback("Paso 1/6: Descargando modpack...\n")
 
@@ -71,7 +71,7 @@ class ModpackManager:
             if log_callback:
                 log_callback(f"✓ Modpack descargado: {os.path.basename(modpack_file)}\n\n")
 
-            # Extraer modpack
+            # Extract modpack
             if log_callback:
                 log_callback("Paso 2/6: Extrayendo archivos del modpack...\n")
 
@@ -84,7 +84,7 @@ class ModpackManager:
             if log_callback:
                 log_callback("✓ Archivos extraídos correctamente\n\n")
 
-            # Leer manifest (modrinth.index.json)
+            # Read manifest (modrinth.index.json)
             manifest_path = extract_dir / "modrinth.index.json"
             if not manifest_path.exists():
                 if log_callback:
@@ -94,7 +94,7 @@ class ModpackManager:
             with open(manifest_path, 'r', encoding='utf-8') as f:
                 manifest = json.load(f)
 
-            # Detectar información del modpack
+            # Detect modpack information
             minecraft_version = self.loader_manager.get_minecraft_version_from_manifest(manifest)
             loader_type = self.loader_manager.detect_loader_type(manifest)
             loader_version = self.loader_manager.get_loader_version_from_manifest(manifest)
@@ -105,7 +105,7 @@ class ModpackManager:
                 log_callback(f"  • Loader: {loader_type}\n")
                 log_callback(f"  • Versión del loader: {loader_version or 'última'}\n\n")
 
-            # Verificar/instalar Java
+            # Verify/install Java
             if log_callback:
                 log_callback("Paso 4/6: Verificando Java...\n")
 
@@ -116,7 +116,7 @@ class ModpackManager:
                     log_callback("✗ Error: No se pudo instalar Java\n")
                 return False
 
-            # Descargar mods
+            # Download mods
             if log_callback:
                 log_callback("\nPaso 5/6: Descargando mods del modpack...\n")
 
@@ -130,7 +130,7 @@ class ModpackManager:
                 log_callback(f"Se descargarán {total_files} mods...\n")
 
             for i, file_info in enumerate(files, 1):
-                # Modrinth files tienen "downloads" y "path"
+                # Modrinth files have "downloads" and "path"
                 downloads = file_info.get("downloads", [])
                 file_path = file_info.get("path", "")
 
@@ -138,7 +138,7 @@ class ModpackManager:
                     download_url = downloads[0]
                     filename = os.path.basename(file_path)
 
-                    # Solo descargar mods (no configs ni recursos)
+                    # Only download mods (not configs or resources)
                     if file_path.startswith("mods/"):
                         try:
                             dest_file = mods_folder / filename
@@ -162,7 +162,7 @@ class ModpackManager:
             if log_callback:
                 log_callback("\n✓ Mods descargados\n\n")
 
-            # Copiar overrides
+            # Copy overrides
             overrides_dir = extract_dir / "overrides"
             if overrides_dir.exists():
                 if log_callback:
@@ -173,7 +173,7 @@ class ModpackManager:
                 if log_callback:
                     log_callback("✓ Configuraciones copiadas\n\n")
 
-            # Instalar loader
+            # Install loader
             if log_callback:
                 log_callback("Paso 6/6: Instalando mod loader...\n")
 
@@ -198,7 +198,7 @@ class ModpackManager:
                     log_callback(f"✗ Error: Loader '{loader_type}' no soportado\n")
                 success = False
 
-            # Limpiar archivos temporales
+            # Clean up temporary files
             try:
                 shutil.rmtree(temp_dir)
             except:
@@ -226,16 +226,16 @@ class ModpackManager:
         log_callback: Optional[Callable[[str], None]] = None
     ) -> bool:
         """
-        Instala un modpack de CurseForge
+        Installs a modpack from CurseForge
 
         Args:
-            modpack_id: ID del modpack
-            file_id: ID del archivo/versión
-            server_folder: Carpeta donde instalar el servidor
-            log_callback: Función para reportar progreso
+            modpack_id: Modpack ID
+            file_id: File/version ID
+            server_folder: Folder where to install the server
+            log_callback: Function to report progress
 
         Returns:
-            True si la instalación fue exitosa
+            True if installation was successful
         """
         if not self.curseforge_api or not self.curseforge_api.is_configured():
             if log_callback:
@@ -248,10 +248,10 @@ class ModpackManager:
                 log_callback("║   INSTALACIÓN DE MODPACK DESDE CURSEFORGE     ║\n")
                 log_callback("╚════════════════════════════════════════════════╝\n\n")
 
-            # Crear carpeta si no existe
+            # Create folder if it doesn't exist
             os.makedirs(server_folder, exist_ok=True)
 
-            # Descargar modpack
+            # Download modpack
             if log_callback:
                 log_callback("Paso 1/6: Descargando modpack...\n")
 
@@ -268,7 +268,7 @@ class ModpackManager:
             if log_callback:
                 log_callback(f"✓ Modpack descargado: {os.path.basename(modpack_file)}\n\n")
 
-            # Extraer modpack
+            # Extract modpack
             if log_callback:
                 log_callback("Paso 2/6: Extrayendo archivos del modpack...\n")
 
@@ -281,7 +281,7 @@ class ModpackManager:
             if log_callback:
                 log_callback("✓ Archivos extraídos correctamente\n\n")
 
-            # Leer manifest (manifest.json)
+            # Read manifest (manifest.json)
             manifest_path = extract_dir / "manifest.json"
             if not manifest_path.exists():
                 if log_callback:
@@ -291,7 +291,7 @@ class ModpackManager:
             with open(manifest_path, 'r', encoding='utf-8') as f:
                 manifest = json.load(f)
 
-            # Detectar información del modpack
+            # Detect modpack information
             minecraft_version = self.loader_manager.get_minecraft_version_from_manifest(manifest)
             loader_type = self.loader_manager.detect_loader_type(manifest)
             loader_version = self.loader_manager.get_loader_version_from_manifest(manifest)
@@ -302,7 +302,7 @@ class ModpackManager:
                 log_callback(f"  • Loader: {loader_type}\n")
                 log_callback(f"  • Versión del loader: {loader_version or 'última'}\n\n")
 
-            # Verificar/instalar Java
+            # Verify/install Java
             if log_callback:
                 log_callback("Paso 4/6: Verificando Java...\n")
 
@@ -313,7 +313,7 @@ class ModpackManager:
                     log_callback("✗ Error: No se pudo instalar Java\n")
                 return False
 
-            # Descargar mods
+            # Download mods
             if log_callback:
                 log_callback("\nPaso 5/6: Descargando mods del modpack...\n")
 
@@ -332,7 +332,7 @@ class ModpackManager:
 
                 if project_id and file_id_mod:
                     try:
-                        # Obtener información del archivo
+                        # Get file information
                         file_data = self.curseforge_api.get_mod_file_info(project_id, file_id_mod)
 
                         if file_data:
@@ -364,7 +364,7 @@ class ModpackManager:
             if log_callback:
                 log_callback("\n✓ Mods descargados\n\n")
 
-            # Copiar overrides
+            # Copy overrides
             overrides_dir = extract_dir / manifest.get("overrides", "overrides")
             if overrides_dir.exists():
                 if log_callback:
@@ -375,7 +375,7 @@ class ModpackManager:
                 if log_callback:
                     log_callback("✓ Configuraciones copiadas\n\n")
 
-            # Instalar loader
+            # Install loader
             if log_callback:
                 log_callback("Paso 6/6: Instalando mod loader...\n")
 
@@ -400,7 +400,7 @@ class ModpackManager:
                     log_callback(f"✗ Error: Loader '{loader_type}' no soportado\n")
                 success = False
 
-            # Limpiar archivos temporales
+            # Clean up temporary files
             try:
                 shutil.rmtree(temp_dir)
             except:
@@ -418,28 +418,28 @@ class ModpackManager:
                 log_callback(f"\n✗ Error durante la instalación: {str(e)}\n")
             return False
 
-    # ==================== UTILIDADES ====================
+    # ==================== UTILITIES ====================
 
     def _copy_overrides(self, source_dir: Path, dest_dir: Path, log_callback: Optional[Callable[[str], None]] = None):
         """
-        Copia los archivos de overrides al servidor
+        Copies override files to the server
 
         Args:
-            source_dir: Directorio fuente (overrides)
-            dest_dir: Directorio destino (carpeta del servidor)
-            log_callback: Función para reportar progreso
+            source_dir: Source directory (overrides)
+            dest_dir: Destination directory (server folder)
+            log_callback: Function to report progress
         """
         try:
             for item in source_dir.rglob("*"):
                 if item.is_file():
-                    # Calcular ruta relativa
+                    # Calculate relative path
                     relative_path = item.relative_to(source_dir)
                     dest_file = dest_dir / relative_path
 
-                    # Crear directorios si no existen
+                    # Create directories if they don't exist
                     dest_file.parent.mkdir(parents=True, exist_ok=True)
 
-                    # Copiar archivo
+                    # Copy file
                     shutil.copy2(item, dest_file)
 
         except Exception as e:
@@ -453,15 +453,15 @@ class ModpackManager:
         limit: int = 20
     ) -> Optional[List[Dict]]:
         """
-        Busca modpacks en la plataforma especificada
+        Searches for modpacks on the specified platform
 
         Args:
-            query: Texto de búsqueda
-            platform: "modrinth" o "curseforge"
-            limit: Número máximo de resultados
+            query: Search text
+            platform: "modrinth" or "curseforge"
+            limit: Maximum number of results
 
         Returns:
-            Lista de modpacks encontrados
+            List of found modpacks
         """
         if platform == "modrinth":
             return self.modrinth_api.search_modpacks(query, limit)
@@ -474,19 +474,19 @@ class ModpackManager:
 
     def get_recommended_ram(self, modpack_manifest: Dict) -> int:
         """
-        Obtiene la RAM recomendada para un modpack basándose en el número de mods
+        Gets the recommended RAM for a modpack based on the number of mods
 
         Args:
-            modpack_manifest: Manifest del modpack
+            modpack_manifest: Modpack manifest
 
         Returns:
-            RAM recomendada en MB
+            Recommended RAM in MB
         """
         try:
             files = modpack_manifest.get("files", [])
             num_mods = len(files)
 
-            # Heurística básica
+            # Basic heuristic
             if num_mods < 25:
                 return 3072  # 3 GB
             elif num_mods < 50:

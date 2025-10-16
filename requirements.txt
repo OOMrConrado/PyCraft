@@ -6,3 +6,6 @@ requests==2.31.0
 
 # Image processing and icon handling
 Pillow==10.2.0
+
+# System and process utilities
+psutil==5.9.8

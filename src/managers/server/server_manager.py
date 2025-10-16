@@ -4,37 +4,41 @@ import time
 from typing import Optional, Callable
 import threading
 
+# Import system utilities for validation
+from ...utils import system_utils
+
 
 class ServerManager:
-    """Maneja la ejecución y configuración del servidor de Minecraft"""
+    """Handles Minecraft server execution and configuration"""
 
-    def __init__(self, server_folder: str):
+    def __init__(self, server_folder: str, java_executable: str = "java"):
         self.server_folder = server_folder
         self.server_jar_path = os.path.join(server_folder, "server.jar")
         self.eula_path = os.path.join(server_folder, "eula.txt")
         self.properties_path = os.path.join(server_folder, "server.properties")
         self.server_process = None
+        self.java_executable = java_executable
 
     def accept_eula(self) -> bool:
         """
-        Acepta automáticamente el EULA modificando el archivo eula.txt
+        Automatically accepts the EULA by modifying the eula.txt file
 
         Returns:
-            True si se modificó correctamente, False en caso contrario
+            True if modified successfully, False otherwise
         """
         try:
             if not os.path.exists(self.eula_path):
                 print("Archivo eula.txt no encontrado")
                 return False
 
-            # Leer el archivo
+            # Read the file
             with open(self.eula_path, 'r', encoding='utf-8') as file:
                 content = file.read()
 
-            # Reemplazar eula=false por eula=true
+            # Replace eula=false with eula=true
             content = content.replace('eula=false', 'eula=true')
 
-            # Escribir el archivo modificado
+            # Write the modified file
             with open(self.eula_path, 'w', encoding='utf-8') as file:
                 file.write(content)
 
@@ -45,76 +49,131 @@ class ServerManager:
             print(f"Error al aceptar EULA: {e}")
             return False
 
-    def configure_server_properties(self, difficulty: str = "normal") -> bool:
+    def configure_server_properties(self, difficulty: str = "normal", log_callback: Optional[Callable[[str], None]] = None) -> bool:
         """
-        Modifica server.properties para establecer online-mode=false y difficulty
+        Modifies server.properties to set online-mode=false and difficulty
 
         Args:
-            difficulty: Dificultad del servidor (peaceful, easy, normal, hard)
+            difficulty: Server difficulty (peaceful, easy, normal, hard)
+            log_callback: Callback function to report errors
 
         Returns:
-            True si se modificó correctamente, False en caso contrario
+            True if modified successfully, False otherwise
         """
         try:
             if not os.path.exists(self.properties_path):
-                print("Archivo server.properties no encontrado")
+                error_msg = "Archivo server.properties no encontrado. Asegúrate de que el servidor se haya ejecutado al menos una vez."
+                print(error_msg)
+                if log_callback:
+                    log_callback(error_msg + "\n")
                 return False
 
-            # Leer todas las líneas del archivo
+            # Validate difficulty
+            valid_difficulties = ['peaceful', 'easy', 'normal', 'hard']
+            if difficulty not in valid_difficulties:
+                error_msg = f"Dificultad inválida: {difficulty}. Debe ser una de: {', '.join(valid_difficulties)}"
+                print(error_msg)
+                if log_callback:
+                    log_callback(error_msg + "\n")
+                return False
+
+            # Read all file lines
             with open(self.properties_path, 'r', encoding='utf-8') as file:
                 lines = file.readlines()
 
-            # Modificar las propiedades necesarias
+            # Modify necessary properties
             online_mode_modified = False
             difficulty_modified = False
+            old_difficulty = None
 
             for i, line in enumerate(lines):
-                # Configurar online-mode=false
+                # Configure online-mode=false
                 if line.strip().startswith('online-mode='):
                     lines[i] = 'online-mode=false\n'
                     online_mode_modified = True
 
-                # Configurar difficulty
-                elif line.strip().startswith('difficulty='):
+                # Configure difficulty (IMPORTANT: use if, not elif)
+                if line.strip().startswith('difficulty='):
+                    # Save previous value to report the change
+                    old_difficulty = line.strip().split('=')[1]
                     lines[i] = f'difficulty={difficulty}\n'
                     difficulty_modified = True
 
-            if not online_mode_modified or not difficulty_modified:
-                print(f"Propiedades no encontradas - online-mode: {online_mode_modified}, difficulty: {difficulty_modified}")
+            if not difficulty_modified:
+                error_msg = f"Propiedad 'difficulty' no encontrada en server.properties. El archivo podría estar corrupto."
+                print(error_msg)
+                if log_callback:
+                    log_callback(error_msg + "\n")
                 return False
 
-            # Escribir el archivo modificado con encoding UTF-8
+            # online-mode is optional for this function
+            if not online_mode_modified:
+                # Find where to add online-mode
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('difficulty='):
+                        lines.insert(i+1, 'online-mode=false\n')
+                        break
+
+            # Write modified file with UTF-8 encoding
             with open(self.properties_path, 'w', encoding='utf-8', newline='\n') as file:
                 file.writelines(lines)
 
-            print(f"server.properties configurado: online-mode=false, difficulty={difficulty}")
+            # Verify that the change was applied correctly
+            with open(self.properties_path, 'r', encoding='utf-8') as file:
+                content = file.read()
+                if f'difficulty={difficulty}' not in content:
+                    error_msg = "Error: El cambio no se guardó correctamente en server.properties"
+                    print(error_msg)
+                    if log_callback:
+                        log_callback(error_msg + "\n")
+                    return False
+
+            # Report success with details
+            if old_difficulty and old_difficulty != difficulty:
+                success_msg = f"✓ Configuración actualizada:\n  • Dificultad cambiada de '{old_difficulty}' a '{difficulty}'"
+            else:
+                success_msg = f"✓ Configuración aplicada:\n  • Dificultad: {difficulty}"
+
+            print(success_msg)
+            if log_callback:
+                log_callback(success_msg + "\n")
+
             return True
 
+        except PermissionError as e:
+            error_msg = f"Error de permisos al modificar server.properties. Asegúrate de que el servidor no esté corriendo: {e}"
+            print(error_msg)
+            if log_callback:
+                log_callback(error_msg + "\n")
+            return False
         except Exception as e:
-            print(f"Error al modificar server.properties: {e}")
+            error_msg = f"Error al modificar server.properties: {e}"
+            print(error_msg)
+            if log_callback:
+                log_callback(error_msg + "\n")
             return False
 
     def update_property(self, property_name: str, property_value: str) -> bool:
         """
-        Actualiza una propiedad específica en server.properties
+        Updates a specific property in server.properties
 
         Args:
-            property_name: Nombre de la propiedad
-            property_value: Valor de la propiedad
+            property_name: Property name
+            property_value: Property value
 
         Returns:
-            True si se modificó correctamente, False en caso contrario
+            True if modified successfully, False otherwise
         """
         try:
             if not os.path.exists(self.properties_path):
                 print("Archivo server.properties no encontrado")
                 return False
 
-            # Leer todas las líneas del archivo
+            # Read all file lines
             with open(self.properties_path, 'r', encoding='utf-8') as file:
                 lines = file.readlines()
 
-            # Modificar la propiedad
+            # Modify the property
             property_modified = False
 
             for i, line in enumerate(lines):
@@ -127,7 +186,7 @@ class ServerManager:
                 print(f"Propiedad '{property_name}' no encontrada")
                 return False
 
-            # Escribir el archivo modificado
+            # Write modified file
             with open(self.properties_path, 'w', encoding='utf-8', newline='\n') as file:
                 file.writelines(lines)
 
@@ -143,71 +202,137 @@ class ServerManager:
         log_callback: Optional[Callable[[str], None]] = None
     ) -> bool:
         """
-        Ejecuta el servidor por primera vez y realiza toda la configuración automática
+        Runs the server for the first time and performs all automatic configuration
 
         Args:
-            log_callback: Función callback para recibir logs del proceso
+            log_callback: Callback function to receive process logs
 
         Returns:
-            True si todo el proceso fue exitoso, False en caso contrario
+            True if the entire process was successful, False otherwise
         """
         try:
             if log_callback:
                 log_callback("Iniciando servidor por primera vez...\n")
+                log_callback("\n" + "="*70 + "\n")
+                log_callback("VERIFICACIONES PREVIAS\n")
+                log_callback("="*70 + "\n\n")
 
-            # Primera ejecución (generará eula.txt) - más rápida
+            # 1. Check write permissions
             if log_callback:
-                log_callback("Generando EULA...\n")
+                log_callback("Verificando permisos de escritura...\n")
 
-            self._run_server_and_wait(log_callback, timeout=10, check_for="eula.txt")
+            has_perms, perm_msg = system_utils.check_write_permissions(self.server_folder)
+            if not has_perms:
+                if log_callback:
+                    log_callback(f"\n❌ {perm_msg}\n")
+                return False
 
-            # Esperar brevemente
+            if log_callback:
+                log_callback("✓ Permisos de escritura confirmados\n\n")
+
+            # 2. Check available RAM (minimum 1GB for server)
+            if log_callback:
+                log_callback("Verificando RAM disponible...\n")
+
+            can_ram, ram_msg = system_utils.can_allocate_ram(1024)
+            if log_callback:
+                log_callback(f"{ram_msg}\n\n")
+            if not can_ram:
+                return False
+
+            # 3. Check if port 25565 is in use
+            if log_callback:
+                log_callback("Verificando puerto 25565...\n")
+
+            system_utils.check_minecraft_port(log_callback)
+
+            if log_callback:
+                log_callback("\n" + "="*70 + "\n")
+                log_callback("GENERACIÓN DE ARCHIVOS\n")
+                log_callback("="*70 + "\n\n")
+
+            # 4. First execution (will generate eula.txt) - Increased timeout to 20s
+            if log_callback:
+                log_callback("Generando EULA (esto puede tomar hasta 20 segundos)...\n")
+
+            self._run_server_and_wait(log_callback, timeout=20, check_for="eula.txt")
+
+            # Wait briefly
             time.sleep(0.5)
 
-            # Aceptar EULA
+            # 5. Validate EULA file
+            if not system_utils.validate_eula_file(self.eula_path):
+                if log_callback:
+                    log_callback("\n❌ EULA no se generó correctamente o está corrupto\n")
+                    log_callback("   Posibles causas:\n")
+                    log_callback("   • Java no se ejecutó correctamente\n")
+                    log_callback("   • El proceso se interrumpió\n")
+                    log_callback("   • Problemas de permisos\n")
+                return False
+
+            # 6. Accept EULA
             if os.path.exists(self.eula_path):
                 if log_callback:
+                    log_callback("✓ EULA generado correctamente\n")
                     log_callback("Aceptando EULA automáticamente...\n")
                 if not self.accept_eula():
                     if log_callback:
-                        log_callback("Error al aceptar EULA\n")
+                        log_callback("❌ Error al aceptar EULA\n")
                     return False
             else:
                 if log_callback:
-                    log_callback("Archivo EULA no encontrado\n")
+                    log_callback("❌ Archivo EULA no encontrado\n")
                 return False
 
-            # Segunda ejecución (generará todos los archivos del servidor) - optimizada
+            # 7. Second execution (will generate all server files) - Increased timeout to 40s
             if log_callback:
-                log_callback("Generando archivos del servidor...\n")
+                log_callback("✓ EULA aceptado\n\n")
+                log_callback("Generando archivos del servidor (esto puede tomar hasta 40 segundos)...\n")
 
-            self._run_server_and_wait(log_callback, timeout=30, check_for="server.properties")
+            self._run_server_and_wait(log_callback, timeout=40, check_for="server.properties")
 
-            # Esperar brevemente
+            # Wait briefly
             time.sleep(0.5)
 
-            # Modificar server.properties
+            # 8. Validate server.properties file
+            if not system_utils.validate_properties_file(self.properties_path):
+                if log_callback:
+                    log_callback("\n❌ server.properties no se generó correctamente o está corrupto\n")
+                    log_callback("   Posibles causas:\n")
+                    log_callback("   • El servidor no tuvo tiempo suficiente para inicializar\n")
+                    log_callback("   • Versión de Minecraft incompatible\n")
+                    log_callback("   • Problemas de permisos\n")
+                return False
+
+            # 9. Modify server.properties
             if os.path.exists(self.properties_path):
                 if log_callback:
+                    log_callback("✓ server.properties generado correctamente\n")
                     log_callback("Configurando server.properties...\n")
-                if not self.configure_server_properties():
+                if not self.configure_server_properties(log_callback=log_callback):
                     if log_callback:
-                        log_callback("Error al modificar server.properties\n")
+                        log_callback("❌ Error al modificar server.properties\n")
                     return False
             else:
                 if log_callback:
-                    log_callback("Archivo server.properties no encontrado\n")
+                    log_callback("❌ Archivo server.properties no encontrado\n")
                 return False
 
+            # 10. Show important warnings about firewall and antivirus
             if log_callback:
-                log_callback("¡Configuración completada!\n")
+                log_callback("\n✅ ¡Configuración completada exitosamente!\n\n")
+                system_utils.show_firewall_antivirus_warning(log_callback)
 
             return True
 
         except Exception as e:
             if log_callback:
-                log_callback(f"Error durante la configuración: {e}\n")
+                log_callback(f"\n❌ Error durante la configuración: {e}\n")
+                log_callback(f"   Tipo de error: {type(e).__name__}\n")
             return False
+        finally:
+            # Clean up zombie processes
+            system_utils.cleanup_zombie_processes(log_callback)
 
     def _run_server_and_wait(
         self,
@@ -225,7 +350,7 @@ class ServerManager:
         """
         try:
             # Comando para ejecutar el servidor
-            command = ["java", "-Xmx1024M", "-Xms1024M", "-jar", "server.jar", "nogui"]
+            command = [self.java_executable, "-Xmx1024M", "-Xms1024M", "-jar", "server.jar", "nogui"]
 
             # Ejecutar el proceso
             # Configurar flags para Windows
@@ -284,9 +409,18 @@ class ServerManager:
 
                 time.sleep(0.1)
 
+        except FileNotFoundError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
+                log_callback(f"Ruta buscada: {self.java_executable}\n")
+                log_callback("Asegúrate de que Java esté instalado correctamente.\n")
+        except PermissionError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error de permisos al ejecutar el servidor: {e}\n")
         except Exception as e:
             if log_callback:
-                log_callback(f"Error al ejecutar servidor: {e}\n")
+                log_callback(f"\n✗ Error al ejecutar servidor: {e}\n")
+                log_callback(f"Tipo de error: {type(e).__name__}\n")
 
     def start_server(
         self,
@@ -316,7 +450,7 @@ class ServerManager:
                 return False
 
             # Comando para ejecutar el servidor
-            command = ["java", "-Xmx1024M", "-Xms1024M", "-jar", "server.jar", "nogui"]
+            command = [self.java_executable, "-Xmx1024M", "-Xms1024M", "-jar", "server.jar", "nogui"]
 
             if detached:
                 # Ejecutar en segundo plano con stdin para comandos
@@ -369,9 +503,20 @@ class ServerManager:
                 self.server_process.wait()
                 return True
 
+        except FileNotFoundError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
+                log_callback(f"Ruta buscada: {self.java_executable}\n")
+                log_callback("Asegúrate de que Java esté instalado correctamente.\n")
+            return False
+        except PermissionError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error de permisos al iniciar el servidor: {e}\n")
+            return False
         except Exception as e:
             if log_callback:
-                log_callback(f"Error al iniciar servidor: {e}\n")
+                log_callback(f"\n✗ Error al iniciar servidor: {e}\n")
+                log_callback(f"Tipo de error: {type(e).__name__}\n")
             return False
 
     def stop_server(self) -> bool:
@@ -651,9 +796,20 @@ class ServerManager:
                 self.server_process.wait()
                 return True
 
+        except FileNotFoundError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
+                log_callback(f"Ruta buscada: {java_executable}\n")
+                log_callback("Asegúrate de que Java esté instalado correctamente.\n")
+            return False
+        except PermissionError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error de permisos al iniciar el servidor: {e}\n")
+            return False
         except Exception as e:
             if log_callback:
-                log_callback(f"Error al iniciar servidor: {e}\n")
+                log_callback(f"\n✗ Error al iniciar servidor: {e}\n")
+                log_callback(f"Tipo de error: {type(e).__name__}\n")
             return False
 
     def _modify_forge_run_script(self, script_path: str, ram_mb: int):
@@ -864,9 +1020,18 @@ class ServerManager:
 
                 time.sleep(0.1)
 
+        except FileNotFoundError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
+                log_callback(f"Ruta buscada: {java_executable}\n")
+                log_callback("Asegúrate de que Java esté instalado correctamente.\n")
+        except PermissionError as e:
+            if log_callback:
+                log_callback(f"\n✗ Error de permisos al ejecutar el servidor: {e}\n")
         except Exception as e:
             if log_callback:
-                log_callback(f"Error al ejecutar servidor: {e}\n")
+                log_callback(f"\n✗ Error al ejecutar servidor: {e}\n")
+                log_callback(f"Tipo de error: {type(e).__name__}\n")
 
     def get_recommended_ram_for_modpack(self, num_mods: int) -> int:
         """
