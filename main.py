@@ -1,13 +1,13 @@
 """
 PyCraft - Minecraft Server Manager
-Aplicación para descargar, configurar e iniciar servidores de Minecraft fácilmente
+Application to download, configure and start Minecraft servers easily
 """
 
 from src.gui import PyCraftGUI
 
 
 def main():
-    """Punto de entrada de la aplicación"""
+    """Application entry point"""
     app = PyCraftGUI()
     app.run()
 
