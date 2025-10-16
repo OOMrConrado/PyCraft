@@ -1,3 +1,8 @@
+# GUI Framework
 customtkinter==5.2.2
+
+# HTTP Requests for API communication
 requests==2.31.0
+
+# Image processing and icon handling
 Pillow==10.2.0
