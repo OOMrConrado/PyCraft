@@ -21,42 +21,43 @@ wheels/
 *.egg
 
 # Virtual Environment
-venv/
 .venv/
+venv/
 ENV/
 env/
 
-# IDEs
+# IDE
 .vscode/
 .idea/
 .claude/
 *.swp
 *.swo
 *~
-
-
-# OS
 .DS_Store
-Thumbs.db
+
+# PyInstaller
+*.spec
+executable-files/
 
 # Logs
 *.log
+logs/
 
-# PyInstaller
-build/
-dist/
-executable-files/
-*.ico
+# Temporary files
+*.tmp
+nul
 
-# Minecraft Server files (en caso de que alguien ejecute un servidor en el directorio del proyecto)
-server.jar
+# Minecraft Server files
+server_test/
+test_servers/
+*.jar
 eula.txt
 server.properties
-ops.json
-whitelist.json
-banned-ips.json
-banned-players.json
-usercache.json
 world/
-logs/
 crash-reports/
+
+# API Keys
+api_config.json
+
+# OS
+Thumbs.db
