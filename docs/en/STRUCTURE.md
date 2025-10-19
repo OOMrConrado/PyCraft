@@ -103,6 +103,9 @@ from src.core.api import MinecraftAPIHandler
 - Detection of Java installations
 - Automatic download of required versions
 - Version validation
+- Windows PATH management (add/remove Java)
+- List PyCraft-managed installations
+- Delete Java installations
 
 **ServerManager** (`managers/server/`)
 - Server creation and configuration
@@ -113,6 +116,8 @@ from src.core.api import MinecraftAPIHandler
 - Install modpacks from .mrpack files
 - Automatic loader configuration
 - Download mods and dependencies
+- Save manifests for version detection
+- Support for client modpack installation
 
 **LoaderManager** (`managers/loader/`)
 - Loader type detection (Forge/Fabric)
@@ -123,12 +128,14 @@ from src.core.api import MinecraftAPIHandler
 
 **MainWindow** (`gui/main_window.py`)
 - Main application window
-- Tab management (Vanilla, Mods, Info)
+- Tab management (Vanilla, Mods, Info, Settings)
 - Orchestration of all components
+- Custom window icon support
+- Custom dialogs with PyCraft branding
 
 **Tabs** (`gui/tabs/`)
 - `BaseTab`: Base class with common utilities
-- `InfoTab`: Information and help
+- `InfoTab`: Information and help focused on playing with friends
 
 **Utils** (`gui/utils/`)
 - `LoggerMixin`: Unified log handling with colors
