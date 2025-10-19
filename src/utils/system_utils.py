@@ -147,8 +147,13 @@ def can_allocate_ram(required_mb: int) -> Tuple[bool, str]:
     if available == -1:
         return (True, "⚠️ No se pudo verificar RAM disponible (psutil no instalado)")
 
-    # Leave at least 2GB for the system
-    safety_margin = 2048
+    # More flexible RAM check for systems with 8GB or less
+    # Leave 1.5GB for the system on low-RAM systems, 2GB for higher-RAM systems
+    if available <= 8192:  # 8GB or less
+        safety_margin = 1536  # 1.5GB
+    else:
+        safety_margin = 2048  # 2GB
+
     usable = available - safety_margin
 
     if required_mb > usable:
@@ -205,17 +210,8 @@ def show_firewall_antivirus_warning(log_callback: Optional[Callable[[str], None]
     Args:
         log_callback: Callback function to report messages
     """
-    msg = ("\n" + "="*70 + "\n"
-           "⚠️ IMPORTANTE - CONFIGURACIÓN PARA JUGADORES EXTERNOS\n"
-           "="*70 + "\n\n"
-           "Si quieres que otros jugadores se conecten al servidor:\n\n"
-           "  👉 Ve a la pestaña 'Información y Ayuda'\n"
-           "  👉 Consulta las secciones:\n"
-           "     • Problemas de Conexión (Firewall/Antivirus)\n"
-           "     • Configuración de Red (Router/IP/Puertos)\n"
-           "     • Uso de VPNs (Hamachi y Alternativas)\n\n"
-           "  Encontrarás guías detalladas para configurar tu red.\n\n"
-           "="*70 + "\n")
+    # Simplified message to avoid console spam
+    msg = ("\n⚠️ IMPORTANTE: Para jugar con amigos, ve a 'Información y Ayuda' → 'Jugar con Amigos'\n")
 
     if log_callback:
         log_callback(msg)
