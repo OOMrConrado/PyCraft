@@ -318,10 +318,9 @@ class ServerManager:
                     log_callback("❌ Archivo server.properties no encontrado\n")
                 return False
 
-            # 10. Show important warnings about firewall and antivirus
+            # 10. Configuration complete
             if log_callback:
                 log_callback("\n✅ ¡Configuración completada exitosamente!\n\n")
-                system_utils.show_firewall_antivirus_warning(log_callback)
 
             return True
 
@@ -653,7 +652,7 @@ class ServerManager:
                     log_callback("=== CONFIGURACIÓN INICIAL ===\n")
                     log_callback("Generando EULA...\n")
 
-                self._run_modded_server_and_wait(server_type, ram_mb, java_executable, log_callback, timeout=20, check_for="eula.txt")
+                self._run_modded_server_and_wait(server_type, ram_mb, java_executable, log_callback, timeout=60, check_for="eula.txt")
                 time.sleep(0.5)
 
                 # Aceptar EULA
@@ -863,7 +862,7 @@ class ServerManager:
             if log_callback:
                 log_callback("Generando EULA...\n")
 
-            self._run_modded_server_and_wait(server_type, ram_mb, java_executable, log_callback, timeout=15, check_for="eula.txt")
+            self._run_modded_server_and_wait(server_type, ram_mb, java_executable, log_callback, timeout=60, check_for="eula.txt")
 
             time.sleep(0.5)
 

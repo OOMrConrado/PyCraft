@@ -198,6 +198,17 @@ class ModpackManager:
                     log_callback(f"✗ Error: Loader '{loader_type}' no soportado\n")
                 success = False
 
+            # Save manifest to server folder for version detection later
+            if success:
+                try:
+                    dest_manifest = Path(server_folder) / "modrinth.index.json"
+                    shutil.copy2(manifest_path, dest_manifest)
+                    if log_callback:
+                        log_callback("\n✓ Manifest guardado para referencia futura\n")
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"⚠ Advertencia: No se pudo guardar el manifest: {e}\n")
+
             # Clean up temporary files
             try:
                 shutil.rmtree(temp_dir)
@@ -399,6 +410,17 @@ class ModpackManager:
                 if log_callback:
                     log_callback(f"✗ Error: Loader '{loader_type}' no soportado\n")
                 success = False
+
+            # Save manifest to server folder for version detection later
+            if success:
+                try:
+                    dest_manifest = Path(server_folder) / "manifest.json"
+                    shutil.copy2(manifest_path, dest_manifest)
+                    if log_callback:
+                        log_callback("\n✓ Manifest guardado para referencia futura\n")
+                except Exception as e:
+                    if log_callback:
+                        log_callback(f"⚠ Advertencia: No se pudo guardar el manifest: {e}\n")
 
             # Clean up temporary files
             try:
