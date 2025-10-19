@@ -5,7 +5,9 @@ import threading
 import os
 import shutil
 import json
+import webbrowser
 from typing import Optional, Dict, List
+from pathlib import Path
 
 from ..core.api import MinecraftAPIHandler, ModrinthAPI, CurseForgeAPI, APIConfig
 from ..core.download import ServerDownloader
@@ -59,6 +61,23 @@ class PyCraftGUI:
         self.root.geometry("1000x800")
         self.root.resizable(False, False)
 
+        # Set window icon
+        self.icon_path = None
+        try:
+            self.icon_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "PyCraft-Files", "icon.ico"
+            )
+            print(f"Icon path: {self.icon_path}")
+            print(f"Icon exists: {os.path.exists(self.icon_path)}")
+            if os.path.exists(self.icon_path):
+                self.root.iconbitmap(self.icon_path)
+                print("Main window icon set successfully")
+        except Exception as e:
+            print(f"No se pudo cargar el icono: {e}")
+            import traceback
+            traceback.print_exc()
+
         # Componentes
         self.api_handler = MinecraftAPIHandler()
         self.downloader = ServerDownloader()
@@ -89,12 +108,149 @@ class PyCraftGUI:
         self.modpack_server_manager: Optional[ServerManager] = None
         self.modpack_server_path = None
         self.is_modpack_server_configured = False
+        # Modpack metadata for sharing
+        self.modpack_name = None
+        self.modpack_version = None
+        self.modpack_minecraft_version = None
+        self.modpack_loader_name = None
+        self.modpack_slug = None
 
         # Crear la interfaz
         self._create_widgets()
 
         # Cargar versiones al iniciar
         self._load_versions()
+
+    def _set_window_icon(self, window):
+        """Sets the PyCraft icon for a window"""
+        try:
+            if self.icon_path and os.path.exists(self.icon_path):
+                # For CTkToplevel, we need to access the underlying tk window
+                # and set the icon after the window is created
+                def set_icon():
+                    try:
+                        # Direct iconbitmap call
+                        window.iconbitmap(self.icon_path)
+                    except Exception as e:
+                        print(f"Error setting icon: {e}")
+
+                # Call immediately
+                set_icon()
+                # Also call after window is mapped
+                window.after(100, set_icon)
+                window.after(500, set_icon)
+        except Exception as e:
+            print(f"Error in _set_window_icon: {e}")
+
+    def _custom_askyesno(self, title: str, message: str, parent=None) -> bool:
+        """Custom yes/no dialog with PyCraft icon"""
+        dialog = ctk.CTkToplevel(parent or self.root)
+        self._set_window_icon(dialog)
+        dialog.title(title)
+        dialog.geometry("450x200")
+        dialog.resizable(False, False)
+        dialog.transient(parent or self.root)
+        dialog.grab_set()
+
+        result = [False]
+
+        # Message
+        ctk.CTkLabel(
+            dialog,
+            text=message,
+            font=ctk.CTkFont(size=13),
+            wraplength=400,
+            justify="left"
+        ).pack(pady=30, padx=20)
+
+        # Buttons frame
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=10)
+
+        def on_yes():
+            result[0] = True
+            dialog.destroy()
+
+        def on_no():
+            result[0] = False
+            dialog.destroy()
+
+        ctk.CTkButton(
+            button_frame,
+            text="Sí",
+            command=on_yes,
+            width=100,
+            fg_color=self.colors["success"],
+            hover_color="#2d8a3e"
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            button_frame,
+            text="No",
+            command=on_no,
+            width=100,
+            fg_color="#6c757d",
+            hover_color="#5a6268"
+        ).pack(side="left", padx=10)
+
+        # Wait for dialog to close
+        dialog.wait_window()
+        return result[0]
+
+    def _custom_askokcancel(self, title: str, message: str, parent=None) -> bool:
+        """Custom ok/cancel dialog with PyCraft icon"""
+        dialog = ctk.CTkToplevel(parent or self.root)
+        self._set_window_icon(dialog)
+        dialog.title(title)
+        dialog.geometry("450x200")
+        dialog.resizable(False, False)
+        dialog.transient(parent or self.root)
+        dialog.grab_set()
+
+        result = [False]
+
+        # Message
+        ctk.CTkLabel(
+            dialog,
+            text=message,
+            font=ctk.CTkFont(size=13),
+            wraplength=400,
+            justify="left"
+        ).pack(pady=30, padx=20)
+
+        # Buttons frame
+        button_frame = ctk.CTkFrame(dialog, fg_color="transparent")
+        button_frame.pack(pady=10)
+
+        def on_ok():
+            result[0] = True
+            dialog.destroy()
+
+        def on_cancel():
+            result[0] = False
+            dialog.destroy()
+
+        ctk.CTkButton(
+            button_frame,
+            text="Aceptar",
+            command=on_ok,
+            width=100,
+            fg_color=self.colors["success"],
+            hover_color="#2d8a3e"
+        ).pack(side="left", padx=10)
+
+        ctk.CTkButton(
+            button_frame,
+            text="Cancelar",
+            command=on_cancel,
+            width=100,
+            fg_color="#6c757d",
+            hover_color="#5a6268"
+        ).pack(side="left", padx=10)
+
+        # Wait for dialog to close
+        dialog.wait_window()
+        return result[0]
 
     def _create_widgets(self):
         """Crea todos los widgets de la interfaz"""
@@ -105,8 +261,11 @@ class PyCraftGUI:
 
         # Intentar cargar el logo
         try:
-            logo_path = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                    "PyCraft-Files", "logo.png")
+            # Get project root directory (go up from src/gui/main_window.py to project root)
+            logo_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "PyCraft-Files", "logo.png"
+            )
             if os.path.exists(logo_path):
                 logo_image = Image.open(logo_path)
                 # Redimensionar el logo (mucho más grande y visible)
@@ -142,15 +301,17 @@ class PyCraftGUI:
         self.tabview = ctk.CTkTabview(self.root, width=950, height=650)
         self.tabview.pack(pady=10, padx=20, fill="both", expand=True)
 
-        # Crear las 3 tabs
+        # Crear las tabs
         self.tabview.add("Servidor Vanilla")
         self.tabview.add("Servidor con Mods")
         self.tabview.add("Información y Ayuda")
+        self.tabview.add("Configuración")
 
         # Crear contenido de cada tab
         self._create_vanilla_tab()
         self._create_mods_tab()
         self._create_info_tab()
+        self._create_settings_tab()
 
     def _create_vanilla_tab(self):
         """Crea la sección de servidor vanilla"""
@@ -537,16 +698,19 @@ class PyCraftGUI:
             font=ctk.CTkFont(size=20, weight="bold")
         ).pack(side="left", padx=(10, 20))
 
-        # Indicador de plataforma más pequeño
-        platform_badge = ctk.CTkFrame(header_frame, fg_color="green", corner_radius=5)
-        platform_badge.pack(side="left")
-
-        ctk.CTkLabel(
-            platform_badge,
+        # Botón clickeable de Modrinth
+        modrinth_button = ctk.CTkButton(
+            header_frame,
             text="Modrinth",
             font=ctk.CTkFont(size=10, weight="bold"),
-            text_color="white"
-        ).pack(pady=3, padx=10)
+            fg_color="green",
+            hover_color="darkgreen",
+            corner_radius=5,
+            width=100,
+            height=25,
+            command=lambda: webbrowser.open("https://modrinth.com/modpacks")
+        )
+        modrinth_button.pack(side="left")
 
         # Subtítulo
         ctk.CTkLabel(
@@ -621,6 +785,8 @@ class PyCraftGUI:
             height=200  # Altura fija para mostrar ~4-5 modpacks con scroll
         )
         self.modpack_results_frame.pack(pady=(5, 10), padx=10, fill="x")
+        # Fix mouse wheel scrolling
+        self._fix_scrollable_frame_scroll(self.modpack_results_frame)
 
         # Label inicial
         self.no_results_label = ctk.CTkLabel(
@@ -713,6 +879,8 @@ class PyCraftGUI:
             wrap="word"
         )
         self.modpack_log_text.pack(pady=(5, 10), padx=10)
+        # Fix scroll anidado
+        self._fix_textbox_scroll(self.modpack_log_text)
 
         # Log inicial
         self._add_log_modpack("Bienvenido al instalador de Modpacks de PyCraft\n", "info")
@@ -789,7 +957,7 @@ class PyCraftGUI:
         # Label informativo
         ctk.CTkLabel(
             modpack_server_frame,
-            text="Instala el modpack en C:/Users/[tu-nombre]/Modrinth/ para poder jugar",
+            text="Instala el modpack en C:/Users/[tu-nombre]/.pycraft/modpack-modrinth/ para poder jugar",
             font=ctk.CTkFont(size=11),
             text_color="gray"
         ).pack(pady=(0, 15), padx=20)
@@ -816,6 +984,8 @@ class PyCraftGUI:
             wrap="word"
         )
         self.modpack_server_log_text.pack(pady=(5, 10), padx=10)
+        # Fix scroll anidado
+        self._fix_textbox_scroll(self.modpack_server_log_text)
 
         # Campo de input para comandos - Dentro del console container
         modpack_command_frame = ctk.CTkFrame(console_container, fg_color="transparent")
@@ -896,6 +1066,877 @@ class PyCraftGUI:
         tab = self.tabview.tab("Información y Ayuda")
         InfoTab(tab)
 
+    def _create_settings_tab(self):
+        """Creates the Settings tab with Java management and other configuration options"""
+        tab = self.tabview.tab("Configuración")
+
+        # Main scrollable container
+        main_container = ctk.CTkScrollableFrame(tab, width=920, height=580)
+        main_container.pack(pady=10, padx=10, fill="both", expand=True)
+
+        # Title
+        ctk.CTkLabel(
+            main_container,
+            text="⚙️ Configuración de PyCraft",
+            font=("Arial", 24, "bold")
+        ).pack(pady=10)
+
+        # ===== JAVA MANAGEMENT SECTION =====
+        java_frame = ctk.CTkFrame(main_container, fg_color="gray15")
+        java_frame.pack(pady=10, padx=20, fill="x")
+
+        ctk.CTkLabel(
+            java_frame,
+            text="☕ Gestión de Java",
+            font=("Arial", 18, "bold")
+        ).pack(pady=10)
+
+        # Java info display
+        self.java_info_frame = ctk.CTkFrame(java_frame, fg_color="gray20")
+        self.java_info_frame.pack(pady=10, padx=20, fill="x")
+
+        # Buttons frame
+        java_buttons_frame = ctk.CTkFrame(java_frame, fg_color="transparent")
+        java_buttons_frame.pack(pady=10)
+
+        ctk.CTkButton(
+            java_buttons_frame,
+            text="🔄 Verificar Java",
+            command=self._verify_java_installations,
+            width=200,
+            height=40,
+            font=("Arial", 14)
+        ).pack(side="left", padx=5)
+
+        # Initial Java verification
+        self._verify_java_installations()
+
+        # ===== LANGUAGE SETTINGS =====
+        language_frame = ctk.CTkFrame(main_container, fg_color="gray15")
+        language_frame.pack(pady=10, padx=20, fill="x")
+
+        ctk.CTkLabel(
+            language_frame,
+            text="🌐 Idioma / Language",
+            font=("Arial", 18, "bold")
+        ).pack(pady=10)
+
+        ctk.CTkLabel(
+            language_frame,
+            text="Selecciona el idioma de la interfaz:",
+            font=("Arial", 12)
+        ).pack(pady=5)
+
+        language_selector_frame = ctk.CTkFrame(language_frame, fg_color="transparent")
+        language_selector_frame.pack(pady=10)
+
+        self.language_var = ctk.StringVar(value="Español")
+
+        ctk.CTkRadioButton(
+            language_selector_frame,
+            text="Español 🇪🇸",
+            variable=self.language_var,
+            value="Español",
+            command=self._change_language
+        ).pack(side="left", padx=10)
+
+        ctk.CTkRadioButton(
+            language_selector_frame,
+            text="English 🇺🇸",
+            variable=self.language_var,
+            value="English",
+            command=self._change_language
+        ).pack(side="left", padx=10)
+
+        ctk.CTkLabel(
+            language_frame,
+            text="⚠ Nota: Camb iar el idioma reiniciará la aplicación",
+            font=("Arial", 10),
+            text_color="orange"
+        ).pack(pady=5)
+
+        # ===== MODPACK CLIENT FOLDER MANAGEMENT =====
+        modpack_frame = ctk.CTkFrame(main_container, fg_color="gray15")
+        modpack_frame.pack(pady=10, padx=20, fill="x")
+
+        ctk.CTkLabel(
+            modpack_frame,
+            text="📦 Gestión de Carpetas de Modpack Cliente",
+            font=("Arial", 18, "bold")
+        ).pack(pady=10)
+
+        ctk.CTkLabel(
+            modpack_frame,
+            text="Administra las carpetas de modpacks instalados para el cliente:",
+            font=("Arial", 12)
+        ).pack(pady=5)
+
+        # Buttons frame to hold both buttons side by side
+        buttons_frame = ctk.CTkFrame(modpack_frame, fg_color="transparent")
+        buttons_frame.pack(pady=10)
+
+        ctk.CTkButton(
+            buttons_frame,
+            text="📂 Ver y Eliminar Carpetas de Modpack",
+            command=self._manage_modpack_folders,
+            width=300,
+            height=40,
+            font=("Arial", 14)
+        ).pack(side="left", padx=5)
+
+        ctk.CTkButton(
+            buttons_frame,
+            text="📥 Instalar Modpack Cliente (para amigos)",
+            command=self._open_client_modpack_installer,
+            width=300,
+            height=40,
+            font=("Arial", 14),
+            fg_color=self.colors["accent_dark"],
+            hover_color=self.colors["accent_hover"]
+        ).pack(side="left", padx=5)
+
+    def _verify_java_installations(self):
+        """Verifies and displays Java installations"""
+        # Clear previous content
+        for widget in self.java_info_frame.winfo_children():
+            widget.destroy()
+
+        # Get installations
+        installations = self.java_manager.get_java_installations()
+
+        if not installations:
+            # No Java found
+            ctk.CTkLabel(
+                self.java_info_frame,
+                text="⚠ No se encontraron instalaciones de Java gestionadas por PyCraft",
+                font=("Arial", 12),
+                text_color="orange"
+            ).pack(pady=10)
+
+            ctk.CTkButton(
+                self.java_info_frame,
+                text="⬇ Instalar Java",
+                command=self._install_java_from_settings,
+                width=200,
+                height=35,
+                fg_color="green",
+                hover_color="darkgreen"
+            ).pack(pady=10)
+        else:
+            # Display each installation
+            for version, path, is_in_path in installations:
+                install_frame = ctk.CTkFrame(self.java_info_frame, fg_color="gray25")
+                install_frame.pack(pady=5, padx=10, fill="x")
+
+                # Info section
+                info_frame = ctk.CTkFrame(install_frame, fg_color="transparent")
+                info_frame.pack(side="left", fill="x", expand=True, padx=10, pady=10)
+
+                ctk.CTkLabel(
+                    info_frame,
+                    text=f"☕ Java {version}",
+                    font=("Arial", 14, "bold")
+                ).pack(anchor="w")
+
+                ctk.CTkLabel(
+                    info_frame,
+                    text=f"Ruta: {path}",
+                    font=("Arial", 10),
+                    text_color="gray"
+                ).pack(anchor="w")
+
+                status_text = "✓ En PATH del sistema" if is_in_path else "⚠ No está en PATH"
+                status_color = "green" if is_in_path else "orange"
+                ctk.CTkLabel(
+                    info_frame,
+                    text=status_text,
+                    font=("Arial", 10),
+                    text_color=status_color
+                ).pack(anchor="w")
+
+                # Buttons section
+                buttons_frame = ctk.CTkFrame(install_frame, fg_color="transparent")
+                buttons_frame.pack(side="right", padx=10)
+
+                if not is_in_path:
+                    ctk.CTkButton(
+                        buttons_frame,
+                        text="➕ Agregar a PATH",
+                        command=lambda p=path: self._add_java_to_path_ui(p),
+                        width=140,
+                        height=30,
+                        font=("Arial", 11),
+                        fg_color="blue",
+                        hover_color="darkblue"
+                    ).pack(pady=2)
+                else:
+                    ctk.CTkButton(
+                        buttons_frame,
+                        text="➖ Quitar de PATH",
+                        command=lambda p=path: self._remove_java_from_path_ui(p),
+                        width=140,
+                        height=30,
+                        font=("Arial", 11),
+                        fg_color="orange",
+                        hover_color="darkorange"
+                    ).pack(pady=2)
+
+                ctk.CTkButton(
+                    buttons_frame,
+                    text="🗑️ Eliminar",
+                    command=lambda v=version: self._delete_java_ui(v),
+                    width=140,
+                    height=30,
+                    font=("Arial", 11),
+                    fg_color="red",
+                    hover_color="darkred"
+                ).pack(pady=2)
+
+    def _install_java_from_settings(self):
+        """Handles Java installation from Settings tab"""
+        # Ask user which version to install
+        dialog = ctk.CTkInputDialog(
+            text="¿Qué versión de Java quieres instalar?\nVersiones comunes: 8, 17, 21",
+            title="Instalar Java"
+        )
+        version_str = dialog.get_input()
+
+        if version_str:
+            try:
+                version = int(version_str)
+                if version < 8 or version > 21:
+                    messagebox.showerror("Error", "Versión inválida. Usa 8, 17 o 21.")
+                    return
+
+                # Show progress window
+                progress_window = ctk.CTkToplevel(self.root)
+                self._set_window_icon(progress_window)
+                progress_window.title("Instalando Java")
+                progress_window.geometry("600x400")
+                progress_window.transient(self.root)
+                progress_window.grab_set()
+
+                ctk.CTkLabel(
+                    progress_window,
+                    text=f"Instalando Java {version}...",
+                    font=("Arial", 16, "bold")
+                ).pack(pady=20)
+
+                log_text = ctk.CTkTextbox(progress_window, width=550, height=300)
+                log_text.pack(pady=10, padx=20)
+
+                def log_callback(message):
+                    log_text.insert("end", message)
+                    log_text.see("end")
+
+                def install():
+                    result = self.java_manager.download_java(version, log_callback)
+                    if result:
+                        log_callback("\n✓ Instalación completada!\n")
+                        self.root.after(2000, progress_window.destroy)
+                        self.root.after(2100, self._verify_java_installations)
+                    else:
+                        log_callback("\n✗ Error en la instalación\n")
+
+                thread = threading.Thread(target=install, daemon=True)
+                thread.start()
+
+            except ValueError:
+                messagebox.showerror("Error", "Debes ingresar un número de versión válido.")
+
+    def _add_java_to_path_ui(self, java_path):
+        """Adds Java to PATH from UI"""
+        # Find java.exe in this path
+        java_exe = self.java_manager._find_java_executable(java_path)
+        if java_exe:
+            java_bin_dir = java_exe.parent
+            if self.java_manager.add_java_to_path(java_bin_dir):
+                messagebox.showinfo(
+                    "Éxito",
+                    f"Java agregado al PATH del sistema.\n\n"
+                    f"Nota: Es posible que necesites reiniciar las aplicaciones abiertas "
+                    f"para que detecten el cambio."
+                )
+                self._verify_java_installations()
+            else:
+                messagebox.showerror("Error", "No se pudo agregar Java al PATH")
+        else:
+            messagebox.showerror("Error", "No se encontró el ejecutable de Java")
+
+    def _remove_java_from_path_ui(self, java_path):
+        """Removes Java from PATH from UI"""
+        java_exe = self.java_manager._find_java_executable(java_path)
+        if java_exe:
+            java_bin_dir = java_exe.parent
+            if self.java_manager.remove_java_from_path(java_bin_dir):
+                messagebox.showinfo(
+                    "Éxito",
+                    f"Java removido del PATH del sistema.\n\n"
+                    f"Nota: Es posible que necesites reiniciar las aplicaciones abiertas "
+                    f"para que detecten el cambio."
+                )
+                self._verify_java_installations()
+            else:
+                messagebox.showerror("Error", "No se pudo remover Java del PATH")
+        else:
+            messagebox.showerror("Error", "No se encontró el ejecutable de Java")
+
+    def _delete_java_ui(self, java_version):
+        """Deletes a Java installation from UI"""
+        result = self._custom_askyesno(
+            "Confirmar eliminación",
+            f"¿Estás seguro de que quieres eliminar Java {java_version}?\n\n"
+            f"Esta acción no se puede deshacer."
+        )
+
+        if result:
+            if self.java_manager.delete_java_installation(java_version):
+                messagebox.showinfo("Éxito", f"Java {java_version} eliminado correctamente")
+                self._verify_java_installations()
+            else:
+                messagebox.showerror(
+                    "Error",
+                    f"No se pudo eliminar Java {java_version}.\n"
+                    f"Asegúrate de que no haya procesos de Java en ejecución."
+                )
+
+    def _change_language(self):
+        """Handles language change"""
+        selected = self.language_var.get()
+        if selected == "English":
+            messagebox.showinfo(
+                "Language Change",
+                "English language support is not yet implemented.\n"
+                "This feature will be available in a future update."
+            )
+            # Reset to Spanish
+            self.language_var.set("Español")
+        else:
+            # Already in Spanish, no action needed
+            pass
+
+    def _manage_modpack_folders(self):
+        """Opens a window to manage modpack client folders"""
+        # Check if there are any modpack folders
+        pycraft_dir = Path.home() / ".pycraft"
+        modpack_clients_dir = pycraft_dir / "modpack-modrinth"
+
+        if not modpack_clients_dir.exists():
+            messagebox.showinfo(
+                "Sin carpetas",
+                "No hay carpetas de modpack cliente instaladas."
+            )
+            return
+
+        # Get all modpack folders
+        modpack_folders = [f for f in modpack_clients_dir.iterdir() if f.is_dir()]
+
+        if not modpack_folders:
+            messagebox.showinfo(
+                "Sin carpetas",
+                "No hay carpetas de modpack cliente instaladas."
+            )
+            return
+
+        # Create management window
+        mgmt_window = ctk.CTkToplevel(self.root)
+        self._set_window_icon(mgmt_window)
+        mgmt_window.title("Gestión de Carpetas de Modpack Cliente")
+        mgmt_window.geometry("700x500")
+        mgmt_window.transient(self.root)
+        mgmt_window.grab_set()
+
+        ctk.CTkLabel(
+            mgmt_window,
+            text="📦 Carpetas de Modpack Cliente",
+            font=("Arial", 18, "bold")
+        ).pack(pady=20)
+
+        ctk.CTkLabel(
+            mgmt_window,
+            text="Selecciona una carpeta para eliminarla:",
+            font=("Arial", 12)
+        ).pack(pady=5)
+
+        # Scrollable frame for folders
+        folders_frame = ctk.CTkScrollableFrame(mgmt_window, width=650, height=350)
+        folders_frame.pack(pady=10, padx=20, fill="both", expand=True)
+
+        for folder in modpack_folders:
+            folder_frame = ctk.CTkFrame(folders_frame, fg_color="gray20")
+            folder_frame.pack(pady=5, padx=10, fill="x")
+
+            # Folder info
+            info_frame = ctk.CTkFrame(folder_frame, fg_color="transparent")
+            info_frame.pack(side="left", fill="x", expand=True, padx=10, pady=10)
+
+            ctk.CTkLabel(
+                info_frame,
+                text=f"📁 {folder.name}",
+                font=("Arial", 13, "bold")
+            ).pack(anchor="w")
+
+            ctk.CTkLabel(
+                info_frame,
+                text=f"Ruta: {folder}",
+                font=("Arial", 9),
+                text_color="gray"
+            ).pack(anchor="w")
+
+            # Size info
+            try:
+                size_mb = sum(f.stat().st_size for f in folder.rglob('*') if f.is_file()) / (1024 * 1024)
+                ctk.CTkLabel(
+                    info_frame,
+                    text=f"Tamaño: {size_mb:.1f} MB",
+                    font=("Arial", 9),
+                    text_color="gray"
+                ).pack(anchor="w")
+            except:
+                pass
+
+            # Delete button
+            ctk.CTkButton(
+                folder_frame,
+                text="🗑️ Eliminar",
+                command=lambda f=folder, w=mgmt_window: self._delete_modpack_folder(f, w),
+                width=100,
+                height=30,
+                fg_color="red",
+                hover_color="darkred"
+            ).pack(side="right", padx=10)
+
+    def _delete_modpack_folder(self, folder_path, parent_window):
+        """Deletes a modpack client folder"""
+        result = self._custom_askyesno(
+            "Confirmar eliminación",
+            f"¿Estás seguro de que quieres eliminar la carpeta:\n{folder_path.name}?\n\n"
+            f"Esta acción no se puede deshacer.",
+            parent=parent_window
+        )
+
+        if result:
+            try:
+                import shutil
+                shutil.rmtree(folder_path)
+                messagebox.showinfo(
+                    "Éxito",
+                    f"Carpeta eliminada correctamente:\n{folder_path.name}",
+                    parent=parent_window
+                )
+                # Refresh the window
+                parent_window.destroy()
+                self._manage_modpack_folders()
+            except Exception as e:
+                messagebox.showerror(
+                    "Error",
+                    f"No se pudo eliminar la carpeta:\n{str(e)}",
+                    parent=parent_window
+                )
+
+    def _open_client_modpack_installer(self):
+        """Opens a window to search and install client modpacks for friends"""
+        # Create installer window
+        installer_window = ctk.CTkToplevel(self.root)
+        self._set_window_icon(installer_window)
+        installer_window.title("Instalar Modpack Cliente")
+        installer_window.geometry("900x700")
+        installer_window.transient(self.root)
+        installer_window.grab_set()
+
+        # Main container
+        main_container = ctk.CTkFrame(installer_window)
+        main_container.pack(pady=10, padx=10, fill="both", expand=True)
+
+        # Title
+        ctk.CTkLabel(
+            main_container,
+            text="📥 Instalar Modpack Cliente (para amigos)",
+            font=ctk.CTkFont(size=20, weight="bold")
+        ).pack(pady=10)
+
+        ctk.CTkLabel(
+            main_container,
+            text="Busca e instala modpacks para que tus amigos puedan jugar en tu servidor",
+            font=ctk.CTkFont(size=12),
+            text_color="gray60"
+        ).pack(pady=(0, 10))
+
+        # Search section
+        search_frame = ctk.CTkFrame(main_container, fg_color="gray20")
+        search_frame.pack(pady=10, padx=10, fill="x")
+
+        ctk.CTkLabel(
+            search_frame,
+            text="Buscar Modpacks en Modrinth",
+            font=ctk.CTkFont(size=16, weight="bold")
+        ).pack(pady=10)
+
+        search_input_frame = ctk.CTkFrame(search_frame, fg_color="transparent")
+        search_input_frame.pack(pady=5)
+
+        search_entry = ctk.CTkEntry(
+            search_input_frame,
+            placeholder_text="Ej: Create, ATM9, RLCraft, Prominence...",
+            width=500,
+            height=35
+        )
+        search_entry.pack(side="left", padx=(0, 10))
+
+        # Search results frame
+        results_container = ctk.CTkFrame(search_frame, fg_color="gray25", corner_radius=10)
+        results_container.pack(pady=10, padx=10, fill="both", expand=True)
+
+        ctk.CTkLabel(
+            results_container,
+            text="Resultados:",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color="gray70"
+        ).pack(anchor="w", padx=15, pady=(10, 5))
+
+        results_frame = ctk.CTkScrollableFrame(
+            results_container,
+            fg_color="transparent",
+            width=850,
+            height=250
+        )
+        results_frame.pack(pady=(5, 10), padx=10, fill="both", expand=True)
+
+        no_results_label = ctk.CTkLabel(
+            results_frame,
+            text="Usa la búsqueda para encontrar modpacks",
+            font=ctk.CTkFont(size=12),
+            text_color="gray50"
+        )
+        no_results_label.pack(pady=20)
+
+        # Installation console
+        console_frame = ctk.CTkFrame(main_container, fg_color="gray20")
+        console_frame.pack(pady=10, padx=10, fill="both", expand=True)
+
+        ctk.CTkLabel(
+            console_frame,
+            text="Consola de Instalación",
+            font=ctk.CTkFont(size=14, weight="bold")
+        ).pack(pady=5)
+
+        console_textbox = ctk.CTkTextbox(
+            console_frame,
+            width=850,
+            height=150,
+            font=ctk.CTkFont(family="Consolas", size=11),
+            state="disabled"
+        )
+        console_textbox.pack(pady=5, padx=10, fill="both", expand=True)
+
+        def add_console_log(message: str):
+            """Adds a message to the console"""
+            console_textbox.configure(state="normal")
+            console_textbox.insert("end", message)
+            console_textbox.see("end")
+            console_textbox.configure(state="disabled")
+
+        def search_modpacks():
+            """Searches for modpacks on Modrinth"""
+            query = search_entry.get().strip()
+            if not query:
+                return
+
+            # Clear previous results
+            for widget in results_frame.winfo_children():
+                widget.destroy()
+
+            add_console_log(f"Buscando '{query}' en Modrinth...\n")
+
+            def do_search():
+                try:
+                    results = self.modpack_manager.search_modpacks(query, platform="modrinth")
+
+                    if results:
+                        add_console_log(f"✓ Encontrados {len(results)} modpacks\n\n")
+
+                        for modpack in results[:10]:  # Show max 10 results
+                            self._create_client_modpack_result_card(
+                                results_frame,
+                                modpack,
+                                installer_window,
+                                add_console_log
+                            )
+                    else:
+                        no_results_label.pack(pady=20)
+                        add_console_log("No se encontraron modpacks\n")
+
+                except Exception as e:
+                    add_console_log(f"✗ Error: {str(e)}\n")
+
+            threading.Thread(target=do_search, daemon=True).start()
+
+        search_btn = ctk.CTkButton(
+            search_input_frame,
+            text="Buscar",
+            command=search_modpacks,
+            width=120,
+            height=35
+        )
+        search_btn.pack(side="left")
+
+        search_entry.bind("<Return>", lambda e: search_modpacks())
+
+    def _create_client_modpack_result_card(self, parent_frame, modpack: Dict, installer_window, log_callback):
+        """Creates a result card for client modpack installation"""
+        card = ctk.CTkFrame(
+            parent_frame,
+            fg_color=self.colors["bg_tertiary"],
+            corner_radius=12,
+            border_width=1,
+            border_color=self.colors["border_light"]
+        )
+        card.pack(pady=6, padx=10, fill="x")
+
+        # Modpack info
+        name = modpack.get("title", "Sin nombre")
+        description = modpack.get("description", "Sin descripción")
+        author = modpack.get("author", "Desconocido")
+        downloads = modpack.get("downloads", 0)
+        project_id = modpack.get("project_id", "")
+
+        info_frame = ctk.CTkFrame(card, fg_color="transparent")
+        info_frame.pack(side="left", fill="x", expand=True, padx=15, pady=10)
+
+        # Title
+        ctk.CTkLabel(
+            info_frame,
+            text=name,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            text_color=self.colors["text_primary"],
+            anchor="w"
+        ).pack(anchor="w")
+
+        # Description (truncated)
+        desc_truncated = description[:100] + "..." if len(description) > 100 else description
+        ctk.CTkLabel(
+            info_frame,
+            text=desc_truncated,
+            font=ctk.CTkFont(size=11),
+            text_color=self.colors["text_secondary"],
+            anchor="w",
+            wraplength=500
+        ).pack(anchor="w", pady=(3, 0))
+
+        # Metadata
+        meta_text = f"Por {author} • {downloads:,} descargas"
+        ctk.CTkLabel(
+            info_frame,
+            text=meta_text,
+            font=ctk.CTkFont(size=10),
+            text_color=self.colors["text_muted"],
+            anchor="w"
+        ).pack(anchor="w", pady=(3, 0))
+
+        # Install button
+        install_btn = ctk.CTkButton(
+            card,
+            text="Seleccionar",
+            command=lambda: self._select_client_modpack_version(
+                project_id,
+                name,
+                installer_window,
+                log_callback
+            ),
+            width=120,
+            height=35,
+            fg_color=self.colors["accent_dark"],
+            hover_color=self.colors["accent_hover"],
+            font=ctk.CTkFont(size=12, weight="bold")
+        )
+        install_btn.pack(side="right", padx=15, pady=10)
+
+    def _select_client_modpack_version(self, project_id: str, modpack_name: str, parent_window, log_callback):
+        """Opens a dialog to select modpack version for client installation"""
+        log_callback(f"\nObteniendo versiones de '{modpack_name}'...\n")
+
+        def fetch_versions():
+            try:
+                versions = self.modpack_manager.modrinth_api.get_modpack_versions(project_id)
+
+                if not versions:
+                    log_callback("✗ No se encontraron versiones\n")
+                    return
+
+                log_callback(f"✓ Encontradas {len(versions)} versiones\n\n")
+
+                # Create version selection dialog
+                self.root.after(0, lambda: self._show_client_version_dialog(
+                    versions,
+                    modpack_name,
+                    parent_window,
+                    log_callback
+                ))
+
+            except Exception as e:
+                log_callback(f"✗ Error al obtener versiones: {str(e)}\n")
+
+        threading.Thread(target=fetch_versions, daemon=True).start()
+
+    def _show_client_version_dialog(self, versions: List, modpack_name: str, parent_window, log_callback):
+        """Shows dialog to select a version for client installation"""
+        version_dialog = ctk.CTkToplevel(parent_window)
+        self._set_window_icon(version_dialog)
+        version_dialog.title(f"Seleccionar Versión - {modpack_name}")
+        version_dialog.geometry("500x600")
+        version_dialog.transient(parent_window)
+        version_dialog.grab_set()
+
+        ctk.CTkLabel(
+            version_dialog,
+            text=f"Versiones de {modpack_name}",
+            font=ctk.CTkFont(size=18, weight="bold")
+        ).pack(pady=15)
+
+        ctk.CTkLabel(
+            version_dialog,
+            text="Selecciona la versión que quieres instalar:",
+            font=ctk.CTkFont(size=12)
+        ).pack(pady=5)
+
+        # Scrollable frame for versions
+        versions_frame = ctk.CTkScrollableFrame(version_dialog, width=450, height=450)
+        versions_frame.pack(pady=10, padx=20, fill="both", expand=True)
+
+        for version in versions:
+            version_name = version.get("name", "Sin nombre")
+            version_number = version.get("version_number", "")
+            game_versions = version.get("game_versions", [])
+            mc_version = game_versions[0] if game_versions else "Desconocida"
+
+            version_frame = ctk.CTkFrame(versions_frame, fg_color="gray20")
+            version_frame.pack(pady=5, padx=10, fill="x")
+
+            info_frame = ctk.CTkFrame(version_frame, fg_color="transparent")
+            info_frame.pack(side="left", fill="x", expand=True, padx=10, pady=10)
+
+            ctk.CTkLabel(
+                info_frame,
+                text=version_name,
+                font=ctk.CTkFont(size=13, weight="bold"),
+                anchor="w"
+            ).pack(anchor="w")
+
+            ctk.CTkLabel(
+                info_frame,
+                text=f"Minecraft {mc_version} • Versión {version_number}",
+                font=ctk.CTkFont(size=10),
+                text_color="gray",
+                anchor="w"
+            ).pack(anchor="w")
+
+            ctk.CTkButton(
+                version_frame,
+                text="Instalar",
+                command=lambda v=version: self._install_client_modpack_version(
+                    v,
+                    modpack_name,
+                    version_dialog,
+                    parent_window,
+                    log_callback
+                ),
+                width=100,
+                fg_color=self.colors["success"],
+                hover_color="#2d8a3e"
+            ).pack(side="right", padx=10, pady=10)
+
+    def _install_client_modpack_version(self, version: Dict, modpack_name: str, version_dialog, parent_window, log_callback):
+        """Installs the selected modpack version for client"""
+        version_dialog.destroy()
+
+        log_callback(f"\n{'='*50}\n")
+        log_callback(f"Instalando {modpack_name} para cliente...\n")
+        log_callback(f"{'='*50}\n\n")
+
+        def install():
+            try:
+                import zipfile
+                import tempfile
+                import urllib.request
+
+                # Get the download URL for the modpack
+                files = version.get("files", [])
+                if not files:
+                    log_callback("✗ No se encontró archivo de descarga\n")
+                    return
+
+                download_url = files[0].get("url", "")
+                if not download_url:
+                    log_callback("✗ URL de descarga inválida\n")
+                    return
+
+                # Install to client folder
+                user_folder = os.path.expanduser('~')
+                client_path = os.path.join(user_folder, '.pycraft', 'modpack-modrinth', modpack_name)
+
+                log_callback(f"Descargando modpack...\n")
+                log_callback(f"Destino: {client_path}\n\n")
+
+                # Create temp directory
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    # Download the modpack
+                    modpack_file = os.path.join(temp_dir, "modpack.mrpack")
+                    log_callback("Descargando archivo...\n")
+                    urllib.request.urlretrieve(download_url, modpack_file)
+                    log_callback("✓ Descarga completada\n\n")
+
+                    # Extract the modpack
+                    log_callback("Extrayendo archivos...\n")
+                    extract_dir = os.path.join(temp_dir, "extracted")
+                    os.makedirs(extract_dir, exist_ok=True)
+
+                    with zipfile.ZipFile(modpack_file, 'r') as zip_ref:
+                        zip_ref.extractall(extract_dir)
+
+                    log_callback("✓ Extracción completada\n\n")
+
+                    # Copy to client folder
+                    log_callback("Copiando archivos a la carpeta de cliente...\n")
+                    os.makedirs(client_path, exist_ok=True)
+
+                    # Copy overrides folder (contains mods, configs, etc.)
+                    overrides_path = os.path.join(extract_dir, "overrides")
+                    if os.path.exists(overrides_path):
+                        for item in os.listdir(overrides_path):
+                            src = os.path.join(overrides_path, item)
+                            dst = os.path.join(client_path, item)
+                            if os.path.isdir(src):
+                                shutil.copytree(src, dst, dirs_exist_ok=True)
+                            else:
+                                shutil.copy2(src, dst)
+
+                    # Also copy the manifest for reference
+                    manifest_src = os.path.join(extract_dir, "modrinth.index.json")
+                    if os.path.exists(manifest_src):
+                        shutil.copy2(manifest_src, os.path.join(client_path, "modrinth.index.json"))
+
+                    log_callback("✓ Archivos copiados correctamente\n\n")
+
+                log_callback(f"\n{'='*50}\n")
+                log_callback("✓ INSTALACIÓN COMPLETADA\n")
+                log_callback(f"{'='*50}\n\n")
+                log_callback(f"Ruta de instalación:\n{client_path}\n\n")
+                log_callback("Configura esta ruta en tu launcher para jugar!\n")
+
+                # Show success message
+                self.root.after(0, lambda: messagebox.showinfo(
+                    "Instalación Completada",
+                    f"Modpack instalado correctamente!\n\n"
+                    f"Ruta: {client_path}\n\n"
+                    f"Ponlo en el directorio de tu launcher para jugar.",
+                    parent=parent_window
+                ))
+
+            except Exception as e:
+                log_callback(f"\n✗ Error: {str(e)}\n")
+
+        threading.Thread(target=install, daemon=True).start()
+
     def _load_versions(self):
         """Carga las versiones desde la API"""
         self._add_log_new("Cargando versiones de Minecraft desde la API...\n", "info")
@@ -959,10 +2000,10 @@ class PyCraftGUI:
         self._add_log_new(f"✓ Versión seleccionada: {version}\n", "info")
         self._update_download_button_state()
 
-        # Destacar el botón seleccionado
+        # Destacar el botón seleccionado con un color verde suave
         for btn in self.version_buttons:
             if btn.cget("text") == version:
-                btn.configure(fg_color="blue", hover_color="darkblue")
+                btn.configure(fg_color="#2d5f2e", hover_color="#3d7f3e")  # Dark green
             else:
                 btn.configure(fg_color="gray25", hover_color="gray35")
 
@@ -1149,6 +2190,9 @@ class PyCraftGUI:
                     self._add_log_new("  • EULA aceptado automáticamente\n", "info")
                     self._add_log_new("  • online-mode: false (para jugar con amigos)\n", "info")
                     self._add_log_new("  • difficulty: normal\n\n", "info")
+
+                    # Warning message in orange
+                    self._add_log_new("⚠️ IMPORTANTE: Para jugar con amigos, ve a 'Información y Ayuda' → 'Jugar con Amigos'\n\n", "warning")
                     self._add_log_new("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n", "warning")
                     self._add_log_new("          PRÓXIMO PASO:\n\n", "warning")
                     self._add_log_new("  Ve a la pestaña 'Abrir Servidor Existente'\n", "info")
@@ -1293,7 +2337,7 @@ class PyCraftGUI:
             self._add_log_existing("\n", "normal")
             self._add_log_existing("╔═══════════════════════════════════════════════════════╗\n", "success")
             self._add_log_existing("║                                                       ║\n", "success")
-            self._add_log_existing("║      ✓ ¡SERVIDOR LISTO Y FUNCIONANDO!               ║\n", "success")
+            self._add_log_existing("║      ✓ ¡SERVIDOR LISTO Y FUNCIONANDO!                ║\n", "success")
             self._add_log_existing("║                                                       ║\n", "success")
             self._add_log_existing("╚═══════════════════════════════════════════════════════╝\n", "success")
             self._add_log_existing("\nLos jugadores ya pueden conectarse al servidor.\n", "info")
@@ -1332,8 +2376,9 @@ class PyCraftGUI:
 
         # Crear ventana de configuración
         config_window = ctk.CTkToplevel(self.root)
+        self._set_window_icon(config_window)
         config_window.title("Configuración del Servidor")
-        config_window.geometry("450x380")  # Aumentado para que los botones sean visibles
+        config_window.geometry("450x450")  # Aumentado para mostrar información de versión
         config_window.resizable(False, False)
 
         # Centrar ventana
@@ -1376,6 +2421,19 @@ class PyCraftGUI:
                 font=ctk.CTkFont(size=13)
             )
             radio.pack(pady=8, padx=20, anchor="w")
+
+        # Información de versión
+        version_frame = ctk.CTkFrame(config_window, fg_color="gray20")
+        version_frame.pack(pady=10, padx=20, fill="x")
+
+        # Mostrar versión del servidor
+        version_text = f"Versión del servidor: {self.selected_version or 'Desconocida'}"
+        ctk.CTkLabel(
+            version_frame,
+            text=version_text,
+            font=ctk.CTkFont(size=12),
+            text_color="gray70"
+        ).pack(pady=10, padx=10)
 
         # Botones
         button_frame = ctk.CTkFrame(config_window, fg_color="transparent")
@@ -1426,8 +2484,9 @@ class PyCraftGUI:
 
         # Crear ventana de configuración
         config_window = ctk.CTkToplevel(self.root)
+        self._set_window_icon(config_window)
         config_window.title("Configuración del Servidor con Modpack")
-        config_window.geometry("450x380")  # Aumentado para que los botones sean visibles
+        config_window.geometry("450x500")  # Aumentado para mostrar información de versión y modpack
         config_window.resizable(False, False)
 
         # Centrar ventana
@@ -1470,6 +2529,54 @@ class PyCraftGUI:
                 font=ctk.CTkFont(size=13)
             )
             radio.pack(pady=8, padx=20, anchor="w")
+
+        # Información de versión y modpack
+        version_frame = ctk.CTkFrame(config_window, fg_color="gray20")
+        version_frame.pack(pady=10, padx=20, fill="x")
+
+        # Mostrar información del servidor y modpack
+        info_container = ctk.CTkFrame(version_frame, fg_color="transparent")
+        info_container.pack(pady=10, padx=10, fill="x")
+
+        # Nombre del modpack
+        modpack_name_text = f"Modpack: {self.modpack_name or 'Desconocido'}"
+        ctk.CTkLabel(
+            info_container,
+            text=modpack_name_text,
+            font=ctk.CTkFont(size=12),
+            text_color="gray70",
+            anchor="w"
+        ).pack(pady=2, anchor="w")
+
+        # Versión del modpack
+        modpack_version_text = f"Versión del modpack: {self.modpack_version or 'Desconocida'}"
+        ctk.CTkLabel(
+            info_container,
+            text=modpack_version_text,
+            font=ctk.CTkFont(size=12),
+            text_color="gray70",
+            anchor="w"
+        ).pack(pady=2, anchor="w")
+
+        # Versión de Minecraft
+        mc_version_text = f"Versión del servidor: {self.modpack_minecraft_version or 'Desconocida'}"
+        ctk.CTkLabel(
+            info_container,
+            text=mc_version_text,
+            font=ctk.CTkFont(size=12),
+            text_color="gray70",
+            anchor="w"
+        ).pack(pady=2, anchor="w")
+
+        # Tipo de servidor (Forge/Fabric)
+        loader_text = f"Tipo: {self.modpack_loader_name.capitalize() if self.modpack_loader_name else 'Desconocido'}"
+        ctk.CTkLabel(
+            info_container,
+            text=loader_text,
+            font=ctk.CTkFont(size=12),
+            text_color="gray70",
+            anchor="w"
+        ).pack(pady=2, anchor="w")
 
         # Botones
         button_frame = ctk.CTkFrame(config_window, fg_color="transparent")
@@ -1530,7 +2637,7 @@ class PyCraftGUI:
 
         if servers_running:
             server_types = ", ".join([s[0] for s in servers_running])
-            response = messagebox.askyesno(
+            response = self._custom_askyesno(
                 "Servidores en ejecución",
                 f"Hay servidores en ejecución ({server_types}).\n\n¿Deseas detenerlos y cerrar PyCraft?"
             )
@@ -1567,8 +2674,17 @@ class PyCraftGUI:
 
         def on_mouse_wheel(event):
             if mouse_inside[0]:
-                # El mouse está dentro del textbox, manejar el scroll aquí
-                # y prevenir propagación
+                # Get the internal textbox widget
+                text_widget = textbox._textbox
+
+                # Scroll the textbox (delta is positive for scroll up, negative for scroll down)
+                # On Windows, event.delta is usually 120 or -120
+                if event.delta > 0:
+                    text_widget.yview_scroll(-1, "units")
+                elif event.delta < 0:
+                    text_widget.yview_scroll(1, "units")
+
+                # Prevent propagation to parent scrollable frame
                 return "break"
             return None
 
@@ -1576,10 +2692,11 @@ class PyCraftGUI:
         textbox.bind("<Enter>", on_enter)
         textbox.bind("<Leave>", on_leave)
 
-        # Bindear eventos de scroll
+        # Bindear eventos de scroll (Windows/Linux usa MouseWheel)
         textbox.bind("<MouseWheel>", on_mouse_wheel)
-        textbox.bind("<Button-4>", on_mouse_wheel)
-        textbox.bind("<Button-5>", on_mouse_wheel)
+        # Mac/Linux pueden usar Button-4 y Button-5
+        textbox.bind("<Button-4>", lambda e: on_mouse_wheel(type('Event', (), {'delta': 120})()))
+        textbox.bind("<Button-5>", lambda e: on_mouse_wheel(type('Event', (), {'delta': -120})()))
 
     def _fix_scrollable_frame_scroll(self, scrollable_frame):
         """
@@ -2048,10 +3165,29 @@ class PyCraftGUI:
                 )
 
                 self.start_modpack_server_btn.configure(state="normal")
-                self.install_client_btn.configure(state="normal")
 
-                # Detectar versiones
+                # Detectar versiones y metadata
                 mc_version, loader_version = self._detect_server_versions(folder, server_type)
+                modpack_name = self._detect_modpack_name(folder)
+
+                # Store metadata for sharing
+                self.modpack_name = modpack_name
+                self.modpack_minecraft_version = mc_version
+                self.modpack_loader_name = server_type
+
+                # Try to get version and slug from manifest
+                modpack_version, modpack_slug = self._get_modpack_metadata(folder)
+                self.modpack_version = modpack_version
+                self.modpack_slug = modpack_slug
+
+                # Check if client modpack is already installed
+                if self._is_client_modpack_installed(modpack_name):
+                    self.install_client_btn.configure(
+                        state="disabled",
+                        text="✓ Modpack Cliente Ya Instalado"
+                    )
+                else:
+                    self.install_client_btn.configure(state="normal")
 
                 self._add_log_modpack_server("\n╔═══════════════════════════════════════════════════════╗\n", "success")
                 self._add_log_modpack_server("║     ✓ SERVIDOR CON MODPACK ENCONTRADO               ║\n", "success")
@@ -2184,6 +3320,32 @@ class PyCraftGUI:
 
         self.modpack_command_entry.delete(0, 'end')
 
+    def _is_client_modpack_installed(self, modpack_name: str) -> bool:
+        """
+        Checks if a client modpack is already installed
+
+        Args:
+            modpack_name: Name of the modpack
+
+        Returns:
+            True if installed, False otherwise
+        """
+        if not modpack_name:
+            return False
+
+        user_folder = os.path.expanduser('~')
+        client_path = os.path.join(user_folder, '.pycraft', 'modpack-modrinth', modpack_name)
+
+        # Check if the folder exists and has mods
+        if os.path.exists(client_path):
+            mods_path = os.path.join(client_path, 'mods')
+            if os.path.exists(mods_path):
+                # Check if there are any mod files
+                mod_files = [f for f in os.listdir(mods_path) if f.endswith('.jar')]
+                return len(mod_files) > 0
+
+        return False
+
     def _install_client_modpack(self):
         """Instala el modpack para el cliente"""
         if not self.modpack_server_path:
@@ -2199,11 +3361,11 @@ class PyCraftGUI:
             if not modpack_name:
                 return
 
-        response = messagebox.askyesno(
+        response = self._custom_askyesno(
             "Confirmar Instalación",
             f"¿Instalar el modpack para el cliente?\n\n"
             f"El modpack se instalará en:\n"
-            f"C:\\Users\\{os.getenv('USERNAME')}\\Modrinth\\{modpack_name}\n\n"
+            f"C:\\Users\\{os.getenv('USERNAME')}\\.pycraft\\modpack-modrinth\\{modpack_name}\n\n"
             f"Luego podrás configurar tu launcher para usar esa carpeta."
         )
 
@@ -2222,8 +3384,9 @@ class PyCraftGUI:
 
                 if success:
                     user_folder = os.path.expanduser('~')
-                    final_path = os.path.join(user_folder, 'Modrinth', modpack_name)
+                    final_path = os.path.join(user_folder, '.pycraft', 'modpack-modrinth', modpack_name)
 
+                    # Show success message
                     messagebox.showinfo(
                         "¡Instalación Completada!",
                         f"El modpack se instaló correctamente para el cliente en:\n\n"
@@ -2231,7 +3394,9 @@ class PyCraftGUI:
                         f"Ahora puedes:\n"
                         f"1. Abrir SKLauncher (o tu launcher)\n"
                         f"2. Configurar el 'Directorio del juego' a la ruta de arriba\n"
-                        f"3. ¡Iniciar el juego y conectarte al servidor!"
+                        f"3. ¡Iniciar el juego y conectarte al servidor!\n\n"
+                        f"Para compartir con amigos, revisa la pestaña 'Información y Ayuda'\n"
+                        f"en la sección '🎮 Jugar con Amigos'."
                     )
                 else:
                     messagebox.showerror("Error", "Hubo un error al instalar el modpack para el cliente")
@@ -2265,7 +3430,13 @@ class PyCraftGUI:
             modrinth_manifest = os.path.join(server_folder, "modrinth.index.json")
             cf_manifest = os.path.join(server_folder, "manifest.json")
 
+            # Debug: Log manifest existence
+            self._add_log_modpack_server(f"\n🔍 Buscando manifests...\n", "info")
+            self._add_log_modpack_server(f"  modrinth.index.json: {'✓ Existe' if os.path.exists(modrinth_manifest) else '✗ No existe'}\n", "info")
+            self._add_log_modpack_server(f"  manifest.json: {'✓ Existe' if os.path.exists(cf_manifest) else '✗ No existe'}\n\n", "info")
+
             if os.path.exists(modrinth_manifest):
+                self._add_log_modpack_server("📖 Leyendo modrinth.index.json...\n", "info")
                 with open(modrinth_manifest, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                     deps = data.get("dependencies", {})
@@ -2274,6 +3445,9 @@ class PyCraftGUI:
                         loader_version = deps.get("forge")
                     elif server_type == "fabric":
                         loader_version = deps.get("fabric-loader")
+
+                    self._add_log_modpack_server(f"  Minecraft desde manifest: {mc_version or 'No encontrado'}\n", "info")
+                    self._add_log_modpack_server(f"  Loader desde manifest: {loader_version or 'No encontrado'}\n\n", "info")
 
             elif os.path.exists(cf_manifest):
                 with open(cf_manifest, 'r', encoding='utf-8') as f:
@@ -2290,9 +3464,11 @@ class PyCraftGUI:
 
             # Si no encontramos en manifests, buscar en la estructura de libraries
             if not mc_version or not loader_version:
+                self._add_log_modpack_server("🔍 Buscando en estructura de carpetas...\n", "info")
                 if server_type == "forge":
                     # Buscar en libraries/net/minecraftforge/forge/
                     forge_path = os.path.join(server_folder, "libraries", "net", "minecraftforge", "forge")
+                    self._add_log_modpack_server(f"  Verificando: {forge_path}\n", "info")
                     if os.path.exists(forge_path):
                         # Listar carpetas de versiones (ejemplo: 1.20.1-47.4.0)
                         for version_folder in os.listdir(forge_path):
@@ -2324,28 +3500,80 @@ class PyCraftGUI:
                 elif server_type == "fabric":
                     # Buscar en libraries/net/fabricmc/fabric-loader/
                     fabric_path = os.path.join(server_folder, "libraries", "net", "fabricmc", "fabric-loader")
+                    self._add_log_modpack_server(f"  Verificando: {fabric_path}\n", "info")
                     if os.path.exists(fabric_path):
+                        self._add_log_modpack_server(f"    ✓ Carpeta existe, listando versiones...\n", "info")
                         # Listar carpetas de versiones del loader
                         for loader_folder in os.listdir(fabric_path):
                             if os.path.isdir(os.path.join(fabric_path, loader_folder)):
                                 loader_version = loader_folder
+                                self._add_log_modpack_server(f"    Fabric loader encontrado: {loader_version}\n", "success")
                                 break
+                    else:
+                        self._add_log_modpack_server(f"    ✗ Carpeta no existe\n", "warning")
 
                     # Para Minecraft version, buscar en fabric-server-launch.jar o archivos de config
                     if not mc_version:
                         # Intentar desde .fabric/server.properties
                         fabric_server_properties = os.path.join(server_folder, ".fabric", "server.properties")
+                        self._add_log_modpack_server(f"  Verificando: {fabric_server_properties}\n", "info")
                         if os.path.exists(fabric_server_properties):
+                            self._add_log_modpack_server(f"    ✓ Archivo existe, leyendo...\n", "info")
                             with open(fabric_server_properties, 'r') as f:
                                 for line in f:
                                     if line.startswith("game-version="):
                                         mc_version = line.split("=", 1)[1].strip()
+                                        self._add_log_modpack_server(f"    Minecraft version encontrada: {mc_version}\n", "success")
                                         break
+                        else:
+                            self._add_log_modpack_server(f"    ✗ Archivo no existe\n", "warning")
 
             return mc_version, loader_version
 
         except Exception as e:
             self._add_log_modpack_server(f"⚠ Error al detectar versiones: {str(e)}\n", "warning")
+            return None, None
+
+    def _get_modpack_metadata(self, server_folder: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Gets modpack version and slug from manifest files
+
+        Args:
+            server_folder: Server folder path
+
+        Returns:
+            Tuple (modpack_version, modpack_slug)
+        """
+        try:
+            # Try Modrinth manifest first
+            modrinth_manifest = os.path.join(server_folder, "modrinth.index.json")
+            if os.path.exists(modrinth_manifest):
+                with open(modrinth_manifest, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    version = data.get("versionId", data.get("name"))
+
+                    # Try to get slug from the manifest
+                    # Modrinth manifests usually have the project name in "name" field
+                    name = data.get("name", "")
+                    # Convert name to slug (lowercase, replace spaces with dashes)
+                    slug = name.lower().replace(" ", "-").replace("_", "-") if name else None
+
+                    return version, slug
+
+            # Try CurseForge manifest
+            cf_manifest = os.path.join(server_folder, "manifest.json")
+            if os.path.exists(cf_manifest):
+                with open(cf_manifest, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    version = data.get("version", data.get("name"))
+                    name = data.get("name", "")
+                    slug = name.lower().replace(" ", "-").replace("_", "-") if name else None
+
+                    return version, slug
+
+            return None, None
+
+        except Exception as e:
             return None, None
 
     def _detect_modpack_name(self, server_folder: str) -> Optional[str]:
@@ -2399,6 +3627,7 @@ class PyCraftGUI:
         """
         # Crear ventana de diálogo personalizada
         dialog = ctk.CTkToplevel(self.root)
+        self._set_window_icon(dialog)
         dialog.title("Nombre del Modpack")
         dialog.geometry("500x250")
         dialog.resizable(False, False)
@@ -2422,7 +3651,7 @@ class PyCraftGUI:
 
         ctk.CTkLabel(
             dialog,
-            text="Este nombre se usará para crear la carpeta en:\nC:\\Users\\[tu-usuario]\\Modrinth\\[nombre]",
+            text="Este nombre se usará para crear la carpeta en:\nC:\\Users\\[tu-usuario]\\.pycraft\\modpack-modrinth\\[nombre]",
             font=ctk.CTkFont(size=11),
             text_color="gray"
         ).pack(pady=5)
@@ -2520,17 +3749,17 @@ class PyCraftGUI:
 
     def install_modpack_for_client(self, modpack_name: str, modpack_folder: str):
         """
-        Instala el modpack para el cliente en C:/Users/[user]/Modrinth/[nombre]/
+        Instala el modpack para el cliente en C:/Users/[user]/.pycraft/modpack-modrinth/[nombre]/
 
         Args:
             modpack_name: Nombre del modpack
             modpack_folder: Carpeta del servidor con el modpack
         """
         try:
-            # Ruta a C:\Users\[nombre]\Modrinth\
+            # Ruta a C:\Users\[nombre]\.pycraft\modpack-modrinth\
             user_folder = os.path.expanduser('~')  # C:\Users\[nombre]
-            modrinth_folder = os.path.join(user_folder, 'Modrinth')
-            client_modpack_folder = os.path.join(modrinth_folder, modpack_name)
+            pycraft_folder = os.path.join(user_folder, '.pycraft', 'modpack-modrinth')
+            client_modpack_folder = os.path.join(pycraft_folder, modpack_name)
 
             self._add_log_modpack_server(f"Destino: {client_modpack_folder}\n", "info")
 

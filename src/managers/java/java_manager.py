@@ -4,8 +4,18 @@ import platform
 import requests
 import zipfile
 import shutil
-from typing import Optional, Tuple, Callable
+from typing import Optional, Tuple, Callable, List
 from pathlib import Path
+
+# Windows-specific imports for PATH management
+if platform.system() == "Windows":
+    try:
+        import winreg
+        WINREG_AVAILABLE = True
+    except ImportError:
+        WINREG_AVAILABLE = False
+else:
+    WINREG_AVAILABLE = False
 
 
 class JavaManager:
@@ -333,6 +343,21 @@ class JavaManager:
                     log_callback(f"✓ Java {java_version} instalado correctamente\n")
                     log_callback(f"  Directorio: {extract_dir}\n")
                     log_callback(f"  Ejecutable: {java_bin_path}\n")
+
+                # Add Java to PATH automatically
+                if log_callback:
+                    log_callback("\nConfigurando PATH del sistema...\n")
+
+                java_bin_dir = java_bin_path.parent
+                if self.add_java_to_path(java_bin_dir, log_callback):
+                    if log_callback:
+                        log_callback("✓ Java configurado en el PATH del sistema\n")
+                        log_callback("  Ahora puedes usar 'java' desde cualquier terminal\n")
+                else:
+                    if log_callback:
+                        log_callback("⚠ No se pudo configurar el PATH automáticamente\n")
+                        log_callback("  Puedes configurarlo manualmente desde la pestaña de Configuración\n")
+
                 return str(extract_dir)
             else:
                 if log_callback:
@@ -525,3 +550,308 @@ class JavaManager:
             if log_callback:
                 log_callback(f"\nError al gestionar Java: {str(e)}\n")
             return None
+
+    # ==================== PATH MANAGEMENT ====================
+
+    def _get_user_path_from_registry(self) -> Optional[str]:
+        """
+        Gets the current User PATH from Windows Registry
+
+        Returns:
+            Current PATH string or None if failed
+        """
+        if not WINREG_AVAILABLE or self.system != "Windows":
+            return None
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Environment",
+                0,
+                winreg.KEY_READ
+            ) as key:
+                path_value, _ = winreg.QueryValueEx(key, "Path")
+                return path_value
+        except FileNotFoundError:
+            # Path doesn't exist yet
+            return ""
+        except Exception as e:
+            print(f"Error reading PATH from registry: {e}")
+            return None
+
+    def _set_user_path_to_registry(self, new_path: str) -> bool:
+        """
+        Sets the User PATH in Windows Registry
+
+        Args:
+            new_path: New PATH string
+
+        Returns:
+            True if successful
+        """
+        if not WINREG_AVAILABLE or self.system != "Windows":
+            return False
+
+        try:
+            with winreg.OpenKey(
+                winreg.HKEY_CURRENT_USER,
+                r"Environment",
+                0,
+                winreg.KEY_WRITE
+            ) as key:
+                winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
+
+            # Broadcast WM_SETTINGCHANGE to notify applications
+            import ctypes
+            HWND_BROADCAST = 0xFFFF
+            WM_SETTINGCHANGE = 0x001A
+            SMTO_ABORTIFHUNG = 0x0002
+            result = ctypes.c_long()
+            ctypes.windll.user32.SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_SETTINGCHANGE,
+                0,
+                "Environment",
+                SMTO_ABORTIFHUNG,
+                5000,
+                ctypes.byref(result)
+            )
+
+            return True
+        except Exception as e:
+            print(f"Error writing PATH to registry: {e}")
+            return False
+
+    def add_java_to_path(
+        self,
+        java_bin_path: Path,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Adds Java bin directory to User PATH
+
+        Args:
+            java_bin_path: Path to the Java bin directory (containing java.exe)
+            log_callback: Function to report progress
+
+        Returns:
+            True if successful
+        """
+        if not WINREG_AVAILABLE or self.system != "Windows":
+            if log_callback:
+                log_callback("⚠ PATH management is only supported on Windows\n")
+            return False
+
+        try:
+            java_bin_str = str(java_bin_path.absolute())
+
+            # Get current PATH
+            current_path = self._get_user_path_from_registry()
+            if current_path is None:
+                if log_callback:
+                    log_callback("✗ Failed to read current PATH\n")
+                return False
+
+            # Check if already in PATH
+            path_entries = [p.strip() for p in current_path.split(';') if p.strip()]
+
+            # Check if Java is already in PATH (case-insensitive)
+            for entry in path_entries:
+                if entry.lower() == java_bin_str.lower():
+                    if log_callback:
+                        log_callback("✓ Java already in PATH\n")
+                    return True
+
+            # Add to PATH
+            if current_path and not current_path.endswith(';'):
+                new_path = current_path + ';' + java_bin_str
+            else:
+                new_path = current_path + java_bin_str
+
+            # Set new PATH
+            if self._set_user_path_to_registry(new_path):
+                if log_callback:
+                    log_callback(f"✓ Java added to PATH: {java_bin_str}\n")
+                    log_callback("  Note: You may need to restart applications for the change to take effect\n")
+                return True
+            else:
+                if log_callback:
+                    log_callback("✗ Failed to update PATH\n")
+                return False
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"✗ Error adding Java to PATH: {str(e)}\n")
+            return False
+
+    def remove_java_from_path(
+        self,
+        java_bin_path: Optional[Path] = None,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Removes Java bin directory from User PATH
+
+        Args:
+            java_bin_path: Specific path to remove, or None to remove all PyCraft Java paths
+            log_callback: Function to report progress
+
+        Returns:
+            True if successful
+        """
+        if not WINREG_AVAILABLE or self.system != "Windows":
+            if log_callback:
+                log_callback("⚠ PATH management is only supported on Windows\n")
+            return False
+
+        try:
+            # Get current PATH
+            current_path = self._get_user_path_from_registry()
+            if current_path is None:
+                if log_callback:
+                    log_callback("✗ Failed to read current PATH\n")
+                return False
+
+            path_entries = [p.strip() for p in current_path.split(';') if p.strip()]
+            pycraft_java_base = str((Path.home() / ".pycraft" / "java").absolute())
+
+            removed_count = 0
+            new_entries = []
+
+            for entry in path_entries:
+                should_remove = False
+
+                if java_bin_path:
+                    # Remove specific path
+                    if entry.lower() == str(java_bin_path.absolute()).lower():
+                        should_remove = True
+                else:
+                    # Remove all PyCraft Java paths
+                    if pycraft_java_base.lower() in entry.lower():
+                        should_remove = True
+
+                if should_remove:
+                    removed_count += 1
+                    if log_callback:
+                        log_callback(f"  Removing: {entry}\n")
+                else:
+                    new_entries.append(entry)
+
+            if removed_count == 0:
+                if log_callback:
+                    log_callback("✓ No Java paths found in PATH\n")
+                return True
+
+            # Set new PATH
+            new_path = ';'.join(new_entries)
+            if self._set_user_path_to_registry(new_path):
+                if log_callback:
+                    log_callback(f"✓ Removed {removed_count} Java path(s) from PATH\n")
+                    log_callback("  Note: You may need to restart applications for the change to take effect\n")
+                return True
+            else:
+                if log_callback:
+                    log_callback("✗ Failed to update PATH\n")
+                return False
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"✗ Error removing Java from PATH: {str(e)}\n")
+            return False
+
+    def get_java_installations(self) -> List[Tuple[int, Path, bool]]:
+        """
+        Lists all Java installations managed by PyCraft
+
+        Returns:
+            List of tuples: (version, path, is_in_path)
+        """
+        installations = []
+
+        if not self.java_installs_dir.exists():
+            return installations
+
+        try:
+            # Get current PATH for checking
+            current_path = ""
+            if WINREG_AVAILABLE and self.system == "Windows":
+                current_path = self._get_user_path_from_registry() or ""
+                current_path = current_path.lower()
+
+            for item in self.java_installs_dir.iterdir():
+                if item.is_dir() and item.name.startswith("java-"):
+                    try:
+                        # Extract version from folder name (e.g., "java-21" -> 21)
+                        version_str = item.name.split('-')[1]
+                        version = int(version_str)
+
+                        # Find Java executable
+                        java_exe = self._find_java_executable(item)
+
+                        if java_exe:
+                            # Check if in PATH
+                            java_bin_dir = java_exe.parent
+                            is_in_path = str(java_bin_dir.absolute()).lower() in current_path
+
+                            installations.append((version, item, is_in_path))
+                    except (ValueError, IndexError):
+                        # Skip folders that don't match expected format
+                        continue
+
+            # Sort by version
+            installations.sort(key=lambda x: x[0], reverse=True)
+            return installations
+
+        except Exception as e:
+            print(f"Error listing Java installations: {e}")
+            return installations
+
+    def delete_java_installation(
+        self,
+        java_version: int,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Deletes a Java installation managed by PyCraft
+
+        Args:
+            java_version: Java major version to delete
+            log_callback: Function to report progress
+
+        Returns:
+            True if successful
+        """
+        try:
+            install_dir = self.java_installs_dir / f"java-{java_version}"
+
+            if not install_dir.exists():
+                if log_callback:
+                    log_callback(f"✗ Java {java_version} installation not found\n")
+                return False
+
+            # First, remove from PATH if it's there
+            java_exe = self._find_java_executable(install_dir)
+            if java_exe:
+                java_bin_dir = java_exe.parent
+                self.remove_java_from_path(java_bin_dir, log_callback)
+
+            # Delete the directory
+            if log_callback:
+                log_callback(f"Deleting Java {java_version} installation...\n")
+
+            shutil.rmtree(install_dir)
+
+            if log_callback:
+                log_callback(f"✓ Java {java_version} deleted successfully\n")
+
+            return True
+
+        except PermissionError as e:
+            if log_callback:
+                log_callback(f"✗ Permission error: {str(e)}\n")
+                log_callback("  Make sure no Java processes are running\n")
+            return False
+        except Exception as e:
+            if log_callback:
+                log_callback(f"✗ Error deleting Java: {str(e)}\n")
+            return False
