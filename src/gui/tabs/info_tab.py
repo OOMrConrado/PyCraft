@@ -45,166 +45,104 @@ class InfoTab(BaseTab):
             text_color="gray70"
         ).pack(pady=(0, 20))
 
-        # ===== SECCIÓN: INICIO RÁPIDO =====
+        # ===== SECCIÓN: JUGAR CON AMIGOS =====
         self._create_collapsible_section(
             main_frame,
-            "Inicio Rápido",
+            "🎮 Jugar con Amigos",
             """
-EMPEZAR CON PYCRAFT:
+Una vez finalizaste la instalación de tu servidor, sigue estos pasos
+para que tus amigos puedan jugar contigo:
 
-PyCraft te permite crear dos tipos de servidores:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1️⃣ SERVIDOR VANILLA (Minecraft puro):
-   • Ve a la pestaña "Servidor Vanilla"
-   • Sigue las instrucciones paso a paso en pantalla
-   • PyCraft se encarga de todo automáticamente
+PASO 1: INSTALAR MODPACK CLIENTE (Si usas modpacks)
 
-2️⃣ SERVIDOR CON MODS:
-   • Ve a la pestaña "Servidor con Mods"
-   • Busca un modpack de Modrinth
-   • Sigue las instrucciones de instalación
+⚠️ IMPORTANTE: Si instalaste un servidor con modpack (Fabric/Forge),
+tus amigos también necesitan instalar el modpack en su cliente.
 
-Después de crear tu servidor, visita las otras secciones de esta guía
-para aprender a configurar la red y permitir que tus amigos se conecten.
-            """,
-            default_expanded=False
-        )
+OPCIÓN A - Tu amigo instala el modpack:
+1. Tu amigo debe tener PyCraft instalado
+2. Va a la pestaña "Configuración" en PyCraft
+3. Scroll hacia abajo hasta "Gestión de Carpetas de Modpack Cliente"
+4. Presiona "Instalar Modpack Cliente (para amigos)"
+5. Busca el modpack que estás usando (ej: Prominence II, ATM9, etc.)
+6. Selecciona la MISMA versión que usas en el servidor
+7. Espera a que se descargue e instale
+8. Configura su launcher con la ruta mostrada
 
-        # ===== SECCIÓN: PROBLEMAS DE CONEXIÓN =====
-        self._create_collapsible_section(
-            main_frame,
-            "Problemas de Conexión (Firewall/Antivirus)",
-            """
-Si otros jugadores no pueden conectarse a tu servidor:
+OPCIÓN B - Compartir el enlace de Modrinth:
+1. Ve a https://modrinth.com/ y busca tu modpack
+2. Comparte el enlace con tu amigo
+3. Tu amigo instala desde su launcher favorito (Prism, etc.)
 
-1️⃣ FIREWALL DE WINDOWS - Opción Recomendada:
-   • Ve a: Panel de Control > Firewall de Windows > Configuración avanzada
-   • Crea una regla de ENTRADA para puerto TCP 25565
-   • Aplica a perfiles: Dominio, Privado y Público
+✓ Si es servidor Vanilla, salta este paso
 
-1️⃣ FIREWALL DE WINDOWS - Solución Rápida (Menos Seguro):
-   ⚠️ IMPORTANTE: Solo mientras juegas, reactívalo después
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-   PARA EL HOST (quien tiene el servidor):
-   • Ve a: Configuración > Red e Internet > Firewall de Windows Defender
-   • Desactiva el firewall para redes Privadas y Públicas
-   • Después de jugar, VUELVE A ACTIVARLO por seguridad
+PASO 2: DESACTIVAR EL FIREWALL
 
-   PARA LOS JUGADORES:
-   • Tus amigos también deben desactivar su firewall temporalmente
-   • Esto ayuda a evitar bloqueos de conexión
-   • Que reactiven el firewall después de jugar
+Tanto TÚ (el host) como TUS AMIGOS deben hacer esto:
 
-2️⃣ ANTIVIRUS:
-   • Algunos antivirus bloquean servidores de Minecraft
-   • Agrega PyCraft y Java a las excepciones
-   • Si el servidor no funciona, desactiva temporalmente el antivirus
+1. Busca "firewall" en el menú de inicio de Windows
+2. Haz clic en "Firewall de Windows Defender"
+3. En el lado izquierdo, clic en "Activar o desactivar Firewall de Windows Defender"
+4. Desactiva el Firewall para AMBOS:
+   • Red privada
+   • Red pública
+5. Haz clic en "Aceptar"
 
-3️⃣ PERFIL DE RED:
-   • Asegúrate de que tu red esté configurada como 'Privada'
-   • No uses 'Red pública' (bloquea conexiones entrantes)
-   • Para cambiar: Configuración > Red e Internet > Estado
+⚠️ IMPORTANTE: Vuelve a activar el firewall después de jugar
 
-4️⃣ VERIFICAR PUERTO:
-   • Asegúrate de que el puerto 25565 no esté en uso por otro programa
-   • Si tienes otro servidor corriendo, ciérralo primero
-            """,
-            default_expanded=True  # Esta expandida por defecto porque es importante
-        )
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        # ===== SECCIÓN: CONFIGURACIÓN DE RED =====
-        self._create_collapsible_section(
-            main_frame,
-            "Configuración de Red (Router/IP/Puertos)",
-            """
-CÓMO CONECTARSE AL SERVIDOR:
+PASO 3: USAR HAMACHI (Recomendado)
 
-IP PARA CONEXIÓN:
-   • Jugadores en tu red local: Usa tu IP local (192.168.x.x)
-     Para encontrarla: abre cmd y escribe: ipconfig
-     Busca "Dirección IPv4"
+¿Por qué usar Hamachi?
+• Es la forma MÁS FÁCIL de jugar con amigos
+• No necesitas configurar el router (Port Forwarding)
+• Crea una red privada virtual entre tú y tus amigos
+• Es GRATIS
 
-   • Jugadores externos (fuera de tu casa): Usa tu IP pública
-     Para encontrarla: busca en Google "mi ip"
+Cómo usar Hamachi:
 
-   • En Minecraft, conecta a: <TU_IP>:25565
+1. Descarga Hamachi: https://www.vpn.net/
+2. Instala Hamachi en tu PC
+3. Abre Hamachi y clic en "Crear nueva red"
+4. Elige un nombre de red y contraseña
+5. Comparte el nombre y contraseña con tus amigos
 
-ROUTER - PORT FORWARDING (Para jugar fuera de tu red local):
-   • Necesitas configurar 'Port Forwarding' en tu router
-   • Redirige el puerto 25565 (TCP) a la IP local de tu PC
-   • Busca guías específicas para tu modelo de router
-   • ALTERNATIVA MÁS FÁCIL: Usa una VPN como Hamachi (ver abajo)
+TUS AMIGOS deben:
+1. Instalar Hamachi
+2. Unirse a tu red con el nombre y contraseña que les diste
 
-CAMBIAR PUERTO (Avanzado):
-   • Edita server.properties en la carpeta del servidor
-   • Cambia: server-port=25565 al puerto que quieras
-   • Recuerda configurar el firewall y router con el nuevo puerto
-            """,
-            default_expanded=False
-        )
+CONECTARSE EN MINECRAFT:
 
-        # ===== SECCIÓN: USO DE VPNs =====
-        self._create_collapsible_section(
-            main_frame,
-            "Uso de VPNs (Hamachi y Alternativas)",
-            """
-JUGAR CON AMIGOS USANDO HAMACHI:
+1. En Hamachi, verás tu dirección IPv4 (ej: 25.123.45.67)
+2. Tus amigos abren Minecraft → Multijugador → Agregar Servidor
+3. En "Dirección del Servidor" ponen tu IPv4 de Hamachi
+4. Si NO cambiaste el puerto, solo usan la IP: 25.123.45.67
+5. Si SÍ cambiaste el puerto, agregan: 25.123.45.67:25565
 
-Hamachi es una VPN que permite a tus amigos conectarse sin configurar el router.
-
-Paso 1: Descargar Hamachi
-   • Descarga Hamachi desde: https://www.vpn.net/
-   • Instala Hamachi en tu computadora
-
-Paso 2: Crear una Red
-   • Abre Hamachi
-   • Haz clic en "Crear nueva red"
-   • Elige un ID de red y una contraseña
-   • Comparte el ID y contraseña con tus amigos
-
-Paso 3: Tus Amigos se Unen
-   • Tus amigos deben instalar Hamachi
-   • Deben unirse a tu red usando el ID y contraseña
-
-Paso 4: Obtener tu IP de Hamachi
-   • En Hamachi, verás tu dirección IPv4 (ejemplo: 25.123.45.67)
-   • Esta es la dirección que tus amigos usarán para conectarse
-
-Paso 5: Conectarse en Minecraft
-   • Tus amigos abren Minecraft
-   • Van a "Multijugador" → "Agregar Servidor"
-   • Usan tu IPv4 de Hamachi como dirección
-   • Si cambiaste el puerto, agregan: 25.123.45.67:25565
-
-IMPORTANTE:
-   • Todos deben estar en la misma red de Hamachi
-   • El servidor debe estar iniciado antes de que intenten conectarse
-   • Windows Firewall puede pedir permiso - acéptalo
-   • PyCraft ya configura automáticamente online-mode en false
+✓ PyCraft ya configura automáticamente online-mode en false
+✓ Solo necesitas la IPv4 de Hamachi, no necesitas configurar puertos
+✓ Todos deben estar en la misma red de Hamachi
+✓ El servidor debe estar iniciado antes de conectarse
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 ALTERNATIVAS A HAMACHI:
 
 • Radmin VPN (Gratis, sin límite de usuarios)
-  Descarga: https://www.radmin-vpn.com/
-
-• ZeroTier (Gratis, más técnico pero muy potente)
-  Descarga: https://www.zerotier.com/
-
+• ZeroTier (Gratis, más técnico)
 • Playit.gg (Gratis, específico para gaming)
-  Descarga: https://playit.gg/
-
-• Port Forwarding (Avanzado)
-  Requiere configurar tu router - más complejo pero más estable
             """,
-            default_expanded=False
+            default_expanded=True  # Expandida por defecto porque es lo más importante
         )
 
-        # ===== SECCIÓN: CONFIGURACIÓN DEL SERVIDOR =====
+        # ===== SECCIÓN: MÁS CONFIGURACIÓN DEL SERVIDOR =====
         self._create_collapsible_section(
             main_frame,
-            "Configuración del Servidor",
+            "⚙️ Más Configuración del Servidor",
             """
 CONFIGURACIÓN AUTOMÁTICA DE PYCRAFT:
 
@@ -252,13 +190,16 @@ IMPORTANTE: Reinicia el servidor después de hacer cambios.
         # ===== SECCIÓN: SOLUCIÓN DE PROBLEMAS =====
         self._create_collapsible_section(
             main_frame,
-            "Solución de Problemas",
+            "🔧 Solución de Problemas",
             """
 PROBLEMA: "Error al iniciar servidor"
    Solución:
    • Verifica que Java esté instalado correctamente
    • Abre cmd y escribe: java -version
-   • Si no está instalado, descarga desde: https://www.oracle.com/java/technologies/downloads/
+   • Si no está instalado, tienes dos opciones:
+     → OPCIÓN 1 (Recomendada): Ve a la pestaña "Configuración" en PyCraft
+       y descarga Java automáticamente
+     → OPCIÓN 2: Descarga manual desde: https://www.oracle.com/java/technologies/downloads/
    • Reinicia tu computadora después de instalar Java
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -286,7 +227,9 @@ PROBLEMA: "El servidor se cierra inmediatamente"
 
 PROBLEMA: "Java no se encuentra"
    Solución:
-   • Descarga e instala Java desde: https://www.oracle.com/java/technologies/downloads/
+   • OPCIÓN 1 (Recomendada): Ve a la pestaña "Configuración" en PyCraft
+     y descarga Java automáticamente
+   • OPCIÓN 2: Descarga e instala Java manualmente: https://www.oracle.com/java/technologies/downloads/
    • Reinicia tu computadora después de instalar
    • Verifica la instalación: abre cmd y escribe: java -version
 
@@ -305,7 +248,6 @@ PROBLEMA: "Lag o rendimiento bajo"
    • Aumenta la RAM asignada al servidor
    • Reduce el view-distance en server.properties
    • Cierra otros programas para liberar recursos
-   • Usa una versión optimizada como Paper o Spigot
             """,
             default_expanded=False
         )
@@ -313,7 +255,7 @@ PROBLEMA: "Lag o rendimiento bajo"
         # ===== SECCIÓN: REQUISITOS =====
         self._create_collapsible_section(
             main_frame,
-            "Requisitos del Sistema",
+            "💻 Requisitos del Sistema",
             """
 Para usar PyCraft y crear servidores de Minecraft necesitas:
 
