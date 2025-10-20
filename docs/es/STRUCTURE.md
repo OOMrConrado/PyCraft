@@ -264,6 +264,6 @@ Cada recurso tiene su manager dedicado que encapsula toda su lógica.
 
 ---
 
-**Versión**: 2.0
+**Versión**: 1.0.0
 **Fecha**: Octubre 2025
 **Estado**: Estructura modular implementada y funcional
