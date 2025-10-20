@@ -146,11 +146,15 @@ class ModpackManager:
                             if log_callback:
                                 log_callback(f"  [{i}/{total_files}] {filename}...")
 
-                            response = requests.get(download_url, timeout=30)
+                            # Use streaming to avoid loading entire file into memory
+                            response = requests.get(download_url, timeout=30, stream=True)
                             response.raise_for_status()
 
+                            # Write in chunks to reduce memory usage
                             with open(dest_file, 'wb') as f:
-                                f.write(response.content)
+                                for chunk in response.iter_content(chunk_size=8192):
+                                    if chunk:
+                                        f.write(chunk)
 
                             if log_callback:
                                 log_callback(" ✓\n")
@@ -356,11 +360,15 @@ class ModpackManager:
                             if download_url:
                                 dest_file = mods_folder / filename
 
-                                response = requests.get(download_url, timeout=30)
+                                # Use streaming to avoid loading entire file into memory
+                                response = requests.get(download_url, timeout=30, stream=True)
                                 response.raise_for_status()
 
+                                # Write in chunks to reduce memory usage
                                 with open(dest_file, 'wb') as f:
-                                    f.write(response.content)
+                                    for chunk in response.iter_content(chunk_size=8192):
+                                        if chunk:
+                                            f.write(chunk)
 
                                 if log_callback:
                                     log_callback(" ✓\n")
@@ -509,16 +517,14 @@ class ModpackManager:
             num_mods = len(files)
 
             # Basic heuristic
-            if num_mods < 25:
-                return 3072  # 3 GB
-            elif num_mods < 50:
-                return 4096  # 4 GB
+            if num_mods < 50:
+                return 4096  # 4 GB para modpacks pequeños
             elif num_mods < 100:
-                return 6144  # 6 GB
+                return 6144  # 6 GB para modpacks medianos (default)
             elif num_mods < 150:
-                return 8192  # 8 GB
+                return 8192  # 8 GB para modpacks grandes
             else:
-                return 10240  # 10 GB
+                return 10240  # 10 GB para modpacks muy grandes
 
         except:
-            return 4096  # Default 4 GB
+            return 6144  # Default 6 GB

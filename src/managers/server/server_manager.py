@@ -153,6 +153,32 @@ class ServerManager:
                 log_callback(error_msg + "\n")
             return False
 
+    def get_property(self, property_name: str) -> Optional[str]:
+        """
+        Gets a specific property value from server.properties
+
+        Args:
+            property_name: Property name
+
+        Returns:
+            Property value or None if not found
+        """
+        try:
+            if not os.path.exists(self.properties_path):
+                return None
+
+            with open(self.properties_path, 'r', encoding='utf-8') as file:
+                for line in file:
+                    line = line.strip()
+                    if line.startswith(f'{property_name}='):
+                        return line.split('=', 1)[1]
+
+            return None
+
+        except Exception as e:
+            print(f"Error al leer propiedad: {e}")
+            return None
+
     def update_property(self, property_name: str, property_value: str) -> bool:
         """
         Updates a specific property in server.properties
@@ -348,8 +374,8 @@ class ServerManager:
             check_for: Archivo a buscar para terminar antes (optimización)
         """
         try:
-            # Comando para ejecutar el servidor
-            command = [self.java_executable, "-Xmx1024M", "-Xms1024M", "-jar", "server.jar", "nogui"]
+            # Comando para ejecutar el servidor (2GB RAM por defecto para vanilla)
+            command = [self.java_executable, "-Xmx2048M", "-Xms2048M", "-jar", "server.jar", "nogui"]
 
             # Ejecutar el proceso
             # Configurar flags para Windows
@@ -423,6 +449,7 @@ class ServerManager:
 
     def start_server(
         self,
+        ram_mb: int = 2048,
         log_callback: Optional[Callable[[str], None]] = None,
         detached: bool = False
     ) -> bool:
@@ -430,6 +457,7 @@ class ServerManager:
         Inicia el servidor de Minecraft
 
         Args:
+            ram_mb: RAM en megabytes a asignar (default: 2048 = 2GB)
             log_callback: Función callback para recibir logs del servidor
             detached: Si es True, el servidor se ejecuta en segundo plano
 
@@ -448,8 +476,11 @@ class ServerManager:
                     log_callback("server.jar no encontrado\n")
                 return False
 
-            # Comando para ejecutar el servidor
-            command = [self.java_executable, "-Xmx1024M", "-Xms1024M", "-jar", "server.jar", "nogui"]
+            # Comando para ejecutar el servidor con RAM configurable
+            command = [self.java_executable, f"-Xmx{ram_mb}M", f"-Xms{ram_mb}M", "-jar", "server.jar", "nogui"]
+
+            if log_callback:
+                log_callback(f"Iniciando servidor con {ram_mb} MB ({ram_mb/1024:.1f} GB) de RAM...\n")
 
             if detached:
                 # Ejecutar en segundo plano con stdin para comandos
@@ -607,7 +638,7 @@ class ServerManager:
     def start_modded_server(
         self,
         server_type: str,
-        ram_mb: int = 4096,
+        ram_mb: int = 6144,
         java_executable: str = "java",
         log_callback: Optional[Callable[[str], None]] = None,
         detached: bool = False
@@ -647,36 +678,50 @@ class ServerManager:
 
             # Configuración automática como en vanilla
             if not os.path.exists(self.eula_path):
-                # Primera vez - generar EULA
+                # Primera vez - generar EULA (Forge modpacks necesitan más tiempo)
                 if log_callback:
                     log_callback("=== CONFIGURACIÓN INICIAL ===\n")
-                    log_callback("Generando EULA...\n")
+                    log_callback("Generando EULA (esto puede tomar hasta 2 minutos para modpacks grandes)...\n")
 
-                self._run_modded_server_and_wait(server_type, ram_mb, java_executable, log_callback, timeout=60, check_for="eula.txt")
-                time.sleep(0.5)
+                # Aumentar timeout para modpacks Forge que tardan más
+                timeout_eula = 90 if server_type == "forge" else 60
+                self._run_modded_server_and_wait(server_type, ram_mb, java_executable, log_callback, timeout=timeout_eula, check_for="eula.txt")
+                time.sleep(1)
 
                 # Aceptar EULA
                 if os.path.exists(self.eula_path):
                     if log_callback:
+                        log_callback("✓ EULA generado correctamente\n")
                         log_callback("Aceptando EULA automáticamente...\n")
                     self.accept_eula()
                 else:
                     if log_callback:
-                        log_callback("Error: EULA no se generó\n")
+                        log_callback("\n❌ Error: EULA no se generó\n")
+                        log_callback("   Posibles causas:\n")
+                        log_callback("   • El modpack no está correctamente instalado\n")
+                        log_callback("   • Falta Java o es una versión incorrecta\n")
+                        log_callback("   • Los archivos del servidor están corruptos\n")
+                        log_callback("   • El servidor se cerró prematuramente\n")
                     return False
 
-                # Segunda ejecución - generar server.properties
+                # Segunda ejecución - generar server.properties (Forge necesita más tiempo)
                 if log_callback:
-                    log_callback("Generando archivos del servidor...\n")
+                    log_callback("✓ EULA aceptado\n\n")
+                    log_callback("Generando archivos del servidor (esto puede tomar hasta 2 minutos)...\n")
 
-                self._run_modded_server_and_wait(server_type, ram_mb, java_executable, log_callback, timeout=40, check_for="server.properties")
-                time.sleep(0.5)
+                timeout_props = 120 if server_type == "forge" else 60
+                self._run_modded_server_and_wait(server_type, ram_mb, java_executable, log_callback, timeout=timeout_props, check_for="server.properties")
+                time.sleep(1)
 
                 # Configurar server.properties
                 if os.path.exists(self.properties_path):
                     if log_callback:
+                        log_callback("✓ server.properties generado correctamente\n")
                         log_callback("Configurando server.properties...\n")
                     self.configure_server_properties()
+                else:
+                    if log_callback:
+                        log_callback("⚠ Advertencia: server.properties no se generó, pero continuando...\n")
 
                 if log_callback:
                     log_callback("✓ Configuración completada\n\n")
@@ -838,7 +883,7 @@ class ServerManager:
     def run_modded_server_first_time(
         self,
         server_type: str,
-        ram_mb: int = 4096,
+        ram_mb: int = 6144,
         java_executable: str = "java",
         log_callback: Optional[Callable[[str], None]] = None
     ) -> bool:
@@ -1042,16 +1087,14 @@ class ServerManager:
         Returns:
             RAM recomendada en MB
         """
-        if num_mods < 25:
-            return 3072  # 3 GB
-        elif num_mods < 50:
-            return 4096  # 4 GB
+        if num_mods < 50:
+            return 4096  # 4 GB para modpacks pequeños
         elif num_mods < 100:
-            return 6144  # 6 GB
+            return 6144  # 6 GB para modpacks medianos (default)
         elif num_mods < 150:
-            return 8192  # 8 GB
+            return 8192  # 8 GB para modpacks grandes
         else:
-            return 10240  # 10 GB
+            return 10240  # 10 GB para modpacks muy grandes
 
     def clean_client_only_mods(
         self,

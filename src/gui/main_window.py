@@ -1,11 +1,13 @@
 import customtkinter as ctk
 from tkinter import filedialog, messagebox
+import tkinter as tk
 from PIL import Image
 import threading
 import os
 import shutil
 import json
 import webbrowser
+import gc
 from typing import Optional, Dict, List
 from pathlib import Path
 
@@ -122,23 +124,14 @@ class PyCraftGUI:
         self._load_versions()
 
     def _set_window_icon(self, window):
-        """Sets the PyCraft icon for a window"""
+        """Sets the PyCraft icon for a window with proper scaling"""
         try:
             if self.icon_path and os.path.exists(self.icon_path):
-                # For CTkToplevel, we need to access the underlying tk window
-                # and set the icon after the window is created
-                def set_icon():
-                    try:
-                        # Direct iconbitmap call
-                        window.iconbitmap(self.icon_path)
-                    except Exception as e:
-                        print(f"Error setting icon: {e}")
-
-                # Call immediately
-                set_icon()
-                # Also call after window is mapped
-                window.after(100, set_icon)
-                window.after(500, set_icon)
+                # Simply use iconbitmap - no after() calls to prevent memory leaks
+                try:
+                    window.iconbitmap(self.icon_path)
+                except Exception as e:
+                    print(f"Error setting icon: {e}")
         except Exception as e:
             print(f"Error in _set_window_icon: {e}")
 
@@ -270,10 +263,12 @@ class PyCraftGUI:
                 logo_image = Image.open(logo_path)
                 # Redimensionar el logo (mucho más grande y visible)
                 logo_image = logo_image.resize((180, 180), Image.Resampling.LANCZOS)
-                logo_photo = ctk.CTkImage(light_image=logo_image, dark_image=logo_image, size=(180, 180))
+                self.logo_photo = ctk.CTkImage(light_image=logo_image, dark_image=logo_image, size=(180, 180))
 
-                logo_label = ctk.CTkLabel(header_frame, image=logo_photo, text="")
+                logo_label = ctk.CTkLabel(header_frame, image=self.logo_photo, text="")
                 logo_label.pack(side="left", padx=10)
+                # Close PIL image to free memory
+                logo_image.close()
         except Exception as e:
             print(f"No se pudo cargar el logo: {e}")
 
@@ -532,6 +527,12 @@ class PyCraftGUI:
             wrap="word"
         )
         self.new_log_text.pack(pady=5, padx=10)
+        # Configure tags ONCE to prevent memory leak
+        self.new_log_text.tag_config("info", foreground="#2196F3")
+        self.new_log_text.tag_config("success", foreground="#4CAF50")
+        self.new_log_text.tag_config("warning", foreground="#FF9800")
+        self.new_log_text.tag_config("error", foreground="#F44336")
+        self.new_log_text.tag_config("normal", foreground="white")
         # Fix scroll anidado
         self._fix_textbox_scroll(self.new_log_text)
 
@@ -554,6 +555,12 @@ class PyCraftGUI:
             wrap="word"
         )
         self.existing_log_text.pack(pady=5, padx=10)
+        # Configure tags ONCE to prevent memory leak
+        self.existing_log_text.tag_config("info", foreground="#2196F3")
+        self.existing_log_text.tag_config("success", foreground="#4CAF50")
+        self.existing_log_text.tag_config("warning", foreground="#FF9800")
+        self.existing_log_text.tag_config("error", foreground="#F44336")
+        self.existing_log_text.tag_config("normal", foreground="white")
         # Fix scroll anidado
         self._fix_textbox_scroll(self.existing_log_text)
 
@@ -879,6 +886,12 @@ class PyCraftGUI:
             wrap="word"
         )
         self.modpack_log_text.pack(pady=(5, 10), padx=10)
+        # Configure tags ONCE to prevent memory leak
+        self.modpack_log_text.tag_config("info", foreground="#2196F3")
+        self.modpack_log_text.tag_config("success", foreground="#4CAF50")
+        self.modpack_log_text.tag_config("warning", foreground="#FF9800")
+        self.modpack_log_text.tag_config("error", foreground="#F44336")
+        self.modpack_log_text.tag_config("normal", foreground="white")
         # Fix scroll anidado
         self._fix_textbox_scroll(self.modpack_log_text)
 
@@ -984,6 +997,12 @@ class PyCraftGUI:
             wrap="word"
         )
         self.modpack_server_log_text.pack(pady=(5, 10), padx=10)
+        # Configure tags ONCE to prevent memory leak
+        self.modpack_server_log_text.tag_config("info", foreground="#2196F3")
+        self.modpack_server_log_text.tag_config("success", foreground="#4CAF50")
+        self.modpack_server_log_text.tag_config("warning", foreground="#FF9800")
+        self.modpack_server_log_text.tag_config("error", foreground="#F44336")
+        self.modpack_server_log_text.tag_config("normal", foreground="white")
         # Fix scroll anidado
         self._fix_textbox_scroll(self.modpack_server_log_text)
 
@@ -1327,6 +1346,13 @@ class PyCraftGUI:
 
                 def log_callback(message):
                     log_text.insert("end", message)
+
+                    # Limit log size to prevent memory leak (keep last 100 lines)
+                    line_count = int(log_text.index('end-1c').split('.')[0])
+                    if line_count > 100:
+                        log_text.delete('1.0', f'{line_count - 100}.0')
+                        gc.collect()  # Force garbage collection
+
                     log_text.see("end")
 
                 def install():
@@ -1633,6 +1659,13 @@ class PyCraftGUI:
             """Adds a message to the console"""
             console_textbox.configure(state="normal")
             console_textbox.insert("end", message)
+
+            # Limit log size to prevent memory leak (keep last 100 lines)
+            line_count = int(console_textbox.index('end-1c').split('.')[0])
+            if line_count > 100:
+                console_textbox.delete('1.0', f'{line_count - 100}.0')
+                gc.collect()  # Force garbage collection
+
             console_textbox.see("end")
             console_textbox.configure(state="disabled")
 
@@ -2247,7 +2280,10 @@ class PyCraftGUI:
         self.stop_server_btn.configure(state="normal")
 
         def start():
+            # Use configured RAM or default (2GB)
+            ram_mb = getattr(self, 'vanilla_ram_mb', 2048)
             success = self.server_manager.start_server(
+                ram_mb=ram_mb,
                 log_callback=self._add_log_existing_simple,
                 detached=True
             )
@@ -2292,15 +2328,15 @@ class PyCraftGUI:
         """
         self.new_log_text.configure(state="normal")
 
-        # Configurar tags de colores si no existen
-        self.new_log_text.tag_config("info", foreground="#2196F3")  # Azul
-        self.new_log_text.tag_config("success", foreground="#4CAF50")  # Verde
-        self.new_log_text.tag_config("warning", foreground="#FF9800")  # Naranja
-        self.new_log_text.tag_config("error", foreground="#F44336")  # Rojo
-        self.new_log_text.tag_config("normal", foreground="white")  # Blanco
-
-        # Insertar el mensaje con el tag apropiado
+        # Insertar el mensaje con el tag apropiado (tags configurados en __init__)
         self.new_log_text.insert("end", message, log_type)
+
+        # Limit log size to prevent memory leak (keep last 100 lines)
+        line_count = int(self.new_log_text.index('end-1c').split('.')[0])
+        if line_count > 100:
+            self.new_log_text.delete('1.0', f'{line_count - 100}.0')
+            gc.collect()  # Force garbage collection after deleting old logs
+
         self.new_log_text.see("end")
         self.new_log_text.configure(state="disabled")
 
@@ -2316,15 +2352,15 @@ class PyCraftGUI:
         """
         self.existing_log_text.configure(state="normal")
 
-        # Configurar tags de colores si no existen
-        self.existing_log_text.tag_config("info", foreground="#2196F3")  # Azul
-        self.existing_log_text.tag_config("success", foreground="#4CAF50")  # Verde
-        self.existing_log_text.tag_config("warning", foreground="#FF9800")  # Naranja
-        self.existing_log_text.tag_config("error", foreground="#F44336")  # Rojo
-        self.existing_log_text.tag_config("normal", foreground="white")  # Blanco
-
-        # Insertar el mensaje con el tag apropiado
+        # Insertar el mensaje con el tag apropiado (tags configurados en __init__)
         self.existing_log_text.insert("end", message, log_type)
+
+        # Limit log size to prevent memory leak (keep last 100 lines)
+        line_count = int(self.existing_log_text.index('end-1c').split('.')[0])
+        if line_count > 100:
+            self.existing_log_text.delete('1.0', f'{line_count - 100}.0')
+            gc.collect()  # Force garbage collection after deleting old logs
+
         self.existing_log_text.see("end")
         self.existing_log_text.configure(state="disabled")
 
@@ -2378,7 +2414,7 @@ class PyCraftGUI:
         config_window = ctk.CTkToplevel(self.root)
         self._set_window_icon(config_window)
         config_window.title("Configuración del Servidor")
-        config_window.geometry("450x450")  # Aumentado para mostrar información de versión
+        config_window.geometry("500x600")  # Aumentado para mostrar botones
         config_window.resizable(False, False)
 
         # Centrar ventana
@@ -2403,7 +2439,9 @@ class PyCraftGUI:
             font=ctk.CTkFont(size=15, weight="bold")
         ).pack(pady=(15, 10))
 
-        difficulty_var = ctk.StringVar(value="normal")
+        # Leer la dificultad actual de server.properties
+        current_difficulty = self.server_manager.get_property("difficulty") or "normal"
+        difficulty_var = ctk.StringVar(value=current_difficulty)
 
         difficulties = [
             ("Pacífica (sin monstruos)", "peaceful"),
@@ -2421,6 +2459,52 @@ class PyCraftGUI:
                 font=ctk.CTkFont(size=13)
             )
             radio.pack(pady=8, padx=20, anchor="w")
+
+        # RAM Configuration
+        ram_frame = ctk.CTkFrame(config_window, fg_color="gray20")
+        ram_frame.pack(pady=15, padx=20, fill="both", expand=True)
+
+        ctk.CTkLabel(
+            ram_frame,
+            text="Asignación de RAM (por defecto: 2GB):",
+            font=ctk.CTkFont(size=15, weight="bold")
+        ).pack(pady=(15, 10))
+
+        # Get current RAM setting or use default (2GB for vanilla)
+        if not hasattr(self, 'vanilla_ram_mb'):
+            self.vanilla_ram_mb = 2048
+
+        ram_var = tk.IntVar(value=self.vanilla_ram_mb)
+        ram_label_var = tk.StringVar(value=f"{self.vanilla_ram_mb} MB ({self.vanilla_ram_mb/1024:.1f} GB)")
+
+        def update_ram_label(value):
+            mb = int(float(value))
+            ram_label_var.set(f"{mb} MB ({mb/1024:.1f} GB)")
+
+        ram_slider = ctk.CTkSlider(
+            ram_frame,
+            from_=1024,
+            to=16384,
+            number_of_steps=15,
+            variable=ram_var,
+            command=update_ram_label,
+            width=350
+        )
+        ram_slider.pack(pady=10, padx=20)
+
+        ctk.CTkLabel(
+            ram_frame,
+            textvariable=ram_label_var,
+            font=ctk.CTkFont(size=12),
+            text_color="gray70"
+        ).pack(pady=5)
+
+        ctk.CTkLabel(
+            ram_frame,
+            text="Nota: Asegúrate de tener suficiente RAM disponible",
+            font=ctk.CTkFont(size=10),
+            text_color="gray60"
+        ).pack(pady=5)
 
         # Información de versión
         version_frame = ctk.CTkFrame(config_window, fg_color="gray20")
@@ -2441,14 +2525,21 @@ class PyCraftGUI:
 
         def apply_config():
             difficulty = difficulty_var.get()
+            ram_mb = ram_var.get()
+
+            # Store RAM setting for this server
+            self.vanilla_ram_mb = ram_mb
+
             success = self.server_manager.configure_server_properties(
                 difficulty=difficulty,
                 log_callback=self._add_log_existing_simple
             )
 
             if success:
-                self._add_log_existing(f"\n✓ Configuración aplicada: Dificultad = {difficulty}\n", "success")
-                messagebox.showinfo("Éxito", f"Configuración aplicada correctamente!\n\nDificultad: {difficulty}")
+                self._add_log_existing(f"\n✓ Configuración aplicada:\n", "success")
+                self._add_log_existing(f"  • Dificultad: {difficulty}\n", "info")
+                self._add_log_existing(f"  • RAM asignada: {ram_mb} MB ({ram_mb/1024:.1f} GB)\n", "info")
+                messagebox.showinfo("Éxito", f"Configuración aplicada correctamente!\n\nDificultad: {difficulty}\nRAM: {ram_mb} MB ({ram_mb/1024:.1f} GB)")
                 config_window.destroy()
             else:
                 self._add_log_existing("\n✗ Error al aplicar configuración. Ver detalles arriba.\n", "error")
@@ -2456,7 +2547,7 @@ class PyCraftGUI:
 
         ctk.CTkButton(
             button_frame,
-            text="Aplicar",
+            text="Aceptar",
             command=apply_config,
             width=120,
             fg_color=self.colors["success"],
@@ -2486,7 +2577,7 @@ class PyCraftGUI:
         config_window = ctk.CTkToplevel(self.root)
         self._set_window_icon(config_window)
         config_window.title("Configuración del Servidor con Modpack")
-        config_window.geometry("450x500")  # Aumentado para mostrar información de versión y modpack
+        config_window.geometry("500x750")  # Aumentado para mostrar botones
         config_window.resizable(False, False)
 
         # Centrar ventana
@@ -2511,7 +2602,9 @@ class PyCraftGUI:
             font=ctk.CTkFont(size=15, weight="bold")
         ).pack(pady=(15, 10))
 
-        difficulty_var = ctk.StringVar(value="normal")
+        # Leer la dificultad actual de server.properties
+        current_difficulty = self.modpack_server_manager.get_property("difficulty") or "normal"
+        difficulty_var = ctk.StringVar(value=current_difficulty)
 
         difficulties = [
             ("Pacífica (sin monstruos)", "peaceful"),
@@ -2529,6 +2622,52 @@ class PyCraftGUI:
                 font=ctk.CTkFont(size=13)
             )
             radio.pack(pady=8, padx=20, anchor="w")
+
+        # RAM Configuration
+        ram_frame = ctk.CTkFrame(config_window, fg_color="gray20")
+        ram_frame.pack(pady=15, padx=20, fill="both", expand=True)
+
+        ctk.CTkLabel(
+            ram_frame,
+            text="Asignación de RAM (por defecto: 6GB):",
+            font=ctk.CTkFont(size=15, weight="bold")
+        ).pack(pady=(15, 10))
+
+        # Get current RAM setting or use default (6GB for modpacks)
+        if not hasattr(self, 'modpack_ram_mb'):
+            self.modpack_ram_mb = 6144
+
+        ram_var = tk.IntVar(value=self.modpack_ram_mb)
+        ram_label_var = tk.StringVar(value=f"{self.modpack_ram_mb} MB ({self.modpack_ram_mb/1024:.1f} GB)")
+
+        def update_ram_label(value):
+            mb = int(float(value))
+            ram_label_var.set(f"{mb} MB ({mb/1024:.1f} GB)")
+
+        ram_slider = ctk.CTkSlider(
+            ram_frame,
+            from_=2048,
+            to=16384,
+            number_of_steps=14,
+            variable=ram_var,
+            command=update_ram_label,
+            width=350
+        )
+        ram_slider.pack(pady=10, padx=20)
+
+        ctk.CTkLabel(
+            ram_frame,
+            textvariable=ram_label_var,
+            font=ctk.CTkFont(size=12),
+            text_color="gray70"
+        ).pack(pady=5)
+
+        ctk.CTkLabel(
+            ram_frame,
+            text="Nota: Modpacks requieren más RAM que servidores vanilla",
+            font=ctk.CTkFont(size=10),
+            text_color="gray60"
+        ).pack(pady=5)
 
         # Información de versión y modpack
         version_frame = ctk.CTkFrame(config_window, fg_color="gray20")
@@ -2584,14 +2723,21 @@ class PyCraftGUI:
 
         def apply_config():
             difficulty = difficulty_var.get()
+            ram_mb = ram_var.get()
+
+            # Store RAM setting for this server
+            self.modpack_ram_mb = ram_mb
+
             success = self.modpack_server_manager.configure_server_properties(
                 difficulty=difficulty,
                 log_callback=self._add_log_modpack_server_simple
             )
 
             if success:
-                self._add_log_modpack_server(f"\n✓ Configuración aplicada: Dificultad = {difficulty}\n", "success")
-                messagebox.showinfo("Éxito", f"Configuración aplicada correctamente!\n\nDificultad: {difficulty}")
+                self._add_log_modpack_server(f"\n✓ Configuración aplicada:\n", "success")
+                self._add_log_modpack_server(f"  • Dificultad: {difficulty}\n", "info")
+                self._add_log_modpack_server(f"  • RAM asignada: {ram_mb} MB ({ram_mb/1024:.1f} GB)\n", "info")
+                messagebox.showinfo("Éxito", f"Configuración aplicada correctamente!\n\nDificultad: {difficulty}\nRAM: {ram_mb} MB ({ram_mb/1024:.1f} GB)")
                 config_window.destroy()
             else:
                 self._add_log_modpack_server("\n✗ Error al aplicar configuración. Ver detalles arriba.\n", "error")
@@ -2599,7 +2745,7 @@ class PyCraftGUI:
 
         ctk.CTkButton(
             button_frame,
-            text="Aplicar",
+            text="Aceptar",
             command=apply_config,
             width=120,
             fg_color=self.colors["success"],
@@ -2688,15 +2834,14 @@ class PyCraftGUI:
                 return "break"
             return None
 
-        # Bindear eventos de entrada/salida del mouse
-        textbox.bind("<Enter>", on_enter)
-        textbox.bind("<Leave>", on_leave)
-
-        # Bindear eventos de scroll (Windows/Linux usa MouseWheel)
-        textbox.bind("<MouseWheel>", on_mouse_wheel)
-        # Mac/Linux pueden usar Button-4 y Button-5
-        textbox.bind("<Button-4>", lambda e: on_mouse_wheel(type('Event', (), {'delta': 120})()))
-        textbox.bind("<Button-5>", lambda e: on_mouse_wheel(type('Event', (), {'delta': -120})()))
+        # Only bind if not already bound (prevent duplicate handlers)
+        if not hasattr(textbox, '_scroll_events_bound'):
+            textbox.bind("<Enter>", on_enter)
+            textbox.bind("<Leave>", on_leave)
+            textbox.bind("<MouseWheel>", on_mouse_wheel)
+            textbox.bind("<Button-4>", lambda e: on_mouse_wheel(type('Event', (), {'delta': 120})()))
+            textbox.bind("<Button-5>", lambda e: on_mouse_wheel(type('Event', (), {'delta': -120})()))
+            textbox._scroll_events_bound = True
 
     def _fix_scrollable_frame_scroll(self, scrollable_frame):
         """
@@ -2728,10 +2873,12 @@ class PyCraftGUI:
         def bind_widget_tree(widget):
             """Bindea recursivamente a un widget y todos sus hijos"""
             try:
-                # Bindear al widget actual
-                widget.bind("<MouseWheel>", on_mouse_wheel)
-                widget.bind("<Button-4>", on_mouse_wheel)  # Linux scroll up
-                widget.bind("<Button-5>", on_mouse_wheel)  # Linux scroll down
+                # Only bind if not already bound (prevent duplicate handlers)
+                if not hasattr(widget, '_scroll_events_bound'):
+                    widget.bind("<MouseWheel>", on_mouse_wheel)
+                    widget.bind("<Button-4>", on_mouse_wheel)  # Linux scroll up
+                    widget.bind("<Button-5>", on_mouse_wheel)  # Linux scroll down
+                    widget._scroll_events_bound = True
 
                 # Bindear recursivamente a todos los hijos
                 for child in widget.winfo_children():
@@ -2768,20 +2915,10 @@ class PyCraftGUI:
                         return result
                     return bind_on_pack
 
-                # No modificamos pack ya que puede causar problemas
-                # En su lugar, usaremos after para re-bindear periódicamente
-                def rebind_children():
-                    try:
-                        bind_widget_tree(scrollable_frame)
-                        if hasattr(scrollable_frame, '_parent_frame'):
-                            bind_widget_tree(scrollable_frame._parent_frame)
-                    except:
-                        pass
-                    # Re-ejecutar cada 500ms
-                    scrollable_frame.after(500, rebind_children)
-
-                # Iniciar el rebinding automático
-                scrollable_frame.after(500, rebind_children)
+                # Bind only once, no infinite loop
+                # Mark that we've bound this frame to prevent re-binding
+                if not hasattr(scrollable_frame, '_scroll_bound'):
+                    scrollable_frame._scroll_bound = True
 
         except Exception as e:
             print(f"Error al configurar scroll fix: {e}")
@@ -2916,7 +3053,7 @@ class PyCraftGUI:
         select_btn = ctk.CTkButton(
             header_frame,
             text="Seleccionar",
-            command=lambda: self._on_modpack_select(modpack, platform),
+            command=lambda btn=None, mp=modpack, pf=platform: self._on_modpack_select(mp, pf, btn or select_btn, card),
             width=100,
             height=30,
             fg_color=self.colors["accent"],
@@ -2925,6 +3062,9 @@ class PyCraftGUI:
             font=ctk.CTkFont(size=12, weight="bold")
         )
         select_btn.pack(side="right")
+
+        # Fix lambda closure issue by updating command after button is created
+        select_btn.configure(command=lambda: self._on_modpack_select(modpack, platform, select_btn, card))
 
         # Descripción truncada
         desc_text = description[:120] + "..." if len(description) > 120 else description
@@ -2963,8 +3103,40 @@ class PyCraftGUI:
         )
         downloads_label.pack(side="left")
 
-    def _on_modpack_select(self, modpack: Dict, platform: str):
+    def _on_modpack_select(self, modpack: Dict, platform: str, button=None, card=None):
         """Maneja la selección de un modpack"""
+        # Resetear el botón anterior si existe
+        if hasattr(self, 'selected_modpack_button') and self.selected_modpack_button:
+            try:
+                self.selected_modpack_button.configure(
+                    text="Seleccionar",
+                    fg_color=self.colors["accent"],
+                    hover_color=self.colors["accent_hover"]
+                )
+            except:
+                pass
+
+        # Resetear el card anterior si existe
+        if hasattr(self, 'selected_modpack_card') and self.selected_modpack_card:
+            try:
+                self.selected_modpack_card.configure(border_color=self.colors["border_light"], border_width=1)
+            except:
+                pass
+
+        # Actualizar el botón seleccionado
+        if button:
+            button.configure(
+                text="✓ Seleccionado",
+                fg_color=self.colors["success"],
+                hover_color="#2d8a3e"
+            )
+            self.selected_modpack_button = button
+
+        # Actualizar el card seleccionado con efecto de brillo
+        if card:
+            card.configure(border_color=self.colors["success"], border_width=2)
+            self.selected_modpack_card = card
+
         self.selected_modpack = {
             "data": modpack,
             "platform": platform
@@ -3129,14 +3301,15 @@ class PyCraftGUI:
         """
         self.modpack_log_text.configure(state="normal")
 
-        # Configurar tags de colores
-        self.modpack_log_text.tag_config("info", foreground="#2196F3")
-        self.modpack_log_text.tag_config("success", foreground="#4CAF50")
-        self.modpack_log_text.tag_config("warning", foreground="#FF9800")
-        self.modpack_log_text.tag_config("error", foreground="#F44336")
-        self.modpack_log_text.tag_config("normal", foreground="white")
-
+        # Insertar el mensaje (tags configurados en __init__)
         self.modpack_log_text.insert("end", message, log_type)
+
+        # Limit log size to prevent memory leak (keep last 100 lines)
+        line_count = int(self.modpack_log_text.index('end-1c').split('.')[0])
+        if line_count > 100:
+            self.modpack_log_text.delete('1.0', f'{line_count - 100}.0')
+            gc.collect()  # Force garbage collection after deleting old logs
+
         self.modpack_log_text.see("end")
         self.modpack_log_text.configure(state="disabled")
 
@@ -3165,6 +3338,7 @@ class PyCraftGUI:
                 )
 
                 self.start_modpack_server_btn.configure(state="normal")
+                self.config_modpack_server_btn.configure(state="normal")
 
                 # Detectar versiones y metadata
                 mc_version, loader_version = self._detect_server_versions(folder, server_type)
@@ -3250,16 +3424,20 @@ class PyCraftGUI:
         # Detectar tipo
         server_type = self.modpack_server_manager.detect_server_type()
 
-        # Detectar RAM recomendada (buscar mods folder)
-        mods_folder = os.path.join(self.modpack_server_path, "mods")
-        ram_mb = 4096  # Default
+        # Use configured RAM or calculate recommended RAM
+        if hasattr(self, 'modpack_ram_mb') and self.modpack_ram_mb:
+            ram_mb = self.modpack_ram_mb
+        else:
+            # Detectar RAM recomendada (buscar mods folder)
+            mods_folder = os.path.join(self.modpack_server_path, "mods")
+            ram_mb = 6144  # Default 6GB for modpacks
 
-        if os.path.exists(mods_folder):
-            num_mods = len([f for f in os.listdir(mods_folder) if f.endswith('.jar')])
-            ram_mb = self.modpack_server_manager.get_recommended_ram_for_modpack(num_mods)
+            if os.path.exists(mods_folder):
+                num_mods = len([f for f in os.listdir(mods_folder) if f.endswith('.jar')])
+                ram_mb = self.modpack_server_manager.get_recommended_ram_for_modpack(num_mods)
 
         self._add_log_modpack_server(f"\n=== INICIANDO SERVIDOR {server_type.upper()} ===\n", "info")
-        self._add_log_modpack_server(f"RAM asignada: {ram_mb} MB ({ram_mb // 1024} GB)\n", "info")
+        self._add_log_modpack_server(f"RAM asignada: {ram_mb} MB ({ram_mb / 1024:.1f} GB)\n", "info")
         self._add_log_modpack_server("El servidor está arrancando...\n\n", "info")
 
         self.start_modpack_server_btn.configure(state="disabled")
@@ -3719,14 +3897,15 @@ class PyCraftGUI:
         """Añade un mensaje a la consola del servidor con modpack"""
         self.modpack_server_log_text.configure(state="normal")
 
-        # Configurar tags de colores
-        self.modpack_server_log_text.tag_config("info", foreground="#2196F3")
-        self.modpack_server_log_text.tag_config("success", foreground="#4CAF50")
-        self.modpack_server_log_text.tag_config("warning", foreground="#FF9800")
-        self.modpack_server_log_text.tag_config("error", foreground="#F44336")
-        self.modpack_server_log_text.tag_config("normal", foreground="white")
-
+        # Insertar el mensaje (tags configurados en __init__)
         self.modpack_server_log_text.insert("end", message, log_type)
+
+        # Limit log size to prevent memory leak (keep last 100 lines)
+        line_count = int(self.modpack_server_log_text.index('end-1c').split('.')[0])
+        if line_count > 100:
+            self.modpack_server_log_text.delete('1.0', f'{line_count - 100}.0')
+            gc.collect()  # Force garbage collection after deleting old logs
+
         self.modpack_server_log_text.see("end")
         self.modpack_server_log_text.configure(state="disabled")
 
@@ -3734,12 +3913,23 @@ class PyCraftGUI:
         """Añade un log simple (para callbacks)"""
         self._add_log_modpack_server(message, "normal")
 
-        # Detectar cuando el servidor está listo
+        # Detectar cuando el servidor está listo (vanilla style)
         if "Done" in message and "For help, type" in message:
             self._add_log_modpack_server("\n", "normal")
             self._add_log_modpack_server("╔═══════════════════════════════════════════════════════╗\n", "success")
             self._add_log_modpack_server("║                                                       ║\n", "success")
-            self._add_log_modpack_server("║      ✓ ¡SERVIDOR LISTO Y FUNCIONANDO!               ║\n", "success")
+            self._add_log_modpack_server("║   ✓ ¡TU SERVIDOR DE MINECRAFT CON MODS ESTÁ LISTO!  ║\n", "success")
+            self._add_log_modpack_server("║                                                       ║\n", "success")
+            self._add_log_modpack_server("╚═══════════════════════════════════════════════════════╝\n", "success")
+            self._add_log_modpack_server("\nLos jugadores ya pueden conectarse al servidor.\n", "info")
+            self._add_log_modpack_server("Puedes enviar comandos usando el campo de abajo.\n\n", "info")
+
+        # Detectar cuando el servidor está listo (modded server style - Forge/Fabric)
+        elif "Dedicated server took" in message and "seconds to load" in message:
+            self._add_log_modpack_server("\n", "normal")
+            self._add_log_modpack_server("╔═══════════════════════════════════════════════════════╗\n", "success")
+            self._add_log_modpack_server("║                                                       ║\n", "success")
+            self._add_log_modpack_server("║   ✓ ¡TU SERVIDOR DE MINECRAFT CON MODS ESTÁ LISTO!  ║\n", "success")
             self._add_log_modpack_server("║                                                       ║\n", "success")
             self._add_log_modpack_server("╚═══════════════════════════════════════════════════════╝\n", "success")
             self._add_log_modpack_server("\nLos jugadores ya pueden conectarse al servidor.\n", "info")
