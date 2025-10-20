@@ -264,6 +264,6 @@ Each resource has its dedicated manager that encapsulates all its logic.
 
 ---
 
-**Version**: 2.0
+**Version**: 1.0.0
 **Date**: October 2025
 **Status**: Modular structure implemented and functional
