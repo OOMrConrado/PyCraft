@@ -1,233 +1,351 @@
 """
-Módulo base con utilidades comunes para todas las pestañas
+Base module with common utilities for all tabs
 """
 
-import customtkinter as ctk
+from PySide6.QtWidgets import (
+    QWidget, QFrame, QLabel, QPushButton, QLineEdit,
+    QTextEdit, QScrollArea, QVBoxLayout, QProgressBar
+)
+from PySide6.QtGui import QFont, QColor, QPalette, QTextCharFormat, QTextCursor
+from PySide6.QtCore import Qt
 
 
 class BaseTab:
-    """Clase base con utilidades comunes para todas las pestañas"""
+    """Base class with common utilities for all tabs"""
 
-    # Paleta de colores común
+    # Common color palette
     COLORS = {
-        "bg_primary": "gray10",
-        "bg_secondary": "gray15",
-        "bg_tertiary": "gray20",
+        "bg_primary": "#1a1a1a",
+        "bg_secondary": "#252525",
+        "bg_tertiary": "#2d2d2d",
         "accent": "#4CAF50",
         "accent_light": "#81C784",
         "warning": "#FFA726",
         "error": "#EF5350",
         "info": "#42A5F5",
-        "border": "gray30",
-        "text_primary": "white",
-        "text_secondary": "gray",
+        "border": "#404040",
+        "text_primary": "#ffffff",
+        "text_secondary": "#888888",
     }
 
-    def __init__(self, parent):
+    def __init__(self, parent: QWidget):
         """
-        Inicializa la pestaña base
+        Initialize the base tab
 
         Args:
-            parent: El widget padre donde se creará esta pestaña
+            parent: The parent widget where this tab will be created
         """
         self.parent = parent
 
     @staticmethod
-    def fix_textbox_scroll(textbox):
+    def create_button(
+        parent: QWidget,
+        text: str,
+        width: int = 200,
+        height: int = 35,
+        bg_color: str = "#2196F3",
+        hover_color: str = "#1976D2",
+        text_color: str = "#ffffff"
+    ) -> QPushButton:
         """
-        Arregla el scroll del textbox para hacerlo más smooth
+        Create a styled button
 
         Args:
-            textbox: El textbox a arreglar
-        """
-        def _on_mousewheel(event):
-            textbox.yview_scroll(-1 * int(event.delta / 60), "units")
-
-        # Bind mouse wheel para scroll más suave
-        textbox._textbox.bind("<MouseWheel>", _on_mousewheel)
-        textbox._textbox.bind("<Button-4>", lambda e: textbox.yview_scroll(-1, "units"))
-        textbox._textbox.bind("<Button-5>", lambda e: textbox.yview_scroll(1, "units"))
-
-    @staticmethod
-    def fix_scrollable_frame_scroll(scrollable_frame):
-        """
-        Arregla el scroll del frame scrollable para hacerlo más smooth
-
-        Args:
-            scrollable_frame: El frame scrollable a arreglar
-        """
-        def _on_frame_scroll(event):
-            if hasattr(scrollable_frame, "_parent_canvas"):
-                scrollable_frame._parent_canvas.yview_scroll(
-                    -1 * int(event.delta / 60), "units"
-                )
-
-        # Bind recursivo a todos los widgets del frame
-        def bind_recursive(widget):
-            widget.bind("<MouseWheel>", _on_frame_scroll)
-            widget.bind("<Button-4>", lambda e: scrollable_frame._parent_canvas.yview_scroll(-1, "units") if hasattr(scrollable_frame, "_parent_canvas") else None)
-            widget.bind("<Button-5>", lambda e: scrollable_frame._parent_canvas.yview_scroll(1, "units") if hasattr(scrollable_frame, "_parent_canvas") else None)
-            for child in widget.winfo_children():
-                bind_recursive(child)
-
-        if hasattr(scrollable_frame, "_parent_canvas"):
-            bind_recursive(scrollable_frame)
-
-    def add_log(self, textbox, message: str, log_type: str = "normal"):
-        """
-        Agrega un mensaje al log con el color apropiado
-
-        Args:
-            textbox: El textbox donde agregar el log
-            message: El mensaje a agregar
-            log_type: Tipo de log (normal, info, success, warning, error)
-        """
-        # Configurar tags de colores si no existen
-        if not hasattr(textbox, "_tags_configured"):
-            textbox.tag_config("normal", foreground="white")
-            textbox.tag_config("info", foreground="#42A5F5")
-            textbox.tag_config("success", foreground="#4CAF50")
-            textbox.tag_config("warning", foreground="#FFA726")
-            textbox.tag_config("error", foreground="#EF5350")
-            textbox._tags_configured = True
-
-        # Insertar mensaje con el tag apropiado
-        textbox.insert("end", message, log_type)
-        textbox.see("end")
-
-    @staticmethod
-    def create_button(parent, text, command, width=200, height=35,
-                      fg_color="blue", hover_color="darkblue", **kwargs):
-        """
-        Crea un botón estilizado
-
-        Args:
-            parent: Widget padre
-            text: Texto del botón
-            command: Comando a ejecutar
-            width: Ancho del botón
-            height: Alto del botón
-            fg_color: Color de fondo
-            hover_color: Color al pasar el mouse
-            **kwargs: Argumentos adicionales para CTkButton
+            parent: Parent widget
+            text: Button text
+            width: Button width
+            height: Button height
+            bg_color: Background color
+            hover_color: Hover background color
+            text_color: Text color
 
         Returns:
-            El botón creado
+            The created button
         """
-        return ctk.CTkButton(
-            parent,
-            text=text,
-            command=command,
-            width=width,
-            height=height,
-            fg_color=fg_color,
-            hover_color=hover_color,
-            **kwargs
-        )
+        button = QPushButton(text, parent)
+        button.setFixedSize(width, height)
+        button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {bg_color};
+                color: {text_color};
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {hover_color};
+            }}
+            QPushButton:disabled {{
+                background-color: #555555;
+                color: #888888;
+            }}
+        """)
+        return button
 
     @staticmethod
-    def create_label(parent, text, font_size=12, font_weight="normal",
-                     text_color="white", **kwargs):
+    def create_label(
+        parent: QWidget,
+        text: str,
+        font_size: int = 12,
+        font_weight: str = "normal",
+        text_color: str = "#ffffff"
+    ) -> QLabel:
         """
-        Crea una etiqueta estilizada
+        Create a styled label
 
         Args:
-            parent: Widget padre
-            text: Texto de la etiqueta
-            font_size: Tamaño de la fuente
-            font_weight: Peso de la fuente (normal, bold)
-            text_color: Color del texto
-            **kwargs: Argumentos adicionales para CTkLabel
+            parent: Parent widget
+            text: Label text
+            font_size: Font size
+            font_weight: Font weight (normal, bold)
+            text_color: Text color
 
         Returns:
-            La etiqueta creada
+            The created label
         """
-        return ctk.CTkLabel(
-            parent,
-            text=text,
-            font=ctk.CTkFont(size=font_size, weight=font_weight),
-            text_color=text_color,
-            **kwargs
-        )
+        label = QLabel(text, parent)
+        weight = "bold" if font_weight == "bold" else "normal"
+        label.setStyleSheet(f"""
+            QLabel {{
+                color: {text_color};
+                font-size: {font_size}px;
+                font-weight: {weight};
+            }}
+        """)
+        return label
 
     @staticmethod
-    def create_frame(parent, fg_color="gray15", **kwargs):
+    def create_frame(parent: QWidget, bg_color: str = "#252525") -> QFrame:
         """
-        Crea un frame estilizado
+        Create a styled frame
 
         Args:
-            parent: Widget padre
-            fg_color: Color de fondo
-            **kwargs: Argumentos adicionales para CTkFrame
+            parent: Parent widget
+            bg_color: Background color
 
         Returns:
-            El frame creado
+            The created frame
         """
-        return ctk.CTkFrame(parent, fg_color=fg_color, **kwargs)
+        frame = QFrame(parent)
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg_color};
+                border-radius: 8px;
+            }}
+        """)
+        return frame
 
     @staticmethod
-    def create_entry(parent, placeholder="", width=400, height=35, **kwargs):
+    def create_entry(
+        parent: QWidget,
+        placeholder: str = "",
+        width: int = 400,
+        height: int = 35
+    ) -> QLineEdit:
         """
-        Crea un campo de entrada estilizado
+        Create a styled entry field
 
         Args:
-            parent: Widget padre
-            placeholder: Texto placeholder
-            width: Ancho del campo
-            height: Alto del campo
-            **kwargs: Argumentos adicionales para CTkEntry
+            parent: Parent widget
+            placeholder: Placeholder text
+            width: Field width
+            height: Field height
 
         Returns:
-            El campo de entrada creado
+            The created entry field
         """
-        return ctk.CTkEntry(
-            parent,
-            placeholder_text=placeholder,
-            width=width,
-            height=height,
-            **kwargs
-        )
+        entry = QLineEdit(parent)
+        entry.setPlaceholderText(placeholder)
+        entry.setFixedSize(width, height)
+        entry.setStyleSheet("""
+            QLineEdit {
+                background-color: #2d2d2d;
+                color: #ffffff;
+                border: 1px solid #404040;
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #2196F3;
+            }
+            QLineEdit::placeholder {
+                color: #666666;
+            }
+        """)
+        return entry
 
     @staticmethod
-    def create_textbox(parent, width=800, height=200, **kwargs):
+    def create_textbox(
+        parent: QWidget,
+        width: int = 800,
+        height: int = 200,
+        read_only: bool = False
+    ) -> QTextEdit:
         """
-        Crea un textbox estilizado
+        Create a styled textbox
 
         Args:
-            parent: Widget padre
-            width: Ancho del textbox
-            height: Alto del textbox
-            **kwargs: Argumentos adicionales para CTkTextbox
+            parent: Parent widget
+            width: Textbox width
+            height: Textbox height
+            read_only: Whether the textbox is read-only
 
         Returns:
-            El textbox creado
+            The created textbox
         """
-        return ctk.CTkTextbox(
-            parent,
-            width=width,
-            height=height,
-            font=ctk.CTkFont(family="Consolas", size=11),
-            wrap="word",
-            **kwargs
-        )
+        textbox = QTextEdit(parent)
+        textbox.setFixedSize(width, height)
+        textbox.setReadOnly(read_only)
+        textbox.setStyleSheet("""
+            QTextEdit {
+                background-color: #1a1a1a;
+                color: #ffffff;
+                border: 1px solid #404040;
+                border-radius: 6px;
+                padding: 8px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 11px;
+            }
+            QTextEdit:focus {
+                border: 1px solid #2196F3;
+            }
+            QScrollBar:vertical {
+                background-color: #2d2d2d;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #555555;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #666666;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+        return textbox
 
     @staticmethod
-    def create_scrollable_frame(parent, width=900, height=600, **kwargs):
+    def create_scroll_area(parent: QWidget, width: int = 900, height: int = 600) -> QScrollArea:
         """
-        Crea un frame scrollable estilizado
+        Create a styled scroll area
 
         Args:
-            parent: Widget padre
-            width: Ancho del frame
-            height: Alto del frame
-            **kwargs: Argumentos adicionales para CTkScrollableFrame
+            parent: Parent widget
+            width: Scroll area width
+            height: Scroll area height
 
         Returns:
-            El frame scrollable creado
+            The created scroll area
         """
-        return ctk.CTkScrollableFrame(
-            parent,
-            width=width,
-            height=height,
-            **kwargs
-        )
+        scroll = QScrollArea(parent)
+        scroll.setFixedSize(width, height)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: #2d2d2d;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #555555;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #666666;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar:horizontal {
+                background-color: #2d2d2d;
+                height: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:horizontal {
+                background-color: #555555;
+                border-radius: 6px;
+                min-width: 20px;
+            }
+            QScrollBar::handle:horizontal:hover {
+                background-color: #666666;
+            }
+            QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+                width: 0px;
+            }
+        """)
+        return scroll
+
+    @staticmethod
+    def create_progress_bar(parent: QWidget, width: int = 400, height: int = 20) -> QProgressBar:
+        """
+        Create a styled progress bar
+
+        Args:
+            parent: Parent widget
+            width: Progress bar width
+            height: Progress bar height
+
+        Returns:
+            The created progress bar
+        """
+        progress = QProgressBar(parent)
+        progress.setFixedSize(width, height)
+        progress.setValue(0)
+        progress.setTextVisible(False)
+        progress.setStyleSheet("""
+            QProgressBar {
+                background-color: #2d2d2d;
+                border: none;
+                border-radius: 5px;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+                border-radius: 5px;
+            }
+        """)
+        return progress
+
+    def add_log(self, textbox: QTextEdit, message: str, log_type: str = "normal"):
+        """
+        Add a message to the log with the appropriate color
+
+        Args:
+            textbox: The textbox where to add the log
+            message: The message to add
+            log_type: Log type (normal, info, success, warning, error)
+        """
+        colors = {
+            "normal": "#ffffff",
+            "info": "#42A5F5",
+            "success": "#4CAF50",
+            "warning": "#FFA726",
+            "error": "#EF5350"
+        }
+
+        color = colors.get(log_type, "#ffffff")
+
+        cursor = textbox.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        format = QTextCharFormat()
+        format.setForeground(QColor(color))
+
+        cursor.insertText(message, format)
+        textbox.setTextCursor(cursor)
+        textbox.ensureCursorVisible()
