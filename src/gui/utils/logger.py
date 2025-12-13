@@ -3,7 +3,8 @@ Logger Mixin - Utility for unified log handling in textboxes
 Simplifies repetitive logging code in the GUI
 """
 
-import customtkinter as ctk
+from PySide6.QtWidgets import QTextEdit
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 
 
 class LoggerMixin:
@@ -13,13 +14,12 @@ class LoggerMixin:
     Usage:
         class MyComponent(LoggerMixin):
             def __init__(self):
-                self.log_textbox = ctk.CTkTextbox(...)
-                self._configure_log_tags(self.log_textbox)
+                self.log_textbox = QTextEdit(...)
     """
 
     # Standard colors for logs
     LOG_COLORS = {
-        "normal": "white",
+        "normal": "#ffffff",
         "info": "#42A5F5",
         "success": "#4CAF50",
         "warning": "#FFA726",
@@ -27,23 +27,7 @@ class LoggerMixin:
     }
 
     @staticmethod
-    def _configure_log_tags(textbox: ctk.CTkTextbox):
-        """
-        Configures color tags for a textbox
-
-        Args:
-            textbox: The textbox where to configure the tags
-        """
-        if hasattr(textbox, "_tags_configured"):
-            return
-
-        for tag_name, color in LoggerMixin.LOG_COLORS.items():
-            textbox.tag_config(tag_name, foreground=color)
-
-        textbox._tags_configured = True
-
-    @staticmethod
-    def add_log(textbox: ctk.CTkTextbox, message: str, log_type: str = "normal"):
+    def add_log(textbox: QTextEdit, message: str, log_type: str = "normal"):
         """
         Adds a message to the log with the appropriate color
 
@@ -52,33 +36,52 @@ class LoggerMixin:
             message: The message to add
             log_type: Log type (normal, info, success, warning, error)
         """
-        # Configure tags if not configured
-        LoggerMixin._configure_log_tags(textbox)
-
         # Validate log type
         if log_type not in LoggerMixin.LOG_COLORS:
             log_type = "normal"
 
-        # Insert message with appropriate tag
-        textbox.insert("end", message, log_type)
-        textbox.see("end")
+        color = LoggerMixin.LOG_COLORS[log_type]
+
+        # Move cursor to end
+        cursor = textbox.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        # Set text format with color
+        format = QTextCharFormat()
+        format.setForeground(QColor(color))
+
+        # Insert text with format
+        cursor.insertText(message, format)
+
+        # Update cursor and scroll to end
+        textbox.setTextCursor(cursor)
+        textbox.ensureCursorVisible()
+
+        # Limit log size to prevent memory issues (keep last 100 lines)
+        document = textbox.document()
+        if document.blockCount() > 100:
+            cursor = textbox.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            for _ in range(document.blockCount() - 100):
+                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
 
     @staticmethod
-    def clear_log(textbox: ctk.CTkTextbox):
+    def clear_log(textbox: QTextEdit):
         """
         Clears all log content
 
         Args:
             textbox: The textbox to clear
         """
-        textbox.delete("1.0", "end")
+        textbox.clear()
 
     @staticmethod
-    def add_separator(textbox: ctk.CTkTextbox):
+    def add_separator(textbox: QTextEdit):
         """
         Adds a visual separator to the log
 
         Args:
             textbox: The textbox where to add the separator
         """
-        LoggerMixin.add_log(textbox, "\n" + "="*50 + "\n\n", "info")
+        LoggerMixin.add_log(textbox, "\n" + "=" * 50 + "\n\n", "info")
