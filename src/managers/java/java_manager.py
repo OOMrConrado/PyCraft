@@ -553,9 +553,12 @@ class JavaManager:
 
     # ==================== PATH MANAGEMENT ====================
 
-    def _get_user_path_from_registry(self) -> Optional[str]:
+    def _get_path_from_registry(self, use_system: bool = False) -> Optional[str]:
         """
-        Gets the current User PATH from Windows Registry
+        Gets the current PATH from Windows Registry
+
+        Args:
+            use_system: If True, reads from SYSTEM variables, else from USER
 
         Returns:
             Current PATH string or None if failed
@@ -564,27 +567,44 @@ class JavaManager:
             return None
 
         try:
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Environment",
-                0,
-                winreg.KEY_READ
-            ) as key:
+            if use_system:
+                # System variables (requires admin)
+                key_path = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                root_key = winreg.HKEY_LOCAL_MACHINE
+            else:
+                # User variables
+                key_path = r"Environment"
+                root_key = winreg.HKEY_CURRENT_USER
+
+            with winreg.OpenKey(root_key, key_path, 0, winreg.KEY_READ) as key:
                 path_value, _ = winreg.QueryValueEx(key, "Path")
                 return path_value
         except FileNotFoundError:
             # Path doesn't exist yet
             return ""
+        except PermissionError:
+            # No admin rights for system variables
+            return None
         except Exception as e:
             print(f"Error reading PATH from registry: {e}")
             return None
 
-    def _set_user_path_to_registry(self, new_path: str) -> bool:
+    def _get_user_path_from_registry(self) -> Optional[str]:
         """
-        Sets the User PATH in Windows Registry
+        Gets the current User PATH from Windows Registry (backward compatibility)
+
+        Returns:
+            Current PATH string or None if failed
+        """
+        return self._get_path_from_registry(use_system=False)
+
+    def _set_path_to_registry(self, new_path: str, use_system: bool = False) -> bool:
+        """
+        Sets the PATH in Windows Registry
 
         Args:
             new_path: New PATH string
+            use_system: If True, sets SYSTEM variables (requires admin), else USER
 
         Returns:
             True if successful
@@ -593,12 +613,16 @@ class JavaManager:
             return False
 
         try:
-            with winreg.OpenKey(
-                winreg.HKEY_CURRENT_USER,
-                r"Environment",
-                0,
-                winreg.KEY_WRITE
-            ) as key:
+            if use_system:
+                # System variables (requires admin)
+                key_path = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                root_key = winreg.HKEY_LOCAL_MACHINE
+            else:
+                # User variables
+                key_path = r"Environment"
+                root_key = winreg.HKEY_CURRENT_USER
+
+            with winreg.OpenKey(root_key, key_path, 0, winreg.KEY_WRITE) as key:
                 winreg.SetValueEx(key, "Path", 0, winreg.REG_EXPAND_SZ, new_path)
 
             # Broadcast WM_SETTINGCHANGE to notify applications
@@ -618,8 +642,128 @@ class JavaManager:
             )
 
             return True
+        except PermissionError:
+            # No admin rights for system variables
+            return False
         except Exception as e:
             print(f"Error writing PATH to registry: {e}")
+            return False
+
+    def _set_user_path_to_registry(self, new_path: str) -> bool:
+        """
+        Sets the User PATH in Windows Registry (backward compatibility)
+
+        Args:
+            new_path: New PATH string
+
+        Returns:
+            True if successful
+        """
+        return self._set_path_to_registry(new_path, use_system=False)
+
+    def _set_java_home(self, java_home_path: str, use_system: bool = False) -> bool:
+        """
+        Sets the JAVA_HOME environment variable in Windows Registry
+
+        Args:
+            java_home_path: Path to Java installation root (not bin/)
+            use_system: If True, sets SYSTEM variable (requires admin), else USER
+
+        Returns:
+            True if successful
+        """
+        if not WINREG_AVAILABLE or self.system != "Windows":
+            return False
+
+        try:
+            if use_system:
+                # System variables (requires admin)
+                key_path = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                root_key = winreg.HKEY_LOCAL_MACHINE
+            else:
+                # User variables
+                key_path = r"Environment"
+                root_key = winreg.HKEY_CURRENT_USER
+
+            with winreg.OpenKey(root_key, key_path, 0, winreg.KEY_WRITE) as key:
+                winreg.SetValueEx(key, "JAVA_HOME", 0, winreg.REG_EXPAND_SZ, java_home_path)
+
+            # Broadcast WM_SETTINGCHANGE to notify applications
+            import ctypes
+            HWND_BROADCAST = 0xFFFF
+            WM_SETTINGCHANGE = 0x001A
+            SMTO_ABORTIFHUNG = 0x0002
+            result = ctypes.c_long()
+            ctypes.windll.user32.SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_SETTINGCHANGE,
+                0,
+                "Environment",
+                SMTO_ABORTIFHUNG,
+                5000,
+                ctypes.byref(result)
+            )
+
+            return True
+        except PermissionError:
+            # No admin rights for system variables
+            return False
+        except Exception as e:
+            print(f"Error setting JAVA_HOME: {e}")
+            return False
+
+    def _remove_java_home(self, use_system: bool = False) -> bool:
+        """
+        Removes the JAVA_HOME environment variable from Windows Registry
+
+        Args:
+            use_system: If True, removes from SYSTEM variables (requires admin), else USER
+
+        Returns:
+            True if successful
+        """
+        if not WINREG_AVAILABLE or self.system != "Windows":
+            return False
+
+        try:
+            if use_system:
+                # System variables (requires admin)
+                key_path = r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment"
+                root_key = winreg.HKEY_LOCAL_MACHINE
+            else:
+                # User variables
+                key_path = r"Environment"
+                root_key = winreg.HKEY_CURRENT_USER
+
+            with winreg.OpenKey(root_key, key_path, 0, winreg.KEY_WRITE) as key:
+                try:
+                    winreg.DeleteValue(key, "JAVA_HOME")
+                except FileNotFoundError:
+                    # JAVA_HOME doesn't exist, that's fine
+                    pass
+
+            # Broadcast WM_SETTINGCHANGE to notify applications
+            import ctypes
+            HWND_BROADCAST = 0xFFFF
+            WM_SETTINGCHANGE = 0x001A
+            SMTO_ABORTIFHUNG = 0x0002
+            result = ctypes.c_long()
+            ctypes.windll.user32.SendMessageTimeoutW(
+                HWND_BROADCAST,
+                WM_SETTINGCHANGE,
+                0,
+                "Environment",
+                SMTO_ABORTIFHUNG,
+                5000,
+                ctypes.byref(result)
+            )
+
+            return True
+        except PermissionError:
+            # No admin rights for system variables
+            return False
+        except Exception as e:
+            print(f"Error removing JAVA_HOME: {e}")
             return False
 
     def add_java_to_path(
@@ -628,14 +772,15 @@ class JavaManager:
         log_callback: Optional[Callable[[str], None]] = None
     ) -> bool:
         """
-        Adds Java bin directory to User PATH
+        Adds Java bin directory to PATH and sets JAVA_HOME
+        Tries SYSTEM variables first (requires admin), falls back to USER variables
 
         Args:
             java_bin_path: Path to the Java bin directory (containing java.exe)
             log_callback: Function to report progress
 
         Returns:
-            True if successful
+            True if at least USER configuration succeeded
         """
         if not WINREG_AVAILABLE or self.system != "Windows":
             if log_callback:
@@ -644,44 +789,147 @@ class JavaManager:
 
         try:
             java_bin_str = str(java_bin_path.absolute())
+            java_home_str = str(java_bin_path.parent.absolute())  # Parent of bin/ is JAVA_HOME
 
-            # Get current PATH
-            current_path = self._get_user_path_from_registry()
-            if current_path is None:
+            # Track what was configured
+            path_configured_as = None
+            java_home_configured_as = None
+
+            if log_callback:
+                log_callback("\n┌─ Configurando Java en el sistema ─┐\n")
+                log_callback("│                                    │\n")
+
+            # ===== STRATEGY 1: Try SYSTEM variables first (requires admin) =====
+            if log_callback:
+                log_callback("│ → Intentando configurar variables  │\n")
+                log_callback("│   de SISTEMA (nivel global)...     │\n")
+                log_callback("│                                    │\n")
+
+            system_success = self._configure_java_environment(
+                java_bin_str,
+                java_home_str,
+                use_system=True,
+                log_callback=None  # Don't show errors yet
+            )
+
+            if system_success:
+                path_configured_as = "SISTEMA"
+                java_home_configured_as = "SISTEMA"
                 if log_callback:
-                    log_callback("✗ Failed to read current PATH\n")
+                    log_callback("│ ✓ Variables de SISTEMA configuradas│\n")
+            else:
+                # SYSTEM failed, try USER as fallback
+                if log_callback:
+                    log_callback("│ ⚠ No se pudo acceder a variables  │\n")
+                    log_callback("│   de SISTEMA (requiere permisos)  │\n")
+                    log_callback("│                                    │\n")
+                    log_callback("│ → Configurando variables de        │\n")
+                    log_callback("│   USUARIO (solo tu cuenta)...      │\n")
+                    log_callback("│                                    │\n")
+
+                user_success = self._configure_java_environment(
+                    java_bin_str,
+                    java_home_str,
+                    use_system=False,
+                    log_callback=None
+                )
+
+                if user_success:
+                    path_configured_as = "USUARIO"
+                    java_home_configured_as = "USUARIO"
+                    if log_callback:
+                        log_callback("│ ✓ Variables de USUARIO configuradas│\n")
+                else:
+                    if log_callback:
+                        log_callback("│ ✗ Error configurando variables     │\n")
+                    return False
+
+            # ===== SUCCESS SUMMARY =====
+            if log_callback:
+                log_callback("│                                    │\n")
+                log_callback("└────────────────────────────────────┘\n")
+                log_callback("\n📋 Resumen de configuración:\n")
+                log_callback(f"   • PATH:      Variables de {path_configured_as}\n")
+                log_callback(f"   • JAVA_HOME: Variables de {java_home_configured_as}\n")
+                log_callback(f"   • Ubicación: {java_bin_str}\n")
+                log_callback(f"   • JAVA_HOME: {java_home_str}\n\n")
+
+                if path_configured_as == "SISTEMA":
+                    log_callback("✅ Configuración ÓPTIMA\n")
+                    log_callback("   Java está disponible para TODOS los usuarios del sistema.\n")
+                    log_callback("   Todas las aplicaciones podrán detectar Java automáticamente.\n")
+                else:
+                    log_callback("⚠️  Configuración LIMITADA\n")
+                    log_callback("   Java solo está disponible para TU usuario.\n")
+                    log_callback("   Algunas aplicaciones pueden no detectar Java.\n\n")
+                    log_callback("💡 Para configuración global (recomendado):\n")
+                    log_callback("   1. Ejecuta PyCraft como Administrador\n")
+                    log_callback("   2. Reinstala Java cuando Windows te pida permisos\n")
+                    log_callback("   3. Acepta la ventana de permisos (UAC) de Windows\n")
+
+                log_callback("\n⚠️  IMPORTANTE: Debes reiniciar las aplicaciones abiertas\n")
+                log_callback("   para que detecten los cambios.\n")
+
+            return True
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"\n✗ Error inesperado: {str(e)}\n")
+            return False
+
+    def _configure_java_environment(
+        self,
+        java_bin_path: str,
+        java_home_path: str,
+        use_system: bool,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Internal helper to configure both PATH and JAVA_HOME
+
+        Args:
+            java_bin_path: Path to Java bin directory
+            java_home_path: Path to Java home directory
+            use_system: Whether to use SYSTEM or USER variables
+            log_callback: Optional logging callback
+
+        Returns:
+            True if both PATH and JAVA_HOME were configured successfully
+        """
+        try:
+            # Get current PATH
+            current_path = self._get_path_from_registry(use_system)
+            if current_path is None:
                 return False
 
             # Check if already in PATH
             path_entries = [p.strip() for p in current_path.split(';') if p.strip()]
 
             # Check if Java is already in PATH (case-insensitive)
+            java_already_in_path = False
             for entry in path_entries:
-                if entry.lower() == java_bin_str.lower():
-                    if log_callback:
-                        log_callback("✓ Java already in PATH\n")
-                    return True
+                if entry.lower() == java_bin_path.lower():
+                    java_already_in_path = True
+                    break
 
-            # Add to PATH
-            if current_path and not current_path.endswith(';'):
-                new_path = current_path + ';' + java_bin_str
-            else:
-                new_path = current_path + java_bin_str
+            # Add to PATH if not already there
+            if not java_already_in_path:
+                if current_path and not current_path.endswith(';'):
+                    new_path = current_path + ';' + java_bin_path
+                else:
+                    new_path = current_path + java_bin_path
 
-            # Set new PATH
-            if self._set_user_path_to_registry(new_path):
-                if log_callback:
-                    log_callback(f"✓ Java added to PATH: {java_bin_str}\n")
-                    log_callback("  Note: You may need to restart applications for the change to take effect\n")
-                return True
-            else:
-                if log_callback:
-                    log_callback("✗ Failed to update PATH\n")
+                # Set new PATH
+                if not self._set_path_to_registry(new_path, use_system):
+                    return False
+
+            # Set JAVA_HOME
+            if not self._set_java_home(java_home_path, use_system):
                 return False
 
-        except Exception as e:
-            if log_callback:
-                log_callback(f"✗ Error adding Java to PATH: {str(e)}\n")
+            return True
+
+        except Exception:
             return False
 
     def remove_java_from_path(
@@ -690,14 +938,14 @@ class JavaManager:
         log_callback: Optional[Callable[[str], None]] = None
     ) -> bool:
         """
-        Removes Java bin directory from User PATH
+        Removes Java bin directory from PATH and JAVA_HOME from both SYSTEM and USER variables
 
         Args:
             java_bin_path: Specific path to remove, or None to remove all PyCraft Java paths
             log_callback: Function to report progress
 
         Returns:
-            True if successful
+            True if at least one removal succeeded
         """
         if not WINREG_AVAILABLE or self.system != "Windows":
             if log_callback:
@@ -705,16 +953,93 @@ class JavaManager:
             return False
 
         try:
-            # Get current PATH
-            current_path = self._get_user_path_from_registry()
-            if current_path is None:
+            pycraft_java_base = str((Path.home() / ".pycraft" / "java").absolute())
+            overall_success = False
+
+            if log_callback:
+                log_callback("\n┌─ Eliminando configuración de Java ─┐\n")
+                log_callback("│                                     │\n")
+
+            # ===== TRY SYSTEM VARIABLES FIRST =====
+            if log_callback:
+                log_callback("│ → Verificando variables de SISTEMA...│\n")
+
+            system_path_removed = self._remove_from_path_registry(
+                java_bin_path, pycraft_java_base, use_system=True
+            )
+
+            if system_path_removed:
                 if log_callback:
-                    log_callback("✗ Failed to read current PATH\n")
+                    log_callback("│   ✓ PATH de SISTEMA limpiado       │\n")
+                overall_success = True
+
+            # Remove JAVA_HOME from system
+            if self._remove_java_home(use_system=True):
+                if log_callback:
+                    log_callback("│   ✓ JAVA_HOME de SISTEMA eliminado │\n")
+                overall_success = True
+
+            # ===== TRY USER VARIABLES =====
+            if log_callback:
+                log_callback("│                                     │\n")
+                log_callback("│ → Verificando variables de USUARIO...│\n")
+
+            user_path_removed = self._remove_from_path_registry(
+                java_bin_path, pycraft_java_base, use_system=False
+            )
+
+            if user_path_removed:
+                if log_callback:
+                    log_callback("│   ✓ PATH de USUARIO limpiado       │\n")
+                overall_success = True
+
+            # Remove JAVA_HOME from user
+            if self._remove_java_home(use_system=False):
+                if log_callback:
+                    log_callback("│   ✓ JAVA_HOME de USUARIO eliminado │\n")
+                overall_success = True
+
+            if log_callback:
+                log_callback("│                                     │\n")
+                log_callback("└─────────────────────────────────────┘\n")
+
+                if overall_success:
+                    log_callback("\n✅ Configuración de Java eliminada\n")
+                    log_callback("   Reinicia las aplicaciones para que los cambios surtan efecto.\n")
+                else:
+                    log_callback("\nℹ️  No se encontró configuración de Java para eliminar\n")
+
+            return overall_success
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"\n✗ Error eliminando configuración: {str(e)}\n")
+            return False
+
+    def _remove_from_path_registry(
+        self,
+        java_bin_path: Optional[Path],
+        pycraft_java_base: str,
+        use_system: bool
+    ) -> bool:
+        """
+        Internal helper to remove Java from PATH in registry
+
+        Args:
+            java_bin_path: Specific path to remove, or None for all PyCraft paths
+            pycraft_java_base: Base path for PyCraft Java installations
+            use_system: Whether to use SYSTEM or USER variables
+
+        Returns:
+            True if something was removed
+        """
+        try:
+            # Get current PATH
+            current_path = self._get_path_from_registry(use_system)
+            if current_path is None:
                 return False
 
             path_entries = [p.strip() for p in current_path.split(';') if p.strip()]
-            pycraft_java_base = str((Path.home() / ".pycraft" / "java").absolute())
-
             removed_count = 0
             new_entries = []
 
@@ -732,31 +1057,17 @@ class JavaManager:
 
                 if should_remove:
                     removed_count += 1
-                    if log_callback:
-                        log_callback(f"  Removing: {entry}\n")
                 else:
                     new_entries.append(entry)
 
             if removed_count == 0:
-                if log_callback:
-                    log_callback("✓ No Java paths found in PATH\n")
-                return True
+                return False
 
             # Set new PATH
             new_path = ';'.join(new_entries)
-            if self._set_user_path_to_registry(new_path):
-                if log_callback:
-                    log_callback(f"✓ Removed {removed_count} Java path(s) from PATH\n")
-                    log_callback("  Note: You may need to restart applications for the change to take effect\n")
-                return True
-            else:
-                if log_callback:
-                    log_callback("✗ Failed to update PATH\n")
-                return False
+            return self._set_path_to_registry(new_path, use_system)
 
-        except Exception as e:
-            if log_callback:
-                log_callback(f"✗ Error removing Java from PATH: {str(e)}\n")
+        except Exception:
             return False
 
     def get_java_installations(self) -> List[Tuple[int, Path, bool]]:
