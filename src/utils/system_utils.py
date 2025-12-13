@@ -140,31 +140,29 @@ def can_allocate_ram(required_mb: int) -> Tuple[bool, str]:
         required_mb: Required RAM in MB
 
     Returns:
-        (can_allocate, message)
+        (can_allocate, message) - Always returns True but with warning if low RAM
     """
     available = check_available_ram()
 
     if available == -1:
-        return (True, "⚠️ No se pudo verificar RAM disponible (psutil no instalado)")
+        return (True, "")
 
-    # More flexible RAM check for systems with 8GB or less
-    # Leave 1.5GB for the system on low-RAM systems, 2GB for higher-RAM systems
-    if available <= 8192:  # 8GB or less
-        safety_margin = 1536  # 1.5GB
-    else:
-        safety_margin = 2048  # 2GB
+    # Use a smaller safety margin (512MB) - just a recommendation
+    safety_margin = 512
+    recommended = required_mb + safety_margin
 
-    usable = available - safety_margin
+    if available < required_mb:
+        # Critical: not even enough for the server
+        return (True,
+                f"⚠️ RAM muy baja! Disponible: {available} MB, Requerido: {required_mb} MB\n"
+                f"   El servidor podría no iniciar. Cierra otros programas.\n")
+    elif available < recommended:
+        # Warning: enough but tight
+        return (True,
+                f"⚠️ RAM ajustada: {available} MB disponibles.\n"
+                f"   Recomendado: {recommended} MB. El servidor debería funcionar.\n")
 
-    if required_mb > usable:
-        return (False,
-                f"⚠️ RAM insuficiente!\n"
-                f"  Requerido: {required_mb} MB\n"
-                f"  Disponible: {available} MB\n"
-                f"  Usable (con margen de seguridad): {usable} MB\n\n"
-                f"Sugerencia: Cierra otros programas o reduce la RAM asignada al servidor")
-
-    return (True, f"✓ RAM suficiente ({available} MB disponibles)")
+    return (True, f"✓ RAM OK ({available} MB disponibles)\n")
 
 
 def is_port_in_use(port: int) -> bool:
