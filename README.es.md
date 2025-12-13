@@ -16,7 +16,7 @@ PyCraft simplifica la creación de servidores de Minecraft, permitiéndote desca
 - **Loaders**: Soporte para Forge y Fabric
 - **Java**: Verificación e instalación automática de Java
 - **Gestión Completa**: Inicia, detiene y envía comandos a tus servidores
-- **Interfaz Intuitiva**: GUI moderna con customtkinter
+- **Interfaz Intuitiva**: GUI moderna con PySide6 (framework Qt)
 
 ---
 
