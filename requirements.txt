@@ -1,11 +1,14 @@
 # GUI Framework
-customtkinter==5.2.2
+PySide6>=6.8.0
+
+# Icon library (Font Awesome icons for Qt)
+qtawesome>=1.3.0
 
 # HTTP Requests for API communication
-requests==2.31.0
+requests>=2.31.0
 
 # Image processing and icon handling
-Pillow==10.2.0
+Pillow>=10.4.0
 
 # System and process utilities
-psutil==5.9.8
+psutil>=5.9.8
