@@ -609,7 +609,7 @@ class PyCraftGUI(QMainWindow):
         layout.setSpacing(15)
 
         github = FooterLink("GitHub", "Source Code", "fa5b.github")
-        github.clicked.connect(lambda: webbrowser.open("https://github.com"))
+        github.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft"))
         layout.addWidget(github)
 
         modrinth = FooterLink("Modrinth", "Browse Modpacks", "fa5s.box-open")
