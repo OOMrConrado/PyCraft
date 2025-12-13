@@ -1,289 +1,382 @@
 """
-Widget Factory - Fabrica de widgets comunes con estilos consistentes
-Reduce código repetitivo y asegura consistencia visual
+Widget Factory - Factory for common widgets with consistent styles
+Reduces repetitive code and ensures visual consistency
 """
 
-import customtkinter as ctk
+from PySide6.QtWidgets import (
+    QWidget, QFrame, QLabel, QPushButton, QLineEdit,
+    QTextEdit, QScrollArea, QProgressBar, QVBoxLayout
+)
+from PySide6.QtGui import QFont, QColor
+from PySide6.QtCore import Qt
 from typing import Optional, Callable
 
 
 class WidgetFactory:
     """
-    Factoría para crear widgets con estilos predefinidos y consistentes
+    Factory for creating widgets with predefined and consistent styles
 
-    Uso:
+    Usage:
         button = WidgetFactory.create_button(
-            parent, "Click me", self.on_click, style="primary"
+            parent, "Click me", style="primary"
         )
     """
 
-    # Estilos predefinidos para botones
+    # Predefined button styles
     BUTTON_STYLES = {
-        "primary": {"fg_color": "blue", "hover_color": "darkblue"},
-        "success": {"fg_color": "green", "hover_color": "darkgreen"},
-        "danger": {"fg_color": "red", "hover_color": "darkred"},
-        "warning": {"fg_color": "#FFA726", "hover_color": "#b87d1d"},
-        "secondary": {"fg_color": "gray25", "hover_color": "gray35"},
+        "primary": {"bg_color": "#2196F3", "hover_color": "#1976D2"},
+        "success": {"bg_color": "#4CAF50", "hover_color": "#388E3C"},
+        "danger": {"bg_color": "#f44336", "hover_color": "#d32f2f"},
+        "warning": {"bg_color": "#FFA726", "hover_color": "#F57C00"},
+        "secondary": {"bg_color": "#424242", "hover_color": "#616161"},
     }
 
     @staticmethod
     def create_button(
-        parent,
+        parent: QWidget,
         text: str,
-        command: Optional[Callable] = None,
+        callback: Optional[Callable] = None,
         style: str = "primary",
         width: int = 200,
-        height: int = 35,
-        **kwargs
-    ) -> ctk.CTkButton:
+        height: int = 35
+    ) -> QPushButton:
         """
-        Crea un botón estilizado
+        Create a styled button
 
         Args:
-            parent: Widget padre
-            text: Texto del botón
-            command: Comando a ejecutar al hacer clic
-            style: Estilo predefinido (primary, success, danger, warning, secondary)
-            width: Ancho del botón
-            height: Alto del botón
-            **kwargs: Argumentos adicionales para CTkButton
+            parent: Parent widget
+            text: Button text
+            callback: Function to call when clicked
+            style: Predefined style (primary, success, danger, warning, secondary)
+            width: Button width
+            height: Button height
 
         Returns:
-            El botón creado
+            The created button
         """
-        style_config = WidgetFactory.BUTTON_STYLES.get(style, WidgetFactory.BUTTON_STYLES["primary"])
-
-        return ctk.CTkButton(
-            parent,
-            text=text,
-            command=command,
-            width=width,
-            height=height,
-            **style_config,
-            **kwargs
+        style_config = WidgetFactory.BUTTON_STYLES.get(
+            style, WidgetFactory.BUTTON_STYLES["primary"]
         )
+        bg_color = style_config["bg_color"]
+        hover_color = style_config["hover_color"]
+
+        button = QPushButton(text, parent)
+        button.setFixedSize(width, height)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        if callback:
+            button.clicked.connect(callback)
+
+        button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {bg_color};
+                color: #ffffff;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 500;
+                padding: 5px 15px;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {hover_color};
+            }}
+            QPushButton:disabled {{
+                background-color: #555555;
+                color: #888888;
+            }}
+        """)
+        return button
 
     @staticmethod
     def create_label(
-        parent,
+        parent: QWidget,
         text: str,
         font_size: int = 12,
         font_weight: str = "normal",
-        text_color: str = "white",
-        **kwargs
-    ) -> ctk.CTkLabel:
+        text_color: str = "#ffffff"
+    ) -> QLabel:
         """
-        Crea una etiqueta estilizada
+        Create a styled label
 
         Args:
-            parent: Widget padre
-            text: Texto de la etiqueta
-            font_size: Tamaño de la fuente
-            font_weight: Peso de la fuente (normal, bold)
-            text_color: Color del texto
-            **kwargs: Argumentos adicionales
+            parent: Parent widget
+            text: Label text
+            font_size: Font size
+            font_weight: Font weight (normal, bold)
+            text_color: Text color
 
         Returns:
-            La etiqueta creada
+            The created label
         """
-        return ctk.CTkLabel(
-            parent,
-            text=text,
-            font=ctk.CTkFont(size=font_size, weight=font_weight),
-            text_color=text_color,
-            **kwargs
+        label = QLabel(text, parent)
+        weight = "bold" if font_weight == "bold" else "normal"
+        label.setStyleSheet(f"""
+            QLabel {{
+                color: {text_color};
+                font-size: {font_size}px;
+                font-weight: {weight};
+                background-color: transparent;
+            }}
+        """)
+        return label
+
+    @staticmethod
+    def create_title(parent: QWidget, text: str) -> QLabel:
+        """
+        Create a large title
+
+        Args:
+            parent: Parent widget
+            text: Title text
+
+        Returns:
+            The title label
+        """
+        return WidgetFactory.create_label(
+            parent, text, font_size=22, font_weight="bold"
         )
 
     @staticmethod
-    def create_title(parent, text: str, **kwargs) -> ctk.CTkLabel:
+    def create_section_title(parent: QWidget, text: str) -> QLabel:
         """
-        Crea un título grande
+        Create a section title
 
         Args:
-            parent: Widget padre
-            text: Texto del título
-            **kwargs: Argumentos adicionales
+            parent: Parent widget
+            text: Title text
 
         Returns:
-            La etiqueta de título
+            The section title label
         """
         return WidgetFactory.create_label(
-            parent, text, font_size=22, font_weight="bold", **kwargs
-        )
-
-    @staticmethod
-    def create_section_title(parent, text: str, **kwargs) -> ctk.CTkLabel:
-        """
-        Crea un título de sección
-
-        Args:
-            parent: Widget padre
-            text: Texto del título
-            **kwargs: Argumentos adicionales
-
-        Returns:
-            La etiqueta de título de sección
-        """
-        return WidgetFactory.create_label(
-            parent, text, font_size=18, font_weight="bold", **kwargs
+            parent, text, font_size=18, font_weight="bold"
         )
 
     @staticmethod
     def create_frame(
-        parent,
-        fg_color: str = "gray15",
-        corner_radius: int = 10,
-        **kwargs
-    ) -> ctk.CTkFrame:
+        parent: QWidget,
+        bg_color: str = "#252525",
+        corner_radius: int = 10
+    ) -> QFrame:
         """
-        Crea un frame estilizado
+        Create a styled frame
 
         Args:
-            parent: Widget padre
-            fg_color: Color de fondo
-            corner_radius: Radio de las esquinas
-            **kwargs: Argumentos adicionales
+            parent: Parent widget
+            bg_color: Background color
+            corner_radius: Corner radius
 
         Returns:
-            El frame creado
+            The created frame
         """
-        return ctk.CTkFrame(
-            parent,
-            fg_color=fg_color,
-            corner_radius=corner_radius,
-            **kwargs
-        )
+        frame = QFrame(parent)
+        frame.setStyleSheet(f"""
+            QFrame {{
+                background-color: {bg_color};
+                border-radius: {corner_radius}px;
+            }}
+        """)
+        return frame
 
     @staticmethod
-    def create_scrollable_frame(
-        parent,
+    def create_scroll_area(
+        parent: QWidget,
         width: int = 900,
-        height: int = 600,
-        **kwargs
-    ) -> ctk.CTkScrollableFrame:
+        height: int = 600
+    ) -> QScrollArea:
         """
-        Crea un frame scrollable
+        Create a scrollable area
 
         Args:
-            parent: Widget padre
-            width: Ancho del frame
-            height: Alto del frame
-            **kwargs: Argumentos adicionales
+            parent: Parent widget
+            width: Scroll area width
+            height: Scroll area height
 
         Returns:
-            El frame scrollable
+            The scrollable area
         """
-        return ctk.CTkScrollableFrame(
-            parent,
-            width=width,
-            height=height,
-            **kwargs
-        )
+        scroll = QScrollArea(parent)
+        scroll.setFixedSize(width, height)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setStyleSheet("""
+            QScrollArea {
+                background-color: transparent;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background-color: #2d2d2d;
+                width: 12px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #555555;
+                border-radius: 6px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #666666;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+        """)
+        return scroll
 
     @staticmethod
     def create_entry(
-        parent,
+        parent: QWidget,
         placeholder: str = "",
         width: int = 400,
-        height: int = 35,
-        **kwargs
-    ) -> ctk.CTkEntry:
+        height: int = 35
+    ) -> QLineEdit:
         """
-        Crea un campo de entrada
+        Create an entry field
 
         Args:
-            parent: Widget padre
-            placeholder: Texto placeholder
-            width: Ancho del campo
-            height: Alto del campo
-            **kwargs: Argumentos adicionales
+            parent: Parent widget
+            placeholder: Placeholder text
+            width: Field width
+            height: Field height
 
         Returns:
-            El campo de entrada
+            The entry field
         """
-        return ctk.CTkEntry(
-            parent,
-            placeholder_text=placeholder,
-            width=width,
-            height=height,
-            **kwargs
-        )
+        entry = QLineEdit(parent)
+        entry.setPlaceholderText(placeholder)
+        entry.setFixedSize(width, height)
+        entry.setStyleSheet("""
+            QLineEdit {
+                background-color: #2d2d2d;
+                color: #ffffff;
+                border: 1px solid #404040;
+                border-radius: 6px;
+                padding: 5px 10px;
+                font-size: 13px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #2196F3;
+            }
+            QLineEdit::placeholder {
+                color: #666666;
+            }
+        """)
+        return entry
 
     @staticmethod
     def create_textbox(
-        parent,
+        parent: QWidget,
         width: int = 800,
         height: int = 200,
         font_family: str = "Consolas",
         font_size: int = 11,
-        **kwargs
-    ) -> ctk.CTkTextbox:
+        read_only: bool = False
+    ) -> QTextEdit:
         """
-        Crea un textbox para logs/consola
+        Create a textbox for logs/console
 
         Args:
-            parent: Widget padre
-            width: Ancho del textbox
-            height: Alto del textbox
-            font_family: Familia de fuente
-            font_size: Tamaño de fuente
-            **kwargs: Argumentos adicionales
+            parent: Parent widget
+            width: Textbox width
+            height: Textbox height
+            font_family: Font family
+            font_size: Font size
+            read_only: Whether the textbox is read-only
 
         Returns:
-            El textbox creado
+            The created textbox
         """
-        return ctk.CTkTextbox(
-            parent,
-            width=width,
-            height=height,
-            font=ctk.CTkFont(family=font_family, size=font_size),
-            wrap="word",
-            **kwargs
-        )
+        textbox = QTextEdit(parent)
+        textbox.setFixedSize(width, height)
+        textbox.setReadOnly(read_only)
+        textbox.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: #1a1a1a;
+                color: #ffffff;
+                border: 1px solid #404040;
+                border-radius: 6px;
+                padding: 8px;
+                font-family: '{font_family}', 'Courier New', monospace;
+                font-size: {font_size}px;
+            }}
+            QTextEdit:focus {{
+                border: 1px solid #2196F3;
+            }}
+            QScrollBar:vertical {{
+                background-color: #2d2d2d;
+                width: 12px;
+                border-radius: 6px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: #555555;
+                border-radius: 6px;
+                min-height: 20px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: #666666;
+            }}
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+                height: 0px;
+            }}
+        """)
+        return textbox
 
     @staticmethod
     def create_progress_bar(
-        parent,
+        parent: QWidget,
         width: int = 400,
-        height: int = 20,
-        **kwargs
-    ) -> ctk.CTkProgressBar:
+        height: int = 20
+    ) -> QProgressBar:
         """
-        Crea una barra de progreso
+        Create a progress bar
 
         Args:
-            parent: Widget padre
-            width: Ancho de la barra
-            height: Alto de la barra
-            **kwargs: Argumentos adicionales
+            parent: Parent widget
+            width: Progress bar width
+            height: Progress bar height
 
         Returns:
-            La barra de progreso
+            The progress bar
         """
-        progress_bar = ctk.CTkProgressBar(
-            parent,
-            width=width,
-            height=height,
-            **kwargs
-        )
-        progress_bar.set(0)
-        return progress_bar
+        progress = QProgressBar(parent)
+        progress.setFixedSize(width, height)
+        progress.setValue(0)
+        progress.setTextVisible(False)
+        progress.setStyleSheet("""
+            QProgressBar {
+                background-color: #2d2d2d;
+                border: none;
+                border-radius: 5px;
+            }
+            QProgressBar::chunk {
+                background-color: #4CAF50;
+                border-radius: 5px;
+            }
+        """)
+        return progress
 
     @staticmethod
-    def create_separator(parent, **kwargs) -> ctk.CTkFrame:
+    def create_separator(parent: QWidget, height: int = 2) -> QFrame:
         """
-        Crea un separador horizontal
+        Create a horizontal separator
 
         Args:
-            parent: Widget padre
-            **kwargs: Argumentos adicionales
+            parent: Parent widget
+            height: Separator height
 
         Returns:
-            El separador (frame delgado)
+            The separator (thin frame)
         """
-        return ctk.CTkFrame(
-            parent,
-            height=2,
-            fg_color="gray30",
-            **kwargs
-        )
+        separator = QFrame(parent)
+        separator.setFixedHeight(height)
+        separator.setStyleSheet("""
+            QFrame {
+                background-color: #404040;
+                border: none;
+            }
+        """)
+        return separator
