@@ -1,5 +1,5 @@
 """
-GUI Utils Package - Utilidades comunes para la interfaz gráfica
+GUI Utils Package - Common utilities for the graphical interface
 """
 
 from .logger import LoggerMixin
