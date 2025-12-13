@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QTextEdit, QFrame,
     QScrollArea, QProgressBar, QFileDialog, QMessageBox, QDialog,
     QSlider, QStackedWidget, QInputDialog, QGraphicsDropShadowEffect,
-    QStyle, QProxyStyle, QStyleOption
+    QStyle, QProxyStyle, QStyleOption, QComboBox
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QPixmap, QIcon, QTextCharFormat, QColor, QTextCursor, QCursor, QFont, QPainter
@@ -78,6 +78,7 @@ from ..core.download import ServerDownloader
 from ..managers.server import ServerManager
 from ..managers.modpack import ModpackManager
 from ..managers.java import JavaManager
+from ..utils import system_utils
 
 
 class SidebarButton(QPushButton):
@@ -1517,10 +1518,14 @@ class PyCraftGUI(QMainWindow):
 
     def _collapse_version_dropdown(self, ver: str):
         """Collapse version dropdown after selection"""
+        # Disconnect textChanged to prevent dropdown from re-showing when we clear text
+        self.ver_search.textChanged.disconnect(self._filter_versions)
         self.ver_scroll.hide()
         self.ver_search.setText("")
         self.ver_search.setPlaceholderText(f"✓ {ver} (click to change)")
         self.ver_search.clearFocus()
+        # Reconnect textChanged
+        self.ver_search.textChanged.connect(self._filter_versions)
 
     def _filter_versions(self, text: str):
         # Show dropdown when typing
@@ -1554,6 +1559,64 @@ class PyCraftGUI(QMainWindow):
         if not self.selected_version or not self.server_folder:
             return
 
+        # Check Java compatibility BEFORE downloading
+        required_java = self.java_manager.get_required_java_version(self.selected_version)
+        java_info = self.java_manager.detect_java_version()
+
+        # Check if we have a compatible Java already installed by PyCraft
+        pycraft_java = None
+        install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
+        if install_dir.exists():
+            java_exe = self.java_manager._find_java_executable(install_dir)
+            if java_exe:
+                pycraft_java = str(java_exe)
+
+        # Determine if we need Java
+        needs_java = False
+        if pycraft_java:
+            # We have PyCraft-installed Java, use it
+            pass
+        elif java_info:
+            _, installed_major = java_info
+            if installed_major < required_java:
+                needs_java = True
+        else:
+            needs_java = True
+
+        if needs_java:
+            # Show dialog with options
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Java Required")
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setText(f"Minecraft {self.selected_version} requires Java {required_java}+")
+
+            if java_info:
+                _, installed_major = java_info
+                msg.setInformativeText(
+                    f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
+                    f"What would you like to do?"
+                )
+            else:
+                msg.setInformativeText(
+                    f"Java is not installed on your system.\n\n"
+                    f"What would you like to do?"
+                )
+
+            install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
+            settings_btn = msg.addButton("Go to Settings", QMessageBox.ButtonRole.ActionRole)
+            cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+
+            msg.exec()
+
+            clicked = msg.clickedButton()
+            if clicked == settings_btn:
+                self._go_to("settings")
+                return
+            elif clicked == cancel_btn or clicked is None:
+                return
+            # If install_btn clicked, continue with auto-install
+
+        # Proceed with download
         self.download_btn.setEnabled(False)
         self.active_progress = self.create_progress
         self.active_progress_label = self.create_progress_label
@@ -1617,7 +1680,7 @@ class PyCraftGUI(QMainWindow):
                 self.server_folder = folder
                 self.run_folder_label.setText(f"Folder: {folder}")
                 self.run_status.setText("Server found")
-                self.run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600;")
+                self.run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
 
                 self.server_manager = ServerManager(folder)
                 self.is_server_configured = True
@@ -1627,8 +1690,16 @@ class PyCraftGUI(QMainWindow):
 
                 self._log(self.vanilla_run_console, f"\nServer found: {folder}\n", "success")
             else:
+                self.server_folder = None
+                self.run_folder_label.setText(f"Folder: {folder}")
                 self.run_status.setText("server.jar not found")
-                self.run_status.setStyleSheet(f"color: {self.colors['red']}; font-size: 13px; font-weight: 600;")
+                self.run_status.setStyleSheet(f"color: {self.colors['red']}; font-size: 13px; font-weight: 600; border: none;")
+                self.run_start.setEnabled(False)
+                self.run_config.setEnabled(False)
+                self.run_stop.setEnabled(False)
+                self.run_cmd_btn.setEnabled(False)
+                self.server_manager = None
+                self.is_server_configured = False
 
     def _start_vanilla(self):
         if not self.server_manager:
@@ -1677,35 +1748,250 @@ class PyCraftGUI(QMainWindow):
     def _open_config_dialog(self, server_type: str):
         dialog = QDialog(self)
         dialog.setWindowTitle("Server Configuration")
-        dialog.setFixedSize(380, 180)
+        dialog.setFixedSize(420, 520)
         dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
 
         layout = QVBoxLayout(dialog)
         layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(12)
+
+        # Get manager
+        manager = self.server_manager if server_type == "vanilla" else self.modpack_server_manager
+
+        # Get total system RAM
+        total_ram = system_utils.get_total_ram()
+        if total_ram == -1:
+            total_ram = 8192  # Default fallback if can't detect
+
+        # Combo style
+        combo_style = f"""
+            QComboBox {{
+                background-color: {self.colors['bg_input']};
+                color: {self.colors['text']};
+                border: 1px solid {self.colors['border']};
+                border-radius: 8px;
+                padding: 10px 14px;
+                padding-right: 35px;
+                font-size: 13px;
+            }}
+            QComboBox:hover {{
+                border: 1px solid {self.colors['accent']};
+            }}
+            QComboBox:on {{
+                border: 1px solid {self.colors['accent']};
+            }}
+            QComboBox::drop-down {{
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 30px;
+                border: none;
+            }}
+            QComboBox::down-arrow {{
+                width: 12px;
+                height: 12px;
+                image: none;
+            }}
+            QComboBox QAbstractItemView {{
+                background-color: {self.colors['bg_input']};
+                color: {self.colors['text']};
+                selection-background-color: {self.colors['accent']};
+                selection-color: #000000;
+                border: 1px solid {self.colors['border']};
+                border-radius: 8px;
+                padding: 4px;
+            }}
+            QComboBox QAbstractItemView::item {{
+                padding: 8px 12px;
+                border-radius: 4px;
+            }}
+            QComboBox QAbstractItemView::item:hover {{
+                background-color: rgba(74, 222, 128, 0.2);
+            }}
+        """
+
+        # Helper to create combo with icon
+        def create_combo_with_arrow(items, current_value):
+            container = QWidget()
+            container.setStyleSheet("background: transparent;")
+            h_layout = QHBoxLayout(container)
+            h_layout.setContentsMargins(0, 0, 0, 0)
+            h_layout.setSpacing(0)
+
+            combo = QComboBox()
+            combo.addItems(items)
+            combo.setCurrentText(current_value)
+            combo.setStyleSheet(combo_style)
+            combo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+
+            # Add arrow label
+            arrow_label = QLabel("▼")
+            arrow_label.setFixedWidth(30)
+            arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            arrow_label.setStyleSheet(f"""
+                color: {self.colors['text_secondary']};
+                font-size: 10px;
+                background: transparent;
+                margin-right: 10px;
+            """)
+
+            # Update arrow on popup show/hide
+            def on_show():
+                arrow_label.setText("▲")
+                arrow_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 10px; background: transparent; margin-right: 10px;")
+
+            def on_hide():
+                arrow_label.setText("▼")
+                arrow_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 10px; background: transparent; margin-right: 10px;")
+
+            combo.showPopup = lambda orig=combo.showPopup: (on_show(), orig())[-1]
+            combo.hidePopup = lambda orig=combo.hidePopup: (on_hide(), orig())[-1]
+
+            h_layout.addWidget(combo, 1)
+            h_layout.addWidget(arrow_label)
+
+            return container, combo
+
+        slider_style = f"""
+            QSlider::groove:horizontal {{
+                background: {self.colors['bg_input']};
+                height: 8px;
+                border-radius: 4px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {self.colors['accent']};
+                width: 18px;
+                height: 18px;
+                margin: -5px 0;
+                border-radius: 9px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {self.colors['accent']};
+                border-radius: 4px;
+            }}
+        """
+
+        # === RAM Section ===
+        ram_section = QLabel("RAM Allocation")
+        ram_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
+        layout.addWidget(ram_section)
 
         ram = self.vanilla_ram if server_type == "vanilla" else self.modpack_ram
-        ram_label = QLabel(f"RAM: {ram} MB")
-        ram_label.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px;")
+        ram_label = QLabel(f"{ram} MB ({ram / 1024:.1f} GB)")
+        ram_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 500;")
         layout.addWidget(ram_label)
 
-        slider = QSlider(Qt.Orientation.Horizontal)
-        slider.setMinimum(1024 if server_type == "vanilla" else 2048)
-        slider.setMaximum(16384 if server_type == "vanilla" else 32768)
-        slider.setValue(ram)
-        slider.valueChanged.connect(lambda v: ram_label.setText(f"RAM: {v} MB"))
-        layout.addWidget(slider)
+        ram_slider = QSlider(Qt.Orientation.Horizontal)
+        min_ram = 1024 if server_type == "vanilla" else 2048
+        max_ram = min(total_ram - 1024, 32768)
+        max_ram = max(max_ram, min_ram + 1024)
 
-        save = self._styled_button("Save", self.colors['accent'], "#000000", 100)
-        save.clicked.connect(lambda: self._save_config(server_type, slider.value(), dialog))
+        ram_slider.setMinimum(min_ram)
+        ram_slider.setMaximum(max_ram)
+        ram_slider.setSingleStep(512)
+        ram_slider.setValue(ram)
+        ram_slider.setStyleSheet(slider_style)
+        ram_slider.valueChanged.connect(lambda v: ram_label.setText(f"{v} MB ({v / 1024:.1f} GB)"))
+        layout.addWidget(ram_slider)
+
+        ram_info = QLabel(f"System: {total_ram / 1024:.1f} GB | Max: {max_ram / 1024:.1f} GB")
+        ram_info.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
+        layout.addWidget(ram_info)
+
+        layout.addSpacing(4)
+
+        # === Gamemode Section ===
+        gamemode_section = QLabel("Gamemode")
+        gamemode_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
+        layout.addWidget(gamemode_section)
+
+        current_gamemode = "survival"
+        if manager:
+            saved_gm = manager.get_property("gamemode")
+            if saved_gm:
+                current_gamemode = saved_gm
+
+        gamemode_container, gamemode_combo = create_combo_with_arrow(
+            ["survival", "creative", "adventure", "spectator"],
+            current_gamemode
+        )
+        layout.addWidget(gamemode_container)
+
+        layout.addSpacing(4)
+
+        # === Difficulty Section ===
+        diff_section = QLabel("Difficulty")
+        diff_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
+        layout.addWidget(diff_section)
+
+        current_difficulty = "normal"
+        if manager:
+            saved_diff = manager.get_property("difficulty")
+            if saved_diff:
+                current_difficulty = saved_diff
+
+        diff_container, diff_combo = create_combo_with_arrow(
+            ["peaceful", "easy", "normal", "hard"],
+            current_difficulty
+        )
+        layout.addWidget(diff_container)
+
+        layout.addSpacing(4)
+
+        # === Max Players Section ===
+        players_section = QLabel("Max Players")
+        players_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
+        layout.addWidget(players_section)
+
+        current_max_players = 20
+        if manager:
+            saved_players = manager.get_property("max-players")
+            if saved_players:
+                try:
+                    current_max_players = int(saved_players)
+                except ValueError:
+                    pass
+
+        players_label = QLabel(f"{current_max_players} players")
+        players_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 500;")
+        layout.addWidget(players_label)
+
+        players_slider = QSlider(Qt.Orientation.Horizontal)
+        players_slider.setMinimum(1)
+        players_slider.setMaximum(100)
+        players_slider.setValue(current_max_players)
+        players_slider.setStyleSheet(slider_style)
+        players_slider.valueChanged.connect(lambda v: players_label.setText(f"{v} players"))
+        layout.addWidget(players_slider)
+
+        layout.addStretch()
+
+        # Save button
+        save = self._styled_button("Save", self.colors['accent'], "#000000", 120)
+        save.clicked.connect(lambda: self._save_config(
+            server_type,
+            ram_slider.value(),
+            diff_combo.currentText(),
+            gamemode_combo.currentText(),
+            players_slider.value(),
+            dialog
+        ))
         layout.addWidget(save, alignment=Qt.AlignmentFlag.AlignCenter)
 
         dialog.exec()
 
-    def _save_config(self, server_type: str, ram: int, dialog: QDialog):
+    def _save_config(self, server_type: str, ram: int, difficulty: str, gamemode: str, max_players: int, dialog: QDialog):
         if server_type == "vanilla":
             self.vanilla_ram = ram
+            if self.server_manager:
+                self.server_manager.configure_server_properties(difficulty=difficulty)
+                self.server_manager.update_property("gamemode", gamemode)
+                self.server_manager.update_property("max-players", str(max_players))
         else:
             self.modpack_ram = ram
+            if self.modpack_server_manager:
+                self.modpack_server_manager.configure_server_properties(difficulty=difficulty)
+                self.modpack_server_manager.update_property("gamemode", gamemode)
+                self.modpack_server_manager.update_property("max-players", str(max_players))
         dialog.accept()
 
     # Modpack
@@ -1829,7 +2115,7 @@ class PyCraftGUI(QMainWindow):
                 self.modpack_server_path = folder
                 self.mp_run_folder_label.setText(f"Folder: {folder}")
                 self.mp_run_status.setText("Server found")
-                self.mp_run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600;")
+                self.mp_run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
 
                 self.modpack_server_manager = ServerManager(folder)
                 self.is_modpack_configured = True
@@ -1839,8 +2125,16 @@ class PyCraftGUI(QMainWindow):
 
                 self._log(self.modpack_run_console, f"\nServer found: {folder}\n", "success")
             else:
+                self.modpack_server_path = None
+                self.mp_run_folder_label.setText(f"Folder: {folder}")
                 self.mp_run_status.setText("Server not found")
-                self.mp_run_status.setStyleSheet(f"color: {self.colors['red']}; font-size: 13px; font-weight: 600;")
+                self.mp_run_status.setStyleSheet(f"color: {self.colors['red']}; font-size: 13px; font-weight: 600; border: none;")
+                self.mp_start.setEnabled(False)
+                self.mp_config.setEnabled(False)
+                self.mp_stop.setEnabled(False)
+                self.mp_cmd_btn.setEnabled(False)
+                self.modpack_server_manager = None
+                self.is_modpack_configured = False
 
     def _has_server(self, folder: str) -> bool:
         import glob
@@ -1920,18 +2214,68 @@ class PyCraftGUI(QMainWindow):
                         padding: 10px;
                     }}
                 """)
-                frame_layout = QVBoxLayout(frame)
+                frame_layout = QHBoxLayout(frame)
                 frame_layout.setContentsMargins(12, 10, 12, 10)
+
+                # Info column
+                info_widget = QWidget()
+                info_widget.setStyleSheet("background: transparent;")
+                info_layout = QVBoxLayout(info_widget)
+                info_layout.setContentsMargins(0, 0, 0, 0)
+                info_layout.setSpacing(2)
 
                 v = QLabel(f"Java {ver}")
                 v.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
-                frame_layout.addWidget(v)
+                info_layout.addWidget(v)
 
                 p = QLabel(f"Path: {path}")
                 p.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-                frame_layout.addWidget(p)
+                info_layout.addWidget(p)
+
+                frame_layout.addWidget(info_widget, 1)
+
+                # Delete button
+                delete_btn = QPushButton()
+                delete_btn.setFixedSize(36, 36)
+                delete_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                delete_btn.setIcon(qta.icon("fa5s.trash-alt", color=self.colors['red']))
+                delete_btn.setIconSize(QSize(16, 16))
+                delete_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        border: 1px solid {self.colors['border']};
+                        border-radius: 8px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: rgba(248, 113, 113, 0.2);
+                        border: 1px solid {self.colors['red']};
+                    }}
+                """)
+                delete_btn.clicked.connect(lambda _, version=ver: self._delete_java(version))
+                frame_layout.addWidget(delete_btn)
 
                 self.java_info_layout.addWidget(frame)
+
+            # Add "Install another" button
+            install_another = self._styled_button("+ Install another", self.colors['bg_input'], self.colors['text'], 160)
+            install_another.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {self.colors['bg_input']};
+                    color: {self.colors['text']};
+                    border: 1px dashed {self.colors['border']};
+                    border-radius: 10px;
+                    padding: 10px 20px;
+                    font-size: 13px;
+                    font-weight: 500;
+                }}
+                QPushButton:hover {{
+                    border: 1px dashed {self.colors['accent']};
+                    color: {self.colors['accent']};
+                }}
+            """)
+            install_another.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            install_another.clicked.connect(self._install_java)
+            self.java_info_layout.addWidget(install_another)
 
     def _install_java(self):
         ver, ok = QInputDialog.getText(self, "Install Java", "Version (8, 17, or 21):")
@@ -1947,6 +2291,23 @@ class PyCraftGUI(QMainWindow):
 
             except ValueError:
                 QMessageBox.critical(self, "Error", "Invalid version")
+
+    def _delete_java(self, version: int):
+        reply = QMessageBox.question(
+            self,
+            "Delete Java",
+            f"Are you sure you want to delete Java {version}?\n\nThis will also remove it from your system PATH.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            success = self.java_manager.delete_java_installation(version, lambda m: print(m))
+            if success:
+                QMessageBox.information(self, "Success", f"Java {version} deleted successfully")
+            else:
+                QMessageBox.warning(self, "Error", f"Failed to delete Java {version}")
+            self._check_java()
 
     def run(self):
         self.show()
