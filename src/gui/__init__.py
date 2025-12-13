@@ -1,5 +1,5 @@
-"""GUI Package - Módulos de interfaz gráfica para PyCraft."""
+"""GUI Package - Graphical interface modules for PyCraft."""
 
-from .main_window import PyCraftGUI
+from .main_window import PyCraftGUI, main
 
-__all__ = ["PyCraftGUI"]
+__all__ = ["PyCraftGUI", "main"]
