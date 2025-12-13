@@ -132,6 +132,22 @@ def check_available_ram() -> int:
         return -1
 
 
+def get_total_ram() -> int:
+    """
+    Returns total system RAM in MB
+
+    Returns:
+        Total RAM in MB, or -1 if it cannot be determined
+    """
+    if not PSUTIL_AVAILABLE:
+        return -1
+
+    try:
+        return psutil.virtual_memory().total // (1024 * 1024)
+    except Exception:
+        return -1
+
+
 def can_allocate_ram(required_mb: int) -> Tuple[bool, str]:
     """
     Checks if there is enough RAM for the server
