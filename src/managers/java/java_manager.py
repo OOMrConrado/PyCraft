@@ -49,6 +49,11 @@ class JavaManager:
             Tuple of (full version, major version) or None if not installed
         """
         try:
+            # Refresh environment variables from registry to detect newly installed Java
+            # This is needed because os.environ doesn't auto-update when system vars change
+            if self.system == "Windows" and WINREG_AVAILABLE:
+                self._refresh_process_environment()
+
             # Run java -version
             # Configure flags for Windows
             creation_flags = 0
@@ -340,7 +345,7 @@ class JavaManager:
 
             if java_bin_path:
                 if log_callback:
-                    log_callback(f"✓ Java {java_version} instalado correctamente\n")
+                    log_callback(f"✓ Java {java_version} descargado correctamente\n")
                     log_callback(f"  Directorio: {extract_dir}\n")
                     log_callback(f"  Ejecutable: {java_bin_path}\n")
 
@@ -353,12 +358,19 @@ class JavaManager:
                     if log_callback:
                         log_callback("✓ Java configurado en el PATH del sistema\n")
                         log_callback("  Ahora puedes usar 'java' desde cualquier terminal\n")
+                    return str(extract_dir)
                 else:
+                    # PATH configuration failed - clean up downloaded files
                     if log_callback:
-                        log_callback("⚠ No se pudo configurar el PATH automáticamente\n")
-                        log_callback("  Puedes configurarlo manualmente desde la pestaña de Configuración\n")
-
-                return str(extract_dir)
+                        log_callback("\n🗑️ Limpiando archivos descargados...\n")
+                    try:
+                        shutil.rmtree(extract_dir)
+                        if log_callback:
+                            log_callback("✓ Archivos eliminados\n")
+                    except Exception as e:
+                        if log_callback:
+                            log_callback(f"⚠ No se pudieron eliminar los archivos: {e}\n")
+                    return None
             else:
                 if log_callback:
                     log_callback("✗ Error: No se encontró el ejecutable de Java después de la extracción\n")
@@ -552,6 +564,74 @@ class JavaManager:
             return None
 
     # ==================== PATH MANAGEMENT ====================
+
+    def _refresh_process_environment(self, log_callback: Optional[Callable[[str], None]] = None) -> bool:
+        """
+        Refreshes the current process's environment variables by reading from the Windows Registry.
+        This allows the process to detect newly installed Java without restarting.
+
+        Args:
+            log_callback: Optional logging callback
+
+        Returns:
+            True if environment was refreshed successfully
+        """
+        if not WINREG_AVAILABLE or self.system != "Windows":
+            return False
+
+        try:
+            # Read SYSTEM PATH
+            system_path = self._get_path_from_registry(use_system=True) or ""
+
+            # Read USER PATH
+            user_path = self._get_path_from_registry(use_system=False) or ""
+
+            # Combine paths (system + user, as Windows does)
+            combined_path = system_path
+            if user_path:
+                if combined_path and not combined_path.endswith(';'):
+                    combined_path += ';'
+                combined_path += user_path
+
+            # Update process PATH
+            if combined_path:
+                os.environ['PATH'] = combined_path
+
+            # Read and update JAVA_HOME from SYSTEM
+            try:
+                with winreg.OpenKey(
+                    winreg.HKEY_LOCAL_MACHINE,
+                    r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+                    0,
+                    winreg.KEY_READ
+                ) as key:
+                    java_home, _ = winreg.QueryValueEx(key, "JAVA_HOME")
+                    if java_home:
+                        os.environ['JAVA_HOME'] = java_home
+            except (FileNotFoundError, PermissionError):
+                # Try USER JAVA_HOME
+                try:
+                    with winreg.OpenKey(
+                        winreg.HKEY_CURRENT_USER,
+                        r"Environment",
+                        0,
+                        winreg.KEY_READ
+                    ) as key:
+                        java_home, _ = winreg.QueryValueEx(key, "JAVA_HOME")
+                        if java_home:
+                            os.environ['JAVA_HOME'] = java_home
+                except (FileNotFoundError, PermissionError):
+                    pass
+
+            if log_callback:
+                log_callback("✓ Variables de entorno del proceso actualizadas\n")
+
+            return True
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"⚠ No se pudieron refrescar las variables: {str(e)}\n")
+            return False
 
     def _get_path_from_registry(self, use_system: bool = False) -> Optional[str]:
         """
@@ -813,62 +893,44 @@ class JavaManager:
             )
 
             if system_success:
-                path_configured_as = "SISTEMA"
-                java_home_configured_as = "SISTEMA"
                 if log_callback:
                     log_callback("│ ✓ Variables de SISTEMA configuradas│\n")
             else:
-                # SYSTEM failed, try USER as fallback
+                # SYSTEM failed (no admin), try UAC elevation
                 if log_callback:
-                    log_callback("│ ⚠ No se pudo acceder a variables  │\n")
-                    log_callback("│   de SISTEMA (requiere permisos)  │\n")
-                    log_callback("│                                    │\n")
-                    log_callback("│ → Configurando variables de        │\n")
-                    log_callback("│   USUARIO (solo tu cuenta)...      │\n")
-                    log_callback("│                                    │\n")
+                    log_callback("│ ⚠ Sin permisos de administrador    │\n")
+                    log_callback("│ → Solicitando elevación UAC...     │\n")
 
-                user_success = self._configure_java_environment(
+                # Try to get admin rights via UAC popup
+                elevation_success = self._configure_java_with_elevation(
                     java_bin_str,
                     java_home_str,
-                    use_system=False,
-                    log_callback=None
+                    log_callback=log_callback
                 )
 
-                if user_success:
-                    path_configured_as = "USUARIO"
-                    java_home_configured_as = "USUARIO"
+                if not elevation_success:
+                    # UAC was cancelled or failed - cannot continue
                     if log_callback:
-                        log_callback("│ ✓ Variables de USUARIO configuradas│\n")
-                else:
-                    if log_callback:
-                        log_callback("│ ✗ Error configurando variables     │\n")
+                        log_callback("└────────────────────────────────────┘\n")
+                        log_callback("\n⚠ Permisos de administrador requeridos\n")
+                        log_callback("✗ Instalación cancelada\n")
+                        log_callback("\nDebes aceptar los permisos de administrador\n")
+                        log_callback("de Windows para instalar Java.\n\n")
+                        log_callback("Intenta de nuevo y acepta la ventana\n")
+                        log_callback("de permisos cuando aparezca.\n")
                     return False
 
-            # ===== SUCCESS SUMMARY =====
+            # ===== SUCCESS =====
             if log_callback:
                 log_callback("│                                    │\n")
                 log_callback("└────────────────────────────────────┘\n")
-                log_callback("\n📋 Resumen de configuración:\n")
-                log_callback(f"   • PATH:      Variables de {path_configured_as}\n")
-                log_callback(f"   • JAVA_HOME: Variables de {java_home_configured_as}\n")
+                log_callback("\n✅ Java configurado correctamente\n")
                 log_callback(f"   • Ubicación: {java_bin_str}\n")
                 log_callback(f"   • JAVA_HOME: {java_home_str}\n\n")
+                log_callback("   Java está disponible para todas las aplicaciones.\n")
 
-                if path_configured_as == "SISTEMA":
-                    log_callback("✅ Configuración ÓPTIMA\n")
-                    log_callback("   Java está disponible para TODOS los usuarios del sistema.\n")
-                    log_callback("   Todas las aplicaciones podrán detectar Java automáticamente.\n")
-                else:
-                    log_callback("⚠️  Configuración LIMITADA\n")
-                    log_callback("   Java solo está disponible para TU usuario.\n")
-                    log_callback("   Algunas aplicaciones pueden no detectar Java.\n\n")
-                    log_callback("💡 Para configuración global (recomendado):\n")
-                    log_callback("   1. Ejecuta PyCraft como Administrador\n")
-                    log_callback("   2. Reinstala Java cuando Windows te pida permisos\n")
-                    log_callback("   3. Acepta la ventana de permisos (UAC) de Windows\n")
-
-                log_callback("\n⚠️  IMPORTANTE: Debes reiniciar las aplicaciones abiertas\n")
-                log_callback("   para que detecten los cambios.\n")
+            # Refresh current process environment so Java is detected immediately
+            self._refresh_process_environment(log_callback)
 
             return True
 
@@ -932,6 +994,370 @@ class JavaManager:
         except Exception:
             return False
 
+    def _configure_java_with_elevation(
+        self,
+        java_bin_path: str,
+        java_home_path: str,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Attempts to configure Java PATH and JAVA_HOME using UAC elevation.
+        This will trigger the Windows UAC prompt asking for administrator permissions.
+
+        Uses ShellExecuteW with 'runas' verb which is the most reliable way
+        to trigger UAC elevation on Windows.
+
+        Args:
+            java_bin_path: Path to Java bin directory
+            java_home_path: Path to Java home directory
+            log_callback: Optional logging callback
+
+        Returns:
+            True if configuration succeeded with elevation
+        """
+        if self.system != "Windows":
+            return False
+
+        try:
+            import tempfile
+            import ctypes
+            import time
+
+            if log_callback:
+                log_callback("│                                    │\n")
+                log_callback("│ ⚡ Se abrirá ventana de permisos   │\n")
+                log_callback("│    Acepta para configurar Java     │\n")
+                log_callback("│                                    │\n")
+
+            # Create a batch script that uses setx /M (requires admin)
+            # setx /M is the standard Windows way to set system environment variables
+            batch_script = f'''@echo off
+setlocal EnableDelayedExpansion
+
+REM Set JAVA_HOME system variable
+setx /M JAVA_HOME "{java_home_path}"
+if errorlevel 1 (
+    exit /b 1
+)
+
+REM Get current system PATH and add Java bin if not present
+for /f "tokens=2*" %%a in ('reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v Path 2^>nul') do set "CURRENT_PATH=%%b"
+
+echo !CURRENT_PATH! | findstr /I /C:"{java_bin_path}" >nul
+if errorlevel 1 (
+    setx /M PATH "!CURRENT_PATH!;{java_bin_path}"
+    if errorlevel 1 (
+        exit /b 1
+    )
+)
+
+exit /b 0
+'''
+            # Write batch script to temp file
+            script_path = Path(tempfile.gettempdir()) / "pycraft_java_config.bat"
+            script_path.write_text(batch_script, encoding='utf-8')
+
+            try:
+                # Use ShellExecuteW with 'runas' verb to trigger UAC
+                # This is the most reliable way to get UAC prompt on Windows
+                SEE_MASK_NOCLOSEPROCESS = 0x00000040
+                SW_SHOWNORMAL = 1
+
+                class SHELLEXECUTEINFO(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", ctypes.c_ulong),
+                        ("fMask", ctypes.c_ulong),
+                        ("hwnd", ctypes.c_void_p),
+                        ("lpVerb", ctypes.c_wchar_p),
+                        ("lpFile", ctypes.c_wchar_p),
+                        ("lpParameters", ctypes.c_wchar_p),
+                        ("lpDirectory", ctypes.c_wchar_p),
+                        ("nShow", ctypes.c_int),
+                        ("hInstApp", ctypes.c_void_p),
+                        ("lpIDList", ctypes.c_void_p),
+                        ("lpClass", ctypes.c_wchar_p),
+                        ("hkeyClass", ctypes.c_void_p),
+                        ("dwHotKey", ctypes.c_ulong),
+                        ("hIcon", ctypes.c_void_p),
+                        ("hProcess", ctypes.c_void_p),
+                    ]
+
+                sei = SHELLEXECUTEINFO()
+                sei.cbSize = ctypes.sizeof(sei)
+                sei.fMask = SEE_MASK_NOCLOSEPROCESS
+                sei.hwnd = None
+                sei.lpVerb = "runas"  # This triggers UAC
+                sei.lpFile = "cmd.exe"
+                sei.lpParameters = f'/c "{script_path}"'
+                sei.lpDirectory = None
+                sei.nShow = SW_SHOWNORMAL
+                sei.hInstApp = None
+                sei.hProcess = None
+
+                # Execute with elevation
+                shell32 = ctypes.windll.shell32
+                if not shell32.ShellExecuteExW(ctypes.byref(sei)):
+                    error_code = ctypes.GetLastError()
+                    if error_code == 1223:  # ERROR_CANCELLED - User cancelled UAC
+                        if log_callback:
+                            log_callback("│ ⚠ Usuario canceló permisos        │\n")
+                        return False
+                    else:
+                        if log_callback:
+                            log_callback(f"│ ✗ Error ShellExecute: {error_code}       │\n")
+                        return False
+
+                # Wait for the process to complete
+                if sei.hProcess:
+                    kernel32 = ctypes.windll.kernel32
+                    kernel32.WaitForSingleObject(sei.hProcess, 30000)  # Wait up to 30 seconds
+
+                    # Get exit code
+                    exit_code = ctypes.c_ulong()
+                    kernel32.GetExitCodeProcess(sei.hProcess, ctypes.byref(exit_code))
+                    kernel32.CloseHandle(sei.hProcess)
+
+                    if exit_code.value != 0:
+                        if log_callback:
+                            log_callback("│ ✗ Error en script de config       │\n")
+                        return False
+
+                # Give Windows a moment to update the registry
+                time.sleep(1)
+
+                # Broadcast WM_SETTINGCHANGE to notify applications
+                HWND_BROADCAST = 0xFFFF
+                WM_SETTINGCHANGE = 0x001A
+                SMTO_ABORTIFHUNG = 0x0002
+                result = ctypes.c_long()
+                ctypes.windll.user32.SendMessageTimeoutW(
+                    HWND_BROADCAST,
+                    WM_SETTINGCHANGE,
+                    0,
+                    "Environment",
+                    SMTO_ABORTIFHUNG,
+                    5000,
+                    ctypes.byref(result)
+                )
+
+                # Verify by checking if Java is now in system PATH
+                system_path = self._get_path_from_registry(use_system=True)
+                if system_path and java_bin_path.lower() in system_path.lower():
+                    if log_callback:
+                        log_callback("│ ✓ Variables de SISTEMA configuradas│\n")
+                    return True
+                else:
+                    # Check if JAVA_HOME was set at least
+                    try:
+                        with winreg.OpenKey(
+                            winreg.HKEY_LOCAL_MACHINE,
+                            r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+                            0,
+                            winreg.KEY_READ
+                        ) as key:
+                            java_home, _ = winreg.QueryValueEx(key, "JAVA_HOME")
+                            if java_home and java_home_path.lower() in java_home.lower():
+                                if log_callback:
+                                    log_callback("│ ✓ Variables de SISTEMA configuradas│\n")
+                                return True
+                    except:
+                        pass
+
+                    if log_callback:
+                        log_callback("│ ⚠ No se pudo verificar config     │\n")
+                    return False
+
+            finally:
+                # Clean up temp file
+                try:
+                    time.sleep(0.5)
+                    script_path.unlink()
+                except:
+                    pass
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"│ ✗ Error: {str(e)[:28]}  │\n")
+            return False
+
+    def _remove_java_with_elevation(
+        self,
+        java_bin_path: Optional[str] = None,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Removes Java PATH and JAVA_HOME from SYSTEM variables using UAC elevation.
+        This will trigger the Windows UAC prompt asking for administrator permissions.
+
+        Args:
+            java_bin_path: Specific path to remove, or None to remove all PyCraft Java paths
+            log_callback: Optional logging callback
+
+        Returns:
+            True if removal succeeded with elevation
+        """
+        if self.system != "Windows":
+            return False
+
+        try:
+            import tempfile
+            import ctypes
+            import time
+
+            if log_callback:
+                log_callback("│                                     │\n")
+                log_callback("│ ⚡ Se abrirá ventana de permisos    │\n")
+                log_callback("│    Acepta para eliminar config      │\n")
+                log_callback("│                                     │\n")
+
+            # Determine what path pattern to remove
+            pycraft_java_base = str((Path.home() / ".pycraft" / "java").absolute())
+            path_to_remove = java_bin_path if java_bin_path else pycraft_java_base
+
+            # Create a batch script that removes Java from PATH and JAVA_HOME
+            batch_script = f'''@echo off
+setlocal EnableDelayedExpansion
+
+REM Remove JAVA_HOME system variable
+reg delete "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v JAVA_HOME /f 2>nul
+
+REM Get current system PATH
+for /f "tokens=2*" %%a in ('reg query "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v Path 2^>nul') do set "CURRENT_PATH=%%b"
+
+REM Remove PyCraft Java paths from PATH
+set "NEW_PATH="
+set "REMOVED=0"
+for %%p in ("!CURRENT_PATH:;=" "!") do (
+    set "ENTRY=%%~p"
+    echo !ENTRY! | findstr /I /C:"{path_to_remove.replace(chr(92), chr(92)+chr(92))}" >nul
+    if errorlevel 1 (
+        if defined NEW_PATH (
+            set "NEW_PATH=!NEW_PATH!;!ENTRY!"
+        ) else (
+            set "NEW_PATH=!ENTRY!"
+        )
+    ) else (
+        set "REMOVED=1"
+    )
+)
+
+REM Update PATH if we removed something
+if "!REMOVED!"=="1" (
+    reg add "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment" /v Path /t REG_EXPAND_SZ /d "!NEW_PATH!" /f
+)
+
+exit /b 0
+'''
+            # Write batch script to temp file
+            script_path = Path(tempfile.gettempdir()) / "pycraft_java_remove.bat"
+            script_path.write_text(batch_script, encoding='utf-8')
+
+            try:
+                # Use ShellExecuteW with 'runas' verb to trigger UAC
+                SEE_MASK_NOCLOSEPROCESS = 0x00000040
+                SW_SHOWNORMAL = 1
+
+                class SHELLEXECUTEINFO(ctypes.Structure):
+                    _fields_ = [
+                        ("cbSize", ctypes.c_ulong),
+                        ("fMask", ctypes.c_ulong),
+                        ("hwnd", ctypes.c_void_p),
+                        ("lpVerb", ctypes.c_wchar_p),
+                        ("lpFile", ctypes.c_wchar_p),
+                        ("lpParameters", ctypes.c_wchar_p),
+                        ("lpDirectory", ctypes.c_wchar_p),
+                        ("nShow", ctypes.c_int),
+                        ("hInstApp", ctypes.c_void_p),
+                        ("lpIDList", ctypes.c_void_p),
+                        ("lpClass", ctypes.c_wchar_p),
+                        ("hkeyClass", ctypes.c_void_p),
+                        ("dwHotKey", ctypes.c_ulong),
+                        ("hIcon", ctypes.c_void_p),
+                        ("hProcess", ctypes.c_void_p),
+                    ]
+
+                sei = SHELLEXECUTEINFO()
+                sei.cbSize = ctypes.sizeof(sei)
+                sei.fMask = SEE_MASK_NOCLOSEPROCESS
+                sei.hwnd = None
+                sei.lpVerb = "runas"  # This triggers UAC
+                sei.lpFile = "cmd.exe"
+                sei.lpParameters = f'/c "{script_path}"'
+                sei.lpDirectory = None
+                sei.nShow = SW_SHOWNORMAL
+                sei.hInstApp = None
+                sei.hProcess = None
+
+                # Execute with elevation
+                shell32 = ctypes.windll.shell32
+                if not shell32.ShellExecuteExW(ctypes.byref(sei)):
+                    error_code = ctypes.GetLastError()
+                    if error_code == 1223:  # ERROR_CANCELLED - User cancelled UAC
+                        if log_callback:
+                            log_callback("│ ⚠ Usuario canceló permisos         │\n")
+                        return False
+                    else:
+                        if log_callback:
+                            log_callback(f"│ ✗ Error ShellExecute: {error_code}        │\n")
+                        return False
+
+                # Wait for the process to complete
+                if sei.hProcess:
+                    kernel32 = ctypes.windll.kernel32
+                    kernel32.WaitForSingleObject(sei.hProcess, 30000)
+                    kernel32.CloseHandle(sei.hProcess)
+
+                # Give Windows a moment to update the registry
+                time.sleep(1)
+
+                # Broadcast WM_SETTINGCHANGE to notify applications
+                HWND_BROADCAST = 0xFFFF
+                WM_SETTINGCHANGE = 0x001A
+                SMTO_ABORTIFHUNG = 0x0002
+                result = ctypes.c_long()
+                ctypes.windll.user32.SendMessageTimeoutW(
+                    HWND_BROADCAST,
+                    WM_SETTINGCHANGE,
+                    0,
+                    "Environment",
+                    SMTO_ABORTIFHUNG,
+                    5000,
+                    ctypes.byref(result)
+                )
+
+                # Verify JAVA_HOME was removed
+                try:
+                    with winreg.OpenKey(
+                        winreg.HKEY_LOCAL_MACHINE,
+                        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+                        0,
+                        winreg.KEY_READ
+                    ) as key:
+                        winreg.QueryValueEx(key, "JAVA_HOME")
+                        # If we get here, JAVA_HOME still exists
+                        if log_callback:
+                            log_callback("│ ⚠ JAVA_HOME aún existe             │\n")
+                except FileNotFoundError:
+                    # JAVA_HOME was removed successfully
+                    if log_callback:
+                        log_callback("│ ✓ Variables de SISTEMA eliminadas  │\n")
+                    return True
+
+                return True
+
+            finally:
+                # Clean up temp file
+                try:
+                    time.sleep(0.5)
+                    script_path.unlink()
+                except:
+                    pass
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"│ ✗ Error: {str(e)[:28]}   │\n")
+            return False
+
     def remove_java_from_path(
         self,
         java_bin_path: Optional[Path] = None,
@@ -961,28 +1387,56 @@ class JavaManager:
                 log_callback("│                                     │\n")
 
             # ===== TRY SYSTEM VARIABLES FIRST =====
-            if log_callback:
-                log_callback("│ → Verificando variables de SISTEMA...│\n")
+            # Check if Java is in system PATH first
+            system_path = self._get_path_from_registry(use_system=True)
+            java_in_system = False
+            if system_path:
+                check_path = str(java_bin_path.absolute()).lower() if java_bin_path else pycraft_java_base.lower()
+                java_in_system = check_path in system_path.lower()
 
-            system_path_removed = self._remove_from_path_registry(
-                java_bin_path, pycraft_java_base, use_system=True
-            )
-
-            if system_path_removed:
+            if java_in_system:
                 if log_callback:
-                    log_callback("│   ✓ PATH de SISTEMA limpiado       │\n")
-                overall_success = True
+                    log_callback("│ → Eliminando de variables SISTEMA...│\n")
 
-            # Remove JAVA_HOME from system
-            if self._remove_java_home(use_system=True):
-                if log_callback:
-                    log_callback("│   ✓ JAVA_HOME de SISTEMA eliminado │\n")
-                overall_success = True
+                system_path_removed = self._remove_from_path_registry(
+                    java_bin_path, pycraft_java_base, use_system=True
+                )
 
-            # ===== TRY USER VARIABLES =====
+                if system_path_removed:
+                    if log_callback:
+                        log_callback("│   ✓ PATH de SISTEMA limpiado       │\n")
+                    overall_success = True
+
+                    # Remove JAVA_HOME from system
+                    if self._remove_java_home(use_system=True):
+                        if log_callback:
+                            log_callback("│   ✓ JAVA_HOME de SISTEMA eliminado │\n")
+                else:
+                    # Direct removal failed (no admin), try UAC elevation
+                    if log_callback:
+                        log_callback("│   ⚠ Sin permisos de administrador  │\n")
+                        log_callback("│   → Solicitando elevación UAC...   │\n")
+
+                    java_bin_str = str(java_bin_path.absolute()) if java_bin_path else None
+                    if self._remove_java_with_elevation(java_bin_str, log_callback):
+                        overall_success = True
+                    else:
+                        # SYSTEM removal failed - cannot continue
+                        if log_callback:
+                            log_callback("│                                     │\n")
+                            log_callback("│ ✗ ELIMINACIÓN CANCELADA             │\n")
+                            log_callback("│                                     │\n")
+                            log_callback("└─────────────────────────────────────┘\n")
+                            log_callback("\n⚠ Permisos de administrador requeridos\n")
+                            log_callback("✗ No se puede eliminar Java\n")
+                            log_callback("\nDebes aceptar los permisos de administrador\n")
+                            log_callback("de Windows para eliminar Java del sistema.\n")
+                        return False
+
+            # ===== CLEAN USER VARIABLES (only if system succeeded or wasn't in system) =====
             if log_callback:
                 log_callback("│                                     │\n")
-                log_callback("│ → Verificando variables de USUARIO...│\n")
+                log_callback("│ → Limpiando variables de USUARIO... │\n")
 
             user_path_removed = self._remove_from_path_registry(
                 java_bin_path, pycraft_java_base, use_system=False
@@ -1002,14 +1456,12 @@ class JavaManager:
             if log_callback:
                 log_callback("│                                     │\n")
                 log_callback("└─────────────────────────────────────┘\n")
+                log_callback("\n✅ Configuración de Java eliminada\n")
 
-                if overall_success:
-                    log_callback("\n✅ Configuración de Java eliminada\n")
-                    log_callback("   Reinicia las aplicaciones para que los cambios surtan efecto.\n")
-                else:
-                    log_callback("\nℹ️  No se encontró configuración de Java para eliminar\n")
+            # Refresh current process environment
+            self._refresh_process_environment(log_callback)
 
-            return overall_success
+            return True
 
         except Exception as e:
             if log_callback:
@@ -1140,20 +1592,38 @@ class JavaManager:
                     log_callback(f"✗ Java {java_version} installation not found\n")
                 return False
 
-            # First, remove from PATH if it's there
+            # Check if Java is in SYSTEM PATH (requires admin to remove)
             java_exe = self._find_java_executable(install_dir)
             if java_exe:
                 java_bin_dir = java_exe.parent
-                self.remove_java_from_path(java_bin_dir, log_callback)
+                java_bin_str = str(java_bin_dir.absolute()).lower()
+
+                # Check if in SYSTEM variables
+                system_path = self._get_path_from_registry(use_system=True) or ""
+                is_in_system = java_bin_str in system_path.lower()
+
+                if is_in_system:
+                    # Must remove from system first - requires admin
+                    path_removed = self.remove_java_from_path(java_bin_dir, log_callback)
+
+                    if not path_removed:
+                        # User cancelled UAC - don't delete files
+                        if log_callback:
+                            log_callback("\n⚠ No se puede eliminar Java\n")
+                            log_callback("Debes aceptar los permisos de administrador.\n")
+                        return False
+                else:
+                    # Not in system, just try to clean up user variables
+                    self.remove_java_from_path(java_bin_dir, log_callback)
 
             # Delete the directory
             if log_callback:
-                log_callback(f"Deleting Java {java_version} installation...\n")
+                log_callback(f"\n🗑️ Eliminando archivos de Java {java_version}...\n")
 
             shutil.rmtree(install_dir)
 
             if log_callback:
-                log_callback(f"✓ Java {java_version} deleted successfully\n")
+                log_callback(f"✓ Java {java_version} eliminado correctamente\n")
 
             return True
 
