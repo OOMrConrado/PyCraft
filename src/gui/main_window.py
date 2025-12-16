@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
     QLabel, QPushButton, QLineEdit, QTextEdit, QFrame,
     QScrollArea, QProgressBar, QFileDialog, QMessageBox, QDialog,
     QSlider, QStackedWidget, QInputDialog, QGraphicsDropShadowEffect,
-    QStyle, QProxyStyle, QStyleOption, QComboBox
+    QStyle, QProxyStyle, QStyleOption, QComboBox, QSpinBox
 )
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, QPropertyAnimation, QEasingCurve
 from PySide6.QtGui import QPixmap, QIcon, QTextCharFormat, QColor, QTextCursor, QCursor, QFont, QPainter
@@ -290,6 +290,11 @@ class PyCraftGUI(QMainWindow):
     log_signal = Signal(str, str, str)
     progress_signal = Signal(int)
     status_signal = Signal(str, str)
+    # Java modal signals (thread-safe)
+    java_status_signal = Signal(str)
+    java_progress_signal = Signal(int, int)  # value, maximum
+    java_console_signal = Signal(str, str)  # text, color
+    java_complete_signal = Signal(bool)  # success
 
     def __init__(self):
         super().__init__()
@@ -365,11 +370,20 @@ class PyCraftGUI(QMainWindow):
         """)
 
         try:
-            icon_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-                "PyCraft-Files", "icon.ico"
-            )
-            if os.path.exists(icon_path):
+            base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+            logo_path = os.path.join(base_path, "PyCraft-Files", "logo.png")
+            icon_path = os.path.join(base_path, "PyCraft-Files", "icon.ico")
+
+            if os.path.exists(logo_path):
+                # Create icon with multiple sizes for better display
+                pixmap = QPixmap(logo_path)
+                icon = QIcon()
+                # Add multiple sizes for different contexts (taskbar, title bar, etc)
+                for size in [16, 24, 32, 48, 64, 128, 256]:
+                    scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    icon.addPixmap(scaled)
+                self.setWindowIcon(icon)
+            elif os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except:
             pass
@@ -487,11 +501,11 @@ class PyCraftGUI(QMainWindow):
 
         # Logo circle
         logo_frame = QFrame()
-        logo_frame.setFixedSize(48, 48)
+        logo_frame.setFixedSize(64, 64)
         logo_frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {self.colors['bg_card']};
-                border-radius: 24px;
+                border-radius: 32px;
                 border: 2px solid {self.colors['accent']};
             }}
         """)
@@ -503,11 +517,11 @@ class PyCraftGUI(QMainWindow):
             )
             if os.path.exists(logo_path):
                 logo_label = QLabel(logo_frame)
-                pix = QPixmap(logo_path).scaled(44, 44, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                pix = QPixmap(logo_path).scaled(58, 58, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 logo_label.setPixmap(pix)
                 logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 logo_label.setStyleSheet("background: transparent; border: none;")
-                logo_label.setGeometry(2, 2, 44, 44)
+                logo_label.setGeometry(3, 3, 58, 58)
         except:
             pass
 
@@ -822,11 +836,9 @@ class PyCraftGUI(QMainWindow):
         self.java_info = QWidget()
         self.java_info.setStyleSheet("background: transparent;")
         self.java_info_layout = QVBoxLayout(self.java_info)
+        self.java_info_layout.setContentsMargins(0, 0, 0, 0)
+        self.java_info_layout.setSpacing(8)
         java_layout.addWidget(self.java_info)
-
-        java_btn = self._styled_button("Check Java", self.colors['bg_input'], self.colors['text'], 180)
-        java_btn.clicked.connect(self._check_java)
-        java_layout.addWidget(java_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         layout.addWidget(java_frame)
 
@@ -1436,7 +1448,7 @@ class PyCraftGUI(QMainWindow):
             }}
         """
 
-    def _log(self, console: QTextEdit, msg: str, level: str = "normal"):
+    def _log(self, console: QTextEdit, msg: str, level: str = "normal", max_lines: int = 200):
         colors = {
             "normal": "#ffffff", "info": "#60a5fa",
             "success": "#4ade80", "warning": "#fbbf24", "error": "#f87171"
@@ -1449,6 +1461,20 @@ class PyCraftGUI(QMainWindow):
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(color))
         cursor.insertText(msg, fmt)
+
+        # Limit console to max_lines to prevent memory issues
+        doc = console.document()
+        line_count = doc.blockCount()
+        if line_count > max_lines:
+            # Remove excess lines from the beginning
+            excess = line_count - max_lines
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            for _ in range(excess):
+                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
+            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+            # Move back to end
+            cursor.movePosition(QTextCursor.MoveOperation.End)
 
         console.setTextCursor(cursor)
         console.ensureCursorVisible()
@@ -1614,7 +1640,18 @@ class PyCraftGUI(QMainWindow):
                 return
             elif clicked == cancel_btn or clicked is None:
                 return
-            # If install_btn clicked, continue with auto-install
+            # If install_btn clicked, show installation modal first
+            elif clicked == install_btn:
+                if not self._show_java_install_modal(required_java):
+                    # Installation failed, don't continue
+                    QMessageBox.critical(self, "Error", f"Failed to install Java {required_java}. Cannot create server.")
+                    return
+                # Update pycraft_java reference after successful install
+                install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
+                if install_dir.exists():
+                    java_exe = self.java_manager._find_java_executable(install_dir)
+                    if java_exe:
+                        pycraft_java = str(java_exe)
 
         # Proceed with download
         self.download_btn.setEnabled(False)
@@ -1622,7 +1659,11 @@ class PyCraftGUI(QMainWindow):
         self.active_progress_label = self.create_progress_label
         self.active_status = self.create_status
 
+        # Capture java path for the thread
+        java_to_use = pycraft_java
+
         def process():
+            nonlocal java_to_use
             try:
                 self.log_signal.emit(f"\nDownloading Minecraft {self.selected_version}...\n", "info", "v_create")
 
@@ -1642,10 +1683,21 @@ class PyCraftGUI(QMainWindow):
 
                 self.log_signal.emit("Download complete\n", "success", "v_create")
 
-                java = self.java_manager.ensure_java_installed(
-                    self.selected_version,
-                    log_callback=lambda m: self.log_signal.emit(m, "normal", "v_create")
-                )
+                # Use pre-installed Java if available, otherwise find it quietly
+                if java_to_use:
+                    java = java_to_use
+                    self.log_signal.emit(f"Using Java: {java}\n", "info", "v_create")
+                else:
+                    # Simplified callback - only show key messages
+                    def quiet_log(msg):
+                        msg_lower = msg.lower()
+                        if any(x in msg_lower for x in ["✓", "✗", "error"]):
+                            self.log_signal.emit(msg, "normal", "v_create")
+
+                    java = self.java_manager.ensure_java_installed(
+                        self.selected_version,
+                        log_callback=quiet_log
+                    )
 
                 if not java:
                     self.log_signal.emit("Java not available\n", "error", "v_create")
@@ -1748,7 +1800,9 @@ class PyCraftGUI(QMainWindow):
     def _open_config_dialog(self, server_type: str):
         dialog = QDialog(self)
         dialog.setWindowTitle("Server Configuration")
-        dialog.setFixedSize(420, 520)
+        # Vanilla needs more height for pause-when-empty option
+        dialog_height = 620 if server_type == "vanilla" else 520
+        dialog.setFixedSize(420, dialog_height)
         dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
 
         layout = QVBoxLayout(dialog)
@@ -1963,6 +2017,131 @@ class PyCraftGUI(QMainWindow):
         players_slider.valueChanged.connect(lambda v: players_label.setText(f"{v} players"))
         layout.addWidget(players_slider)
 
+        layout.addSpacing(4)
+
+        # === Pause When Empty Section (only for vanilla) ===
+        pause_spinbox = None  # Will be set only for vanilla
+        if server_type == "vanilla":
+            pause_section = QLabel("Pause When Empty")
+            pause_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
+            layout.addWidget(pause_section)
+
+            pause_hint = QLabel("Server pauses when no players connected (saves resources)")
+            pause_hint.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
+            pause_hint.setWordWrap(True)
+            layout.addWidget(pause_hint)
+
+            # Get current value
+            current_pause = 0  # 0 = disabled
+            if manager:
+                saved_pause = manager.get_property("pause-when-empty-seconds")
+                if saved_pause:
+                    try:
+                        current_pause = int(saved_pause)
+                    except ValueError:
+                        pass
+
+            # Container for input
+            pause_container = QWidget()
+            pause_container.setStyleSheet("background: transparent;")
+            pause_h_layout = QHBoxLayout(pause_container)
+            pause_h_layout.setContentsMargins(0, 4, 0, 0)
+            pause_h_layout.setSpacing(8)
+
+            # Spinbox for seconds (0-7200 = up to 2 hours)
+            pause_spinbox = QSpinBox()
+            pause_spinbox.setMinimum(0)
+            pause_spinbox.setMaximum(7200)
+            pause_spinbox.setValue(current_pause)
+            pause_spinbox.setSingleStep(60)
+            pause_spinbox.setSpecialValueText("Disabled")
+            pause_spinbox.setStyleSheet(f"""
+                QSpinBox {{
+                    background-color: {self.colors['bg_input']};
+                    color: {self.colors['text']};
+                    border: 1px solid {self.colors['border']};
+                    border-radius: 8px;
+                    padding: 8px 12px;
+                    font-size: 13px;
+                    min-width: 100px;
+                }}
+                QSpinBox:hover {{
+                    border: 1px solid {self.colors['accent']};
+                }}
+                QSpinBox::up-button, QSpinBox::down-button {{
+                    width: 20px;
+                    border: none;
+                    background: transparent;
+                }}
+            """)
+
+            # Label showing human-readable time
+            pause_time_label = QLabel()
+            pause_time_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 12px;")
+
+            def update_pause_label(value):
+                if value == 0:
+                    pause_time_label.setText("")
+                elif value < 60:
+                    pause_time_label.setText(f"= {value} sec")
+                elif value < 3600:
+                    mins = value // 60
+                    secs = value % 60
+                    if secs == 0:
+                        pause_time_label.setText(f"= {mins} min")
+                    else:
+                        pause_time_label.setText(f"= {mins}m {secs}s")
+                else:
+                    hours = value // 3600
+                    mins = (value % 3600) // 60
+                    if mins == 0:
+                        pause_time_label.setText(f"= {hours}h")
+                    else:
+                        pause_time_label.setText(f"= {hours}h {mins}m")
+
+            update_pause_label(current_pause)
+            pause_spinbox.valueChanged.connect(update_pause_label)
+
+            # Quick presets
+            preset_5m = QPushButton("5m")
+            preset_5m.setFixedSize(36, 28)
+            preset_5m.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            preset_5m.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {self.colors['bg_input']};
+                    color: {self.colors['text_secondary']};
+                    border: 1px solid {self.colors['border']};
+                    border-radius: 6px;
+                    font-size: 11px;
+                }}
+                QPushButton:hover {{
+                    background-color: {self.colors['accent']};
+                    color: #000000;
+                }}
+            """)
+            preset_5m.clicked.connect(lambda: pause_spinbox.setValue(300))
+
+            preset_30m = QPushButton("30m")
+            preset_30m.setFixedSize(36, 28)
+            preset_30m.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            preset_30m.setStyleSheet(preset_5m.styleSheet())
+            preset_30m.clicked.connect(lambda: pause_spinbox.setValue(1800))
+
+            preset_1h = QPushButton("1h")
+            preset_1h.setFixedSize(36, 28)
+            preset_1h.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            preset_1h.setStyleSheet(preset_5m.styleSheet())
+            preset_1h.clicked.connect(lambda: pause_spinbox.setValue(3600))
+
+            pause_h_layout.addWidget(pause_spinbox)
+            pause_h_layout.addWidget(pause_time_label)
+            pause_h_layout.addStretch()
+            pause_h_layout.addWidget(preset_5m)
+            pause_h_layout.addWidget(preset_30m)
+            pause_h_layout.addWidget(preset_1h)
+
+            layout.addWidget(pause_container)
+
         layout.addStretch()
 
         # Save button
@@ -1973,19 +2152,22 @@ class PyCraftGUI(QMainWindow):
             diff_combo.currentText(),
             gamemode_combo.currentText(),
             players_slider.value(),
+            pause_spinbox.value() if pause_spinbox else None,
             dialog
         ))
         layout.addWidget(save, alignment=Qt.AlignmentFlag.AlignCenter)
 
         dialog.exec()
 
-    def _save_config(self, server_type: str, ram: int, difficulty: str, gamemode: str, max_players: int, dialog: QDialog):
+    def _save_config(self, server_type: str, ram: int, difficulty: str, gamemode: str, max_players: int, pause_when_empty: Optional[int], dialog: QDialog):
         if server_type == "vanilla":
             self.vanilla_ram = ram
             if self.server_manager:
                 self.server_manager.configure_server_properties(difficulty=difficulty)
                 self.server_manager.update_property("gamemode", gamemode)
                 self.server_manager.update_property("max-players", str(max_players))
+                if pause_when_empty is not None:
+                    self.server_manager.update_property("pause-when-empty-seconds", str(pause_when_empty))
         else:
             self.modpack_ram = ram
             if self.modpack_server_manager:
@@ -2198,12 +2380,29 @@ class PyCraftGUI(QMainWindow):
 
         if not installations:
             label = QLabel("No Java found")
-            label.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px;")
+            label.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; border: none;")
             self.java_info_layout.addWidget(label)
 
-            install = self._styled_button("Install Java", self.colors['accent'], "#000000", 150)
+            # Spacer
+            self.java_info_layout.addSpacing(10)
+
+            # Buttons row
+            btn_widget = QWidget()
+            btn_widget.setStyleSheet("background: transparent;")
+            btn_layout = QHBoxLayout(btn_widget)
+            btn_layout.setContentsMargins(0, 0, 0, 0)
+            btn_layout.setSpacing(10)
+
+            install = self._styled_button("Install Java", self.colors['accent'], "#000000", 140)
             install.clicked.connect(self._install_java)
-            self.java_info_layout.addWidget(install)
+            btn_layout.addWidget(install)
+
+            check = self._styled_button("Check Java", self.colors['bg_input'], self.colors['text'], 140)
+            check.clicked.connect(self._check_java)
+            btn_layout.addWidget(check)
+
+            btn_layout.addStretch()
+            self.java_info_layout.addWidget(btn_widget)
         else:
             for ver, path, _ in installations:
                 frame = QFrame()
@@ -2256,26 +2455,25 @@ class PyCraftGUI(QMainWindow):
 
                 self.java_info_layout.addWidget(frame)
 
-            # Add "Install another" button
-            install_another = self._styled_button("+ Install another", self.colors['bg_input'], self.colors['text'], 160)
-            install_another.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {self.colors['bg_input']};
-                    color: {self.colors['text']};
-                    border: 1px dashed {self.colors['border']};
-                    border-radius: 10px;
-                    padding: 10px 20px;
-                    font-size: 13px;
-                    font-weight: 500;
-                }}
-                QPushButton:hover {{
-                    border: 1px dashed {self.colors['accent']};
-                    color: {self.colors['accent']};
-                }}
-            """)
+            # Buttons row
+            self.java_info_layout.addSpacing(8)
+            btn_widget = QWidget()
+            btn_widget.setStyleSheet("background: transparent;")
+            btn_layout = QHBoxLayout(btn_widget)
+            btn_layout.setContentsMargins(0, 0, 0, 0)
+            btn_layout.setSpacing(10)
+
+            install_another = self._styled_button("+ Install Java", self.colors['bg_input'], self.colors['text'], 140)
             install_another.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
             install_another.clicked.connect(self._install_java)
-            self.java_info_layout.addWidget(install_another)
+            btn_layout.addWidget(install_another)
+
+            check = self._styled_button("Check Java", self.colors['bg_input'], self.colors['text'], 140)
+            check.clicked.connect(self._check_java)
+            btn_layout.addWidget(check)
+
+            btn_layout.addStretch()
+            self.java_info_layout.addWidget(btn_widget)
 
     def _install_java(self):
         ver, ok = QInputDialog.getText(self, "Install Java", "Version (8, 17, or 21):")
@@ -2286,8 +2484,8 @@ class PyCraftGUI(QMainWindow):
                     QMessageBox.critical(self, "Error", "Use 8, 17, or 21")
                     return
 
-                self.java_manager.download_java(v, lambda m: print(m))
-                QTimer.singleShot(1000, self._check_java)
+                # Use the modal installer
+                self._show_java_install_modal(v)
 
             except ValueError:
                 QMessageBox.critical(self, "Error", "Invalid version")
@@ -2302,12 +2500,219 @@ class PyCraftGUI(QMainWindow):
         )
 
         if reply == QMessageBox.StandardButton.Yes:
-            success = self.java_manager.delete_java_installation(version, lambda m: print(m))
+            success = self.java_manager.delete_java_installation(version)
+
             if success:
-                QMessageBox.information(self, "Success", f"Java {version} deleted successfully")
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Java {version} deleted successfully."
+                )
             else:
-                QMessageBox.warning(self, "Error", f"Failed to delete Java {version}")
+                QMessageBox.warning(
+                    self,
+                    "Admin Permissions Required",
+                    f"Could not delete Java {version}.\n\n"
+                    f"You must accept the administrator permissions\n"
+                    f"when Windows prompts you.\n\n"
+                    f"Please try again and click 'Yes' on the\n"
+                    f"Windows permission dialog."
+                )
             self._check_java()
+
+    def _show_java_install_modal(self, java_version: int, on_complete: Optional[callable] = None):
+        """Shows a modal dialog with progress bar for Java installation"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"Installing Java {java_version}")
+        dialog.setFixedSize(420, 400)
+        dialog.setModal(True)
+        dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # Title
+        title = QLabel(f"Installing Java {java_version}")
+        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 16px; font-weight: 600;")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
+
+        # Status label
+        status_label = QLabel("Preparing download...")
+        status_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px;")
+        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(status_label)
+
+        # Progress bar
+        progress = QProgressBar()
+        progress.setMinimum(0)
+        progress.setMaximum(0)  # Indeterminate initially
+        progress.setFixedHeight(8)
+        progress.setTextVisible(False)
+        progress.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: {self.colors['bg_input']};
+                border: none;
+                border-radius: 4px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {self.colors['accent']};
+                border-radius: 4px;
+            }}
+        """)
+        layout.addWidget(progress)
+
+        # Mini console (compact)
+        mini_console = QTextEdit()
+        mini_console.setReadOnly(True)
+        mini_console.setFixedHeight(180)
+        mini_console.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: #0a0a0a;
+                color: {self.colors['text_muted']};
+                border: 1px solid {self.colors['border']};
+                border-radius: 8px;
+                padding: 8px;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 11px;
+            }}
+        """)
+        layout.addWidget(mini_console)
+
+        layout.addStretch()
+
+        # Accept button (hidden initially)
+        accept_btn = QPushButton("Accept")
+        accept_btn.setFixedSize(120, 36)
+        accept_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        accept_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: #000000;
+                border: none;
+                border-radius: 8px;
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
+            }}
+        """)
+        accept_btn.clicked.connect(dialog.accept)
+        accept_btn.hide()
+        layout.addWidget(accept_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        # State tracking
+        install_result = {"success": False, "java_path": None}
+
+        # Connect signals to UI updates (thread-safe via Qt signal mechanism)
+        def on_status(text):
+            status_label.setText(text)
+
+        def on_progress(value, maximum):
+            if maximum >= 0:
+                progress.setMaximum(maximum)
+            if value >= 0:
+                progress.setValue(value)
+
+        def on_console(text, color):
+            cursor = mini_console.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.End)
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(color))
+            cursor.insertText(text + "\n", fmt)
+            mini_console.setTextCursor(cursor)
+            mini_console.ensureCursorVisible()
+
+        def on_complete_signal(success):
+            progress.hide()
+            accept_btn.show()
+            if success:
+                title.setText(f"Java {java_version} Installed")
+                title.setStyleSheet(f"color: {self.colors['accent']}; font-size: 16px; font-weight: 600;")
+                status_label.setText("Java is ready to use")
+            else:
+                title.setText("Configuration Required")
+                title.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 16px; font-weight: 600;")
+                status_label.setText("Accept admin permissions to complete setup")
+
+        # Connect signals
+        self.java_status_signal.connect(on_status)
+        self.java_progress_signal.connect(on_progress)
+        self.java_console_signal.connect(on_console)
+        self.java_complete_signal.connect(on_complete_signal)
+
+        def log_to_modal(msg: str):
+            """Filter and display relevant messages in the modal (thread-safe via signals)"""
+            msg_lower = msg.lower()
+
+            # Update status based on message content
+            if "descargando" in msg_lower and ("java" in msg_lower or "archivo" in msg_lower):
+                self.java_status_signal.emit("Downloading Java...")
+                self.java_progress_signal.emit(-1, 100)
+            elif "progreso:" in msg_lower:
+                try:
+                    pct = int(msg.replace("%", "").split()[-1])
+                    self.java_progress_signal.emit(pct, -1)
+                except:
+                    pass
+                return
+            elif "extrayendo" in msg_lower or "extracción" in msg_lower:
+                self.java_status_signal.emit("Extracting files...")
+                self.java_progress_signal.emit(-1, 0)
+            elif "configurando" in msg_lower and ("path" in msg_lower or "java" in msg_lower):
+                self.java_status_signal.emit("Configuring system...")
+            elif "instalado correctamente" in msg_lower:
+                self.java_status_signal.emit("Finishing...")
+                self.java_progress_signal.emit(100, 100)
+                install_result["success"] = True
+
+            # Only show key messages in console
+            if any(x in msg for x in ["✓", "✗", "⚠"]) or "error" in msg_lower:
+                clean_msg = msg.strip()
+                if clean_msg:
+                    if "✓" in msg:
+                        color = self.colors['accent']
+                    elif "✗" in msg or "error" in msg_lower:
+                        color = self.colors['red']
+                    elif "⚠" in msg:
+                        color = self.colors['yellow']
+                    else:
+                        color = self.colors['text_muted']
+                    self.java_console_signal.emit(clean_msg, color)
+
+        def run_install():
+            try:
+                result = self.java_manager.download_java(java_version, log_to_modal)
+                if result:
+                    install_result["java_path"] = result
+                    install_result["success"] = True
+            except Exception as e:
+                self.java_console_signal.emit(f"✗ Error: {str(e)}", self.colors['red'])
+            finally:
+                self.java_complete_signal.emit(install_result["success"])
+
+        # Start installation in background
+        threading.Thread(target=run_install, daemon=True).start()
+
+        # Show dialog (blocks until closed)
+        dialog.exec()
+
+        # Disconnect signals to avoid issues with multiple calls
+        self.java_status_signal.disconnect(on_status)
+        self.java_progress_signal.disconnect(on_progress)
+        self.java_console_signal.disconnect(on_console)
+        self.java_complete_signal.disconnect(on_complete_signal)
+
+        # Refresh Java list if in settings
+        self._check_java()
+
+        # Call completion callback if provided
+        if on_complete:
+            on_complete(install_result["success"], install_result.get("java_path"))
+
+        return install_result["success"]
 
     def run(self):
         self.show()
