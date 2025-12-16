@@ -1038,7 +1038,7 @@ class PyCraftGUI(QMainWindow):
         cmd_layout = QHBoxLayout(cmd_row)
         cmd_layout.setContentsMargins(0, 10, 0, 0)
 
-        self.run_cmd = self._input("Enter command...", 500)
+        self.run_cmd = self._input("/command", 500)
         self.run_cmd.returnPressed.connect(self._send_vanilla_cmd)
         cmd_layout.addWidget(self.run_cmd)
 
@@ -1239,7 +1239,7 @@ class PyCraftGUI(QMainWindow):
         cmd_layout = QHBoxLayout(cmd_row)
         cmd_layout.setContentsMargins(0, 10, 0, 0)
 
-        self.mp_run_cmd = self._input("Enter command...", 500)
+        self.mp_run_cmd = self._input("/command", 500)
         self.mp_run_cmd.returnPressed.connect(self._send_mp_cmd)
         cmd_layout.addWidget(self.mp_run_cmd)
 
@@ -1721,16 +1721,26 @@ class PyCraftGUI(QMainWindow):
             if os.path.exists(os.path.join(folder, "server.jar")):
                 self.server_folder = folder
                 self.run_folder_label.setText(f"Folder: {folder}")
-                self.run_status.setText("Server found")
-                self.run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
 
                 self.server_manager = ServerManager(folder)
                 self.is_server_configured = True
 
+                # Detect Minecraft version
+                mc_version = self.server_manager.detect_minecraft_version()
+                self.detected_mc_version = mc_version  # Store for later use
+
+                if mc_version:
+                    self.run_status.setText(f"Minecraft {mc_version}")
+                    self._log(self.vanilla_run_console, f"\nServer found: {folder}\n", "success")
+                    self._log(self.vanilla_run_console, f"Detected version: Minecraft {mc_version}\n", "info")
+                else:
+                    self.run_status.setText("Server found (version unknown)")
+                    self._log(self.vanilla_run_console, f"\nServer found: {folder}\n", "success")
+                    self._log(self.vanilla_run_console, "Could not detect Minecraft version\n", "warning")
+
+                self.run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
                 self.run_start.setEnabled(True)
                 self.run_config.setEnabled(True)
-
-                self._log(self.vanilla_run_console, f"\nServer found: {folder}\n", "success")
             else:
                 self.server_folder = None
                 self.run_folder_label.setText(f"Folder: {folder}")
@@ -1742,10 +1752,86 @@ class PyCraftGUI(QMainWindow):
                 self.run_cmd_btn.setEnabled(False)
                 self.server_manager = None
                 self.is_server_configured = False
+                self.detected_mc_version = None
 
     def _start_vanilla(self):
         if not self.server_manager:
             return
+
+        # Get Minecraft version (from detection or default to 1.20)
+        mc_version = getattr(self, 'detected_mc_version', None) or self.server_manager.detect_minecraft_version()
+        if not mc_version:
+            mc_version = "1.20"  # Default assumption for unknown versions
+            self._log(self.vanilla_run_console, "\nCould not detect version, assuming Java 17+ required\n", "warning")
+
+        # Check Java compatibility
+        required_java = self.java_manager.get_required_java_version(mc_version)
+        java_info = self.java_manager.detect_java_version()
+
+        needs_java = False
+        pycraft_java = None
+
+        # Check if we have a PyCraft-installed Java
+        install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
+        if install_dir.exists():
+            java_exe = self.java_manager._find_java_executable(install_dir)
+            if java_exe:
+                pycraft_java = str(java_exe)
+
+        if not pycraft_java:
+            if not java_info:
+                needs_java = True
+            else:
+                _, installed_major = java_info
+                if installed_major < required_java:
+                    needs_java = True
+
+        if needs_java:
+            # Show dialog with options (same as create server)
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Java Required")
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setText(f"Minecraft {mc_version} requires Java {required_java}+")
+
+            if java_info:
+                _, installed_major = java_info
+                msg.setInformativeText(
+                    f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
+                    f"What would you like to do?"
+                )
+            else:
+                msg.setInformativeText(
+                    f"Java is not installed on your system.\n\n"
+                    f"What would you like to do?"
+                )
+
+            install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
+            settings_btn = msg.addButton("Go to Settings", QMessageBox.ButtonRole.ActionRole)
+            cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+
+            msg.exec()
+
+            clicked = msg.clickedButton()
+            if clicked == settings_btn:
+                self._go_to("settings")
+                return
+            elif clicked == cancel_btn or clicked is None:
+                return
+            elif clicked == install_btn:
+                if not self._show_java_install_modal(required_java):
+                    QMessageBox.critical(self, "Error", f"Failed to install Java {required_java}. Cannot start server.")
+                    return
+                # Update java reference after successful install
+                install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
+                if install_dir.exists():
+                    java_exe = self.java_manager._find_java_executable(install_dir)
+                    if java_exe:
+                        pycraft_java = str(java_exe)
+
+        # Update server manager with correct Java executable
+        if pycraft_java:
+            self.server_manager.java_executable = pycraft_java
+            self._log(self.vanilla_run_console, f"\nUsing Java: {pycraft_java}\n", "info")
 
         self._log(self.vanilla_run_console, "\n=== STARTING SERVER ===\n", "info")
         self.run_start.setEnabled(False)
@@ -1760,6 +1846,11 @@ class PyCraftGUI(QMainWindow):
             )
             if success:
                 QTimer.singleShot(0, lambda: self.run_cmd_btn.setEnabled(True))
+            else:
+                # Re-enable start button if failed
+                QTimer.singleShot(0, lambda: self.run_start.setEnabled(True))
+                QTimer.singleShot(0, lambda: self.run_config.setEnabled(True))
+                QTimer.singleShot(0, lambda: self.run_stop.setEnabled(False))
 
         threading.Thread(target=start, daemon=True).start()
 
@@ -1776,9 +1867,18 @@ class PyCraftGUI(QMainWindow):
     def _send_vanilla_cmd(self):
         cmd = self.run_cmd.text().strip()
         if cmd and self.server_manager:
+            if not cmd.startswith("/"):
+                self._log(self.vanilla_run_console, "Commands must start with /\n", "warning")
+                return
+            # Remove "/" prefix for server console (server doesn't use /)
+            server_cmd = cmd[1:]
             self._log(self.vanilla_run_console, f"> {cmd}\n", "info")
-            self.server_manager.send_command(cmd)
+            self.server_manager.send_command(server_cmd)
             self.run_cmd.clear()
+
+            # Disable button briefly for visual feedback
+            self.run_cmd_btn.setEnabled(False)
+            QTimer.singleShot(1500, lambda: self.run_cmd_btn.setEnabled(True) if self.server_manager and self.server_manager.is_server_running() else None)
 
     def _config_vanilla(self):
         if self.server_manager and self.server_manager.is_server_running():
@@ -2348,9 +2448,18 @@ class PyCraftGUI(QMainWindow):
     def _send_mp_cmd(self):
         cmd = self.mp_run_cmd.text().strip()
         if cmd and self.modpack_server_manager:
+            if not cmd.startswith("/"):
+                self._log(self.modpack_run_console, "Commands must start with /\n", "warning")
+                return
+            # Remove "/" prefix for server console (server doesn't use /)
+            server_cmd = cmd[1:]
             self._log(self.modpack_run_console, f"> {cmd}\n", "info")
-            self.modpack_server_manager.send_command(cmd)
+            self.modpack_server_manager.send_command(server_cmd)
             self.mp_run_cmd.clear()
+
+            # Disable button briefly for visual feedback
+            self.mp_cmd_btn.setEnabled(False)
+            QTimer.singleShot(1500, lambda: self.mp_cmd_btn.setEnabled(True) if self.modpack_server_manager and self.modpack_server_manager.is_server_running() else None)
 
     def _config_mp(self):
         if self.modpack_server_manager and self.modpack_server_manager.is_server_running():
@@ -2703,6 +2812,25 @@ class PyCraftGUI(QMainWindow):
             on_complete(install_result["success"], install_result.get("java_path"))
 
         return install_result["success"]
+
+    def closeEvent(self, event):
+        """Handle application close - stop all running servers"""
+        servers_stopped = []
+
+        # Stop vanilla server if running
+        if self.server_manager and self.server_manager.is_server_running():
+            self.server_manager.stop_server()
+            servers_stopped.append("vanilla")
+
+        # Stop modpack server if running
+        if hasattr(self, 'modpack_server_manager') and self.modpack_server_manager and self.modpack_server_manager.is_server_running():
+            self.modpack_server_manager.stop_server()
+            servers_stopped.append("modpack")
+
+        if servers_stopped:
+            print(f"Stopped servers on exit: {', '.join(servers_stopped)}")
+
+        event.accept()
 
     def run(self):
         self.show()
