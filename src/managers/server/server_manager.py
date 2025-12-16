@@ -1,7 +1,9 @@
 import subprocess
 import os
 import time
-from typing import Optional, Callable
+import json
+import zipfile
+from typing import Optional, Callable, Tuple
 import threading
 
 # Import system utilities for validation
@@ -18,6 +20,85 @@ class ServerManager:
         self.properties_path = os.path.join(server_folder, "server.properties")
         self.server_process = None
         self.java_executable = java_executable
+        self._detected_version = None  # Cache for detected version
+
+    def detect_minecraft_version(self) -> Optional[str]:
+        """
+        Detects the Minecraft version from the server.jar file.
+
+        Reads version.json inside the server.jar to get the exact version.
+        Falls back to analyzing other files if version.json is not available.
+
+        Returns:
+            Minecraft version string (e.g., "1.20.4") or None if not detected
+        """
+        # Return cached version if available
+        if self._detected_version:
+            return self._detected_version
+
+        if not os.path.exists(self.server_jar_path):
+            return None
+
+        try:
+            # Method 1: Read version.json from server.jar
+            with zipfile.ZipFile(self.server_jar_path, 'r') as jar:
+                # Try version.json (modern Minecraft servers)
+                if 'version.json' in jar.namelist():
+                    with jar.open('version.json') as f:
+                        version_data = json.load(f)
+                        if 'id' in version_data:
+                            self._detected_version = version_data['id']
+                            return self._detected_version
+                        if 'name' in version_data:
+                            self._detected_version = version_data['name']
+                            return self._detected_version
+
+                # Try META-INF/MANIFEST.MF for older versions
+                if 'META-INF/MANIFEST.MF' in jar.namelist():
+                    with jar.open('META-INF/MANIFEST.MF') as f:
+                        manifest = f.read().decode('utf-8', errors='ignore')
+                        for line in manifest.split('\n'):
+                            if 'Implementation-Version' in line:
+                                version = line.split(':')[-1].strip()
+                                if version:
+                                    self._detected_version = version
+                                    return self._detected_version
+
+            # Method 2: Check server logs for version info
+            logs_path = os.path.join(self.server_folder, "logs", "latest.log")
+            if os.path.exists(logs_path):
+                try:
+                    with open(logs_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        # Read first 50 lines where version info usually appears
+                        for i, line in enumerate(f):
+                            if i > 50:
+                                break
+                            # Look for patterns like "Starting minecraft server version 1.20.4"
+                            if 'minecraft server version' in line.lower():
+                                import re
+                                match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?)', line, re.IGNORECASE)
+                                if match:
+                                    self._detected_version = match.group(1)
+                                    return self._detected_version
+                except:
+                    pass
+
+            return None
+
+        except (zipfile.BadZipFile, json.JSONDecodeError, KeyError, Exception):
+            return None
+
+    def get_version_info(self) -> Tuple[Optional[str], str]:
+        """
+        Gets version information with a human-readable status.
+
+        Returns:
+            Tuple of (version_string, status_message)
+        """
+        version = self.detect_minecraft_version()
+        if version:
+            return (version, f"Minecraft {version}")
+        return (None, "Version unknown")
 
     def accept_eula(self) -> bool:
         """
@@ -549,27 +630,62 @@ class ServerManager:
                 log_callback(f"Tipo de error: {type(e).__name__}\n")
             return False
 
-    def stop_server(self) -> bool:
+    def stop_server(self, log_callback: Optional[Callable[[str], None]] = None) -> bool:
         """
         Detiene el servidor si está en ejecución
+
+        Args:
+            log_callback: Función callback para recibir logs
 
         Returns:
             True si se detuvo correctamente, False en caso contrario
         """
         try:
             if self.server_process and self.server_process.poll() is None:
+                # First try graceful shutdown with "stop" command
+                if self.server_process.stdin:
+                    try:
+                        self.server_process.stdin.write("stop\n")
+                        self.server_process.stdin.flush()
+                        # Wait for graceful shutdown
+                        self.server_process.wait(timeout=15)
+                        print("Servidor detenido (graceful)")
+                        self.server_process = None
+                        return True
+                    except (subprocess.TimeoutExpired, OSError, BrokenPipeError):
+                        # Graceful shutdown failed, proceed to terminate
+                        pass
+
+                # Forceful termination
                 self.server_process.terminate()
                 try:
                     self.server_process.wait(timeout=10)
                 except subprocess.TimeoutExpired:
+                    # Kill if terminate didn't work
                     self.server_process.kill()
+                    try:
+                        self.server_process.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        # Last resort: use psutil to force kill
+                        try:
+                            import psutil
+                            parent = psutil.Process(self.server_process.pid)
+                            for child in parent.children(recursive=True):
+                                child.kill()
+                            parent.kill()
+                        except Exception:
+                            pass
+
                 print("Servidor detenido")
+                self.server_process = None
                 return True
             else:
                 print("El servidor no está en ejecución")
+                self.server_process = None  # Clean up reference anyway
                 return False
         except Exception as e:
             print(f"Error al detener servidor: {e}")
+            self.server_process = None  # Clean up on error too
             return False
 
     def is_server_running(self) -> bool:
