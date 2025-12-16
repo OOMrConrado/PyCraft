@@ -371,19 +371,9 @@ class PyCraftGUI(QMainWindow):
 
         try:
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            logo_path = os.path.join(base_path, "PyCraft-Files", "logo.png")
             icon_path = os.path.join(base_path, "PyCraft-Files", "icon.ico")
 
-            if os.path.exists(logo_path):
-                # Create icon with multiple sizes for better display
-                pixmap = QPixmap(logo_path)
-                icon = QIcon()
-                # Add multiple sizes for different contexts (taskbar, title bar, etc)
-                for size in [16, 24, 32, 48, 64, 128, 256]:
-                    scaled = pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    icon.addPixmap(scaled)
-                self.setWindowIcon(icon)
-            elif os.path.exists(icon_path):
+            if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
         except:
             pass
