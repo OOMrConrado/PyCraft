@@ -104,22 +104,24 @@ class ModrinthAPI:
             "User-Agent": self.USER_AGENT
         }
 
-    def search_modpacks(self, query: str, limit: int = 20) -> Optional[List[Dict]]:
+    def search_modpacks(self, query: str, limit: int = 10, offset: int = 0) -> Tuple[Optional[List[Dict]], int]:
         """
         Busca modpacks en Modrinth
 
         Args:
             query: Texto de búsqueda
-            limit: Número máximo de resultados
+            limit: Número máximo de resultados por página
+            offset: Número de resultados a saltar (para paginación)
 
         Returns:
-            Lista de modpacks encontrados
+            Tuple de (lista de modpacks, total de resultados)
         """
         try:
             url = f"{self.BASE_URL}/search"
             params = {
                 "query": query,
                 "limit": limit,
+                "offset": offset,
                 "facets": '[["project_type:modpack"]]'
             }
 
@@ -127,11 +129,11 @@ class ModrinthAPI:
             response.raise_for_status()
             data = response.json()
 
-            return data.get("hits", [])
+            return data.get("hits", []), data.get("total_hits", 0)
 
         except Exception as e:
             print(f"Error al buscar modpacks en Modrinth: {e}")
-            return None
+            return None, 0
 
     def get_modpack_versions(self, project_id: str) -> Optional[List[Dict]]:
         """
