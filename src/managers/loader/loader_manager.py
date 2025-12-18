@@ -119,7 +119,8 @@ class LoaderManager:
             full_version = f"{minecraft_version}-{forge_version}"
 
             if log_callback:
-                log_callback(f"Versión de Forge: {full_version}\n")
+                log_callback(f"Minecraft: {minecraft_version}\n")
+                log_callback(f"Forge: {forge_version}\n\n")
                 log_callback("Descargando instalador de Forge...\n")
 
             # Descargar instalador
