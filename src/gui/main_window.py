@@ -14,11 +14,11 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QLineEdit, QTextEdit, QFrame,
     QScrollArea, QProgressBar, QFileDialog, QMessageBox, QDialog,
-    QSlider, QStackedWidget, QInputDialog, QGraphicsDropShadowEffect,
-    QStyle, QProxyStyle, QStyleOption, QComboBox, QSpinBox
+    QSlider, QStackedWidget, QInputDialog,
+    QStyle, QProxyStyle, QComboBox, QSpinBox
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QSize, QPropertyAnimation, QEasingCurve, QUrl
-from PySide6.QtGui import QPixmap, QIcon, QTextCharFormat, QColor, QTextCursor, QCursor, QFont, QPainter, QDesktopServices
+from PySide6.QtCore import Qt, Signal, QTimer, QSize, QUrl
+from PySide6.QtGui import QPixmap, QIcon, QTextCharFormat, QColor, QTextCursor, QCursor, QFont, QDesktopServices
 
 
 class NoFocusRectStyle(QProxyStyle):
@@ -342,6 +342,7 @@ class PyCraftGUI(QMainWindow):
         self.selected_version = None
         self.server_folder = None
         self.is_server_configured = False
+        self.detected_mc_version = None
 
         self.modpack_results = []
         self.selected_modpack = None
@@ -396,7 +397,7 @@ class PyCraftGUI(QMainWindow):
 
             if os.path.exists(icon_path):
                 self.setWindowIcon(QIcon(icon_path))
-        except:
+        except Exception:
             pass
 
     def _connect_signals(self):
@@ -423,6 +424,10 @@ class PyCraftGUI(QMainWindow):
         if target in targets and targets[target]:
             self._log(targets[target], msg, level)
 
+        # Detect when server is ready (shows "Done" message)
+        if target in ("v_run", "m_run") and "Done" in msg and "For help, type" in msg:
+            self._show_server_ready_notification(target)
+
     def _on_progress(self, value: int):
         """Handle progress signal"""
         if hasattr(self, "active_progress"):
@@ -435,6 +440,44 @@ class PyCraftGUI(QMainWindow):
         if hasattr(self, "active_status"):
             self.active_status.setText(msg)
             self.active_status.setStyleSheet(f"color: {color}; font-size: 12px;")
+
+    def _show_server_ready_notification(self, target: str):
+        """Show notification when server is ready"""
+        server_type = "Vanilla" if target == "v_run" else "Modpack"
+
+        # Create a non-blocking message box
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Server Ready")
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setText(f"{server_type} server is ready!")
+        msg.setInformativeText("Players can now connect.")
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.setDefaultButton(QMessageBox.StandardButton.Ok)
+
+        # Style the message box
+        msg.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {self.colors['bg_content']};
+                color: {self.colors['text']};
+            }}
+            QMessageBox QLabel {{
+                color: {self.colors['text']};
+                font-size: 13px;
+            }}
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: white;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 4px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
+            }}
+        """)
+
+        msg.show()
 
     def _build_ui(self):
         """Build main UI structure"""
@@ -536,29 +579,24 @@ class PyCraftGUI(QMainWindow):
             )
             if os.path.exists(logo_path):
                 logo_label = QLabel(logo_frame)
-                pix = QPixmap(logo_path).scaled(58, 58, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                pix = QPixmap(logo_path).scaled(90, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 logo_label.setPixmap(pix)
                 logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 logo_label.setStyleSheet("background: transparent; border: none;")
                 logo_label.setGeometry(3, 3, 58, 58)
-        except:
+        except Exception:
             pass
 
         header_layout.addWidget(logo_frame)
 
-        title_widget = QWidget()
-        title_widget.setStyleSheet("background: transparent;")
-        title_layout = QVBoxLayout(title_widget)
-        title_layout.setContentsMargins(12, 0, 0, 0)
-        title_layout.setSpacing(0)
-
-        name = QLabel("PyCraft")
-        name.setStyleSheet(f"font-size: 18px; font-weight: bold; color: {self.colors['text']};")
-        title_layout.addWidget(name)
-
-        sub = QLabel("Server Manager")
-        sub.setStyleSheet(f"font-size: 11px; color: {self.colors['text_secondary']};")
-        title_layout.addWidget(sub)
+        title_widget = QLabel()
+        title_widget.setStyleSheet("background: transparent; margin-left: 12px;")
+        title_widget.setText(f"""
+            <div style="line-height: 1.1;">
+                <span style="font-size: 18px; font-weight: bold; color: {self.colors['text']};">PyCraft</span><br>
+                <span style="font-size: 11px; color: {self.colors['text_secondary']};">Server Manager</span>
+            </div>
+        """)
 
         header_layout.addWidget(title_widget)
         header_layout.addStretch()
@@ -885,6 +923,23 @@ class PyCraftGUI(QMainWindow):
         layout.addWidget(java_frame)
 
         QTimer.singleShot(100, self._check_java)
+
+        # Modpack Management section
+        modpack_frame = self._section_frame("Modpack Management")
+        modpack_layout = modpack_frame.layout()
+
+        # Modpack list container
+        self.modpack_list_widget = QWidget()
+        self.modpack_list_widget.setStyleSheet("background: transparent;")
+        self.modpack_list_layout = QVBoxLayout(self.modpack_list_widget)
+        self.modpack_list_layout.setContentsMargins(0, 0, 0, 0)
+        self.modpack_list_layout.setSpacing(8)
+        modpack_layout.addWidget(self.modpack_list_widget)
+
+        layout.addWidget(modpack_frame)
+
+        # Load modpacks after UI is ready
+        QTimer.singleShot(200, self._refresh_modpack_list)
 
         layout.addStretch()
         scroll.setWidget(content)
@@ -1248,7 +1303,7 @@ class PyCraftGUI(QMainWindow):
         search_layout.addWidget(self.mp_pagination_widget)
 
         self.mp_selected = QLabel("No modpack selected")
-        self.mp_selected.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600;")
+        self.mp_selected.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600; border: none;")
         search_layout.addWidget(self.mp_selected)
 
         layout.addWidget(search_frame)
@@ -1829,9 +1884,118 @@ class PyCraftGUI(QMainWindow):
         # Collapse version list after selection - use timer to ensure it happens after click
         QTimer.singleShot(50, lambda: self._collapse_version_dropdown(ver))
 
+    def _is_dangerous_folder(self, folder_path: str) -> tuple[bool, str]:
+        """
+        Check if a folder is a dangerous/important system location.
+
+        Returns:
+            Tuple of (is_dangerous, warning_message)
+        """
+        if not folder_path:
+            return False, ""
+
+        path = Path(folder_path).resolve()
+        path_str = str(path).lower()
+        path_name = path.name.lower()
+
+        # Check if it's a drive root (C:\, D:\, etc.)
+        if path.parent == path:  # Root of a drive
+            return True, "You selected a drive root. This will create server files directly in your drive, which can cause clutter and issues."
+
+        # Dangerous folder names (case-insensitive)
+        dangerous_names = {
+            "downloads": "Downloads folder",
+            "descargas": "Downloads folder",
+            "desktop": "Desktop",
+            "escritorio": "Desktop",
+            "documents": "Documents folder",
+            "documentos": "Documents folder",
+            "my documents": "Documents folder",
+            "mis documentos": "Documents folder",
+            "program files": "Program Files",
+            "program files (x86)": "Program Files",
+            "archivos de programa": "Program Files",
+            "windows": "Windows system folder",
+            "system32": "Windows system folder",
+            "users": "Users folder",
+            "appdata": "AppData folder",
+        }
+
+        # Check folder name
+        if path_name in dangerous_names:
+            location = dangerous_names[path_name]
+            return True, f"You selected your {location}. Creating a Minecraft server here is not recommended as it may cause data loss or clutter."
+
+        # Check if path contains dangerous folders at top level
+        for part in path.parts:
+            part_lower = part.lower()
+            if part_lower in ["program files", "program files (x86)", "windows", "system32"]:
+                return True, f"You selected a folder inside '{part}'. This is a system location and is not recommended for Minecraft servers."
+
+        return False, ""
+
+    def _is_existing_server(self, folder_path: str) -> bool:
+        """
+        Check if folder already contains a Minecraft server.
+        Returns True if server files are detected.
+        """
+        path = Path(folder_path)
+
+        # Check for exact files
+        if (path / "server.jar").exists():
+            return True
+        if (path / "server.properties").exists():
+            return True
+
+        # Check for pattern-based files (forge, fabric, paper, spigot)
+        for pattern in ["forge-*.jar", "fabric-server-*.jar", "paper-*.jar", "spigot-*.jar"]:
+            if list(path.glob(pattern)):
+                return True
+
+        return False
+
+    def _warn_existing_server(self, folder_path: str) -> bool:
+        """
+        Show error if folder already contains a server. Returns True if folder is clean, False to cancel.
+        """
+        if not self._is_existing_server(folder_path):
+            return True
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Server Already Exists")
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setText("This folder already contains a Minecraft server!")
+        msg.setInformativeText("Please select an empty folder or create a new one to avoid conflicts with existing server files.")
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.exec()
+
+        return False
+
+    def _warn_dangerous_folder(self, folder_path: str) -> bool:
+        """
+        Show warning if folder is dangerous. Returns True if user wants to continue, False to cancel.
+        """
+        is_dangerous, warning = self._is_dangerous_folder(folder_path)
+        if not is_dangerous:
+            return True
+
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Warning: Folder Location")
+        msg.setIcon(QMessageBox.Icon.Warning)
+        msg.setText("Are you sure you want to use this folder?")
+        msg.setInformativeText(f"{warning}\n\nIt's recommended to create a dedicated folder for your server (e.g., 'MinecraftServers/MyServer').")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+
+        return msg.exec() == QMessageBox.StandardButton.Yes
+
     def _select_create_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
+            if not self._warn_dangerous_folder(folder):
+                return  # User cancelled
+            if not self._warn_existing_server(folder):
+                return  # Server already exists
             self.server_folder = folder
             self.create_folder_label.setText(f"Folder: {folder}")
             self._update_download_btn()
@@ -2032,7 +2196,7 @@ class PyCraftGUI(QMainWindow):
             return
 
         # Get Minecraft version (from detection or default to 1.20)
-        mc_version = getattr(self, 'detected_mc_version', None) or self.server_manager.detect_minecraft_version()
+        mc_version = self.detected_mc_version or self.server_manager.detect_minecraft_version()
         if not mc_version:
             mc_version = "1.20"  # Default assumption for unknown versions
             self._log(self.vanilla_run_console, "\nCould not detect version, assuming Java 17+ required\n", "warning")
@@ -2111,11 +2275,20 @@ class PyCraftGUI(QMainWindow):
         self.run_config.setEnabled(False)
         self.run_stop.setEnabled(True)
 
+        def on_server_stopped():
+            """Called when server process ends (crash or normal stop)"""
+            QTimer.singleShot(0, lambda: self._log(self.vanilla_run_console, "\n[Server process ended]\n", "warning"))
+            QTimer.singleShot(0, lambda: self.run_start.setEnabled(True))
+            QTimer.singleShot(0, lambda: self.run_config.setEnabled(True))
+            QTimer.singleShot(0, lambda: self.run_stop.setEnabled(False))
+            QTimer.singleShot(0, lambda: self.run_cmd_btn.setEnabled(False))
+
         def start():
             success = self.server_manager.start_server(
                 ram_mb=self.vanilla_ram,
                 log_callback=lambda m: self.log_signal.emit(m, "normal", "v_run"),
-                detached=True
+                detached=True,
+                on_stopped=on_server_stopped
             )
             if success:
                 QTimer.singleShot(0, lambda: self.run_cmd_btn.setEnabled(True))
@@ -2128,14 +2301,22 @@ class PyCraftGUI(QMainWindow):
         threading.Thread(target=start, daemon=True).start()
 
     def _stop_vanilla(self):
-        if self.server_manager:
-            self.server_manager.stop_server()
-            self._log(self.vanilla_run_console, "\nServer stopped\n", "warning")
+        if not self.server_manager:
+            return
 
-        self.run_start.setEnabled(True)
-        self.run_config.setEnabled(True)
+        # Disable buttons immediately to prevent double-clicks
         self.run_stop.setEnabled(False)
         self.run_cmd_btn.setEnabled(False)
+        self._log(self.vanilla_run_console, "\nStopping server...\n", "warning")
+
+        def stop():
+            self.server_manager.stop_server()
+            # Update UI from main thread
+            QTimer.singleShot(0, lambda: self._log(self.vanilla_run_console, "Server stopped\n", "warning"))
+            QTimer.singleShot(0, lambda: self.run_start.setEnabled(True))
+            QTimer.singleShot(0, lambda: self.run_config.setEnabled(True))
+
+        threading.Thread(target=stop, daemon=True).start()
 
     def _send_vanilla_cmd(self):
         cmd = self.run_cmd.text().strip()
@@ -2149,9 +2330,11 @@ class PyCraftGUI(QMainWindow):
             self.server_manager.send_command(server_cmd)
             self.run_cmd.clear()
 
-            # Disable button briefly for visual feedback
+            # Disable button briefly for visual feedback, then re-enable if server still running
             self.run_cmd_btn.setEnabled(False)
-            QTimer.singleShot(1500, lambda: self.run_cmd_btn.setEnabled(True) if self.server_manager and self.server_manager.is_server_running() else None)
+            QTimer.singleShot(1500, lambda: self.run_cmd_btn.setEnabled(
+                self.server_manager is not None and self.server_manager.is_server_running()
+            ))
 
     def _config_vanilla(self):
         if self.server_manager and self.server_manager.is_server_running():
@@ -2164,7 +2347,7 @@ class PyCraftGUI(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Server Configuration")
         # Vanilla needs more height for pause-when-empty option
-        dialog_height = 620 if server_type == "vanilla" else 520
+        dialog_height = 660 if server_type == "vanilla" else 560
         dialog.setFixedSize(420, dialog_height)
         dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
 
@@ -2520,6 +2703,45 @@ class PyCraftGUI(QMainWindow):
         ))
         layout.addWidget(save, alignment=Qt.AlignmentFlag.AlignCenter)
 
+        # Footer with version info
+        layout.addSpacing(12)
+        footer_line = QFrame()
+        footer_line.setFrameShape(QFrame.Shape.HLine)
+        footer_line.setStyleSheet(f"background-color: {self.colors['border']}; max-height: 1px;")
+        layout.addWidget(footer_line)
+
+        # Get version info
+        mc_version = ""
+        loader_info = ""
+
+        if server_type == "vanilla":
+            if self.server_manager:
+                mc_version = self.server_manager.detect_minecraft_version() or ""
+            loader_info = "Vanilla"
+        else:
+            if self.modpack_server_path:
+                # Try ServerManager first, then fallback to our detection
+                if self.modpack_server_manager:
+                    mc_version = self.modpack_server_manager.detect_minecraft_version() or ""
+                if not mc_version:
+                    mc_version = self._detect_modpack_mc_version(self.modpack_server_path)
+                loader_info = self._detect_modpack_loader(self.modpack_server_path) or "Modded"
+
+        version_text = ""
+        if mc_version:
+            version_text = f"Minecraft {mc_version}"
+        if loader_info:
+            if version_text:
+                version_text += f" | {loader_info}"
+            else:
+                version_text = loader_info
+
+        if version_text:
+            footer_label = QLabel(version_text)
+            footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            footer_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
+            layout.addWidget(footer_label)
+
         dialog.exec()
 
     def _save_config(self, server_type: str, ram: int, difficulty: str, gamemode: str, max_players: int, pause_when_empty: Optional[int], dialog: QDialog):
@@ -2795,7 +3017,7 @@ class PyCraftGUI(QMainWindow):
                         scaled = pixmap.scaled(56, 56, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                         self.mp_icon_cache[project_id] = scaled
                         self.mp_icon_signal.emit(project_id, scaled)
-            except:
+            except Exception:
                 pass
 
         threading.Thread(target=load, daemon=True).start()
@@ -3004,6 +3226,10 @@ class PyCraftGUI(QMainWindow):
     def _select_mp_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Folder")
         if folder:
+            if not self._warn_dangerous_folder(folder):
+                return  # User cancelled
+            if not self._warn_existing_server(folder):
+                return  # Server already exists
             self.modpack_folder = folder
             self.mp_folder_label.setText(f"Folder: {folder}")
             self._update_mp_btn()
@@ -3383,6 +3609,9 @@ class PyCraftGUI(QMainWindow):
                 # Detect loader and MC version for modpack server
                 loader_info = self._detect_modpack_loader(folder)
                 mc_version = self.modpack_server_manager.detect_minecraft_version()
+                # Fallback to our detection for modded servers
+                if not mc_version:
+                    mc_version = self._detect_modpack_mc_version(folder)
 
                 info_parts = []
                 if mc_version:
@@ -3410,11 +3639,104 @@ class PyCraftGUI(QMainWindow):
                 self.modpack_server_info.setVisible(False)
 
     def _has_server(self, folder: str) -> bool:
+        """Check if folder contains a Minecraft server (vanilla or modded)"""
         import glob
-        for p in ["server.jar", "forge-*.jar", "fabric-server-*.jar"]:
+
+        # Check for common server jar patterns
+        jar_patterns = [
+            "server.jar",
+            "forge-*.jar",
+            "neoforge-*.jar",
+            "fabric-server-*.jar",
+            "quilt-server-*.jar",
+            "minecraft_server*.jar"
+        ]
+
+        for p in jar_patterns:
             if glob.glob(os.path.join(folder, p)):
                 return True
+
+        # Check for run scripts (common in modded servers)
+        if os.path.exists(os.path.join(folder, "run.bat")) or os.path.exists(os.path.join(folder, "run.sh")):
+            return True
+
+        # Check for start scripts
+        if os.path.exists(os.path.join(folder, "start.bat")) or os.path.exists(os.path.join(folder, "start.sh")):
+            return True
+
+        # Check for libraries folder with forge/neoforge (modern Forge structure)
+        libraries_path = os.path.join(folder, "libraries", "net", "minecraftforge")
+        if os.path.exists(libraries_path):
+            return True
+
+        neoforge_path = os.path.join(folder, "libraries", "net", "neoforged")
+        if os.path.exists(neoforge_path):
+            return True
+
         return False
+
+    def _detect_modpack_mc_version(self, folder: str) -> str:
+        """Detect Minecraft version from modded server folder"""
+        import glob
+        import re
+
+        # Check libraries folder for forge (has MC version in folder name)
+        forge_libs = os.path.join(folder, "libraries", "net", "minecraftforge", "forge")
+        if os.path.exists(forge_libs):
+            try:
+                versions = os.listdir(forge_libs)
+                if versions:
+                    # Folder name is like "1.20.1-47.2.0"
+                    version_folder = versions[0]
+                    if '-' in version_folder:
+                        mc_ver = version_folder.split('-')[0]
+                        return mc_ver
+            except Exception:
+                pass
+
+        # Check for forge jar name
+        forge_jars = glob.glob(os.path.join(folder, "forge-*.jar"))
+        if forge_jars:
+            jar_name = os.path.basename(forge_jars[0])
+            match = re.search(r'forge-([\d.]+)-', jar_name)
+            if match:
+                return match.group(1)
+
+        # Check for neoforge libs
+        neoforge_libs = os.path.join(folder, "libraries", "net", "neoforged", "neoforge")
+        if os.path.exists(neoforge_libs):
+            try:
+                # NeoForge version starts with MC version (e.g., 21.1.77 for MC 1.21.1)
+                versions = os.listdir(neoforge_libs)
+                if versions:
+                    # Parse NeoForge version to get MC version
+                    # Format: MAJOR.MINOR.PATCH where MAJOR.MINOR maps to MC 1.MAJOR.MINOR
+                    version = versions[0]
+                    match = re.match(r'(\d+)\.(\d+)\.', version)
+                    if match:
+                        major, minor = match.groups()
+                        return f"1.{major}.{minor}" if minor != "0" else f"1.{major}"
+            except Exception:
+                pass
+
+        # Check run.bat/run.sh for version info
+        for script in ["run.bat", "run.sh"]:
+            script_path = os.path.join(folder, script)
+            if os.path.exists(script_path):
+                try:
+                    with open(script_path, 'r') as f:
+                        content = f.read()
+                        # Look for MC version pattern
+                        match = re.search(r'minecraft[_-]?server[_-]?([\d.]+)', content, re.IGNORECASE)
+                        if match:
+                            return match.group(1)
+                        match = re.search(r'forge[/-]([\d.]+)-[\d.]+', content, re.IGNORECASE)
+                        if match:
+                            return match.group(1)
+                except Exception:
+                    pass
+
+        return ""
 
     def _detect_modpack_loader(self, folder: str) -> str:
         """Detect modpack loader type and version from server folder"""
@@ -3458,57 +3780,347 @@ class PyCraftGUI(QMainWindow):
                 return f"Quilt {match.group(1)}"
             return "Quilt"
 
-        # Check for run scripts that might indicate loader
+        # Check libraries folder structure (modern Forge/NeoForge)
+        forge_libs = os.path.join(folder, "libraries", "net", "minecraftforge", "forge")
+        if os.path.exists(forge_libs):
+            try:
+                versions = os.listdir(forge_libs)
+                if versions:
+                    # Get first version folder (e.g., "1.20.1-47.2.0")
+                    version_folder = versions[0]
+                    # Extract just the forge version part
+                    if '-' in version_folder:
+                        forge_ver = version_folder.split('-')[-1]
+                        return f"Forge {forge_ver}"
+                    return f"Forge {version_folder}"
+            except Exception:
+                pass
+
+        neoforge_libs = os.path.join(folder, "libraries", "net", "neoforged", "neoforge")
+        if os.path.exists(neoforge_libs):
+            try:
+                versions = os.listdir(neoforge_libs)
+                if versions:
+                    return f"NeoForge {versions[0]}"
+            except Exception:
+                pass
+
+        # Check for run scripts that might indicate loader (fallback)
         if os.path.exists(os.path.join(folder, "run.bat")) or os.path.exists(os.path.join(folder, "run.sh")):
-            # Try to detect from run script
+            # Try to detect from run script content
             for script in ["run.bat", "run.sh"]:
                 script_path = os.path.join(folder, script)
                 if os.path.exists(script_path):
                     try:
                         with open(script_path, 'r') as f:
-                            content = f.read().lower()
-                            if 'forge' in content:
-                                return "Forge"
-                            elif 'neoforge' in content:
+                            content = f.read()
+                            # Look for forge version in script
+                            match = re.search(r'forge[/-]([\d.]+)-([\d.]+)', content, re.IGNORECASE)
+                            if match:
+                                return f"Forge {match.group(2)}"
+                            match = re.search(r'neoforge[/-]([\d.]+)', content, re.IGNORECASE)
+                            if match:
+                                return f"NeoForge {match.group(1)}"
+                            # Generic detection
+                            content_lower = content.lower()
+                            if 'neoforge' in content_lower:
                                 return "NeoForge"
-                            elif 'fabric' in content:
+                            elif 'forge' in content_lower:
+                                return "Forge"
+                            elif 'fabric' in content_lower:
                                 return "Fabric"
-                            elif 'quilt' in content:
+                            elif 'quilt' in content_lower:
                                 return "Quilt"
-                    except:
+                    except Exception:
                         pass
 
         return ""
 
+    def _check_and_remove_client_mods(self, mods_folder: str) -> bool:
+        """
+        Check for client-only mods and offer to remove them.
+
+        Returns:
+            True if should continue starting server, False if cancelled
+        """
+        client_mods = self.modpack_manager.detect_client_only_mods(mods_folder)
+
+        if not client_mods:
+            return True
+
+        # Create dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Client-Only Mods Detected")
+        dialog.setFixedSize(500, 400)
+        dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+
+        # Warning icon and title
+        title = QLabel(f"{len(client_mods)} Client-Only Mods Detected")
+        title.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 16px; font-weight: bold;")
+        layout.addWidget(title)
+
+        desc = QLabel("These mods are for client only and will crash the server.\nDo you want to remove them?")
+        desc.setStyleSheet(f"color: {self.colors['text']}; font-size: 13px;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        # Scrollable list of mods
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background: transparent;
+                border: 1px solid {self.colors['border']};
+                border-radius: 8px;
+            }}
+            QScrollBar:vertical {{
+                background-color: {self.colors['bg_input']};
+                width: 10px;
+                border-radius: 5px;
+            }}
+            QScrollBar::handle:vertical {{
+                background-color: #4a4a4a;
+                border-radius: 5px;
+                min-height: 30px;
+            }}
+        """)
+
+        list_widget = QWidget()
+        list_widget.setStyleSheet(f"background-color: {self.colors['bg_input']};")
+        list_layout = QVBoxLayout(list_widget)
+        list_layout.setContentsMargins(8, 8, 8, 8)
+        list_layout.setSpacing(4)
+
+        for mod in client_mods:
+            mod_label = QLabel(f"• {mod['name']}")
+            mod_label.setStyleSheet(f"color: {self.colors['text']}; font-size: 12px;")
+            list_layout.addWidget(mod_label)
+
+            reason_label = QLabel(f"   ({mod['reason']})")
+            reason_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 10px;")
+            list_layout.addWidget(reason_label)
+
+        list_layout.addStretch()
+        scroll.setWidget(list_widget)
+        layout.addWidget(scroll, 1)
+
+        # Buttons
+        btn_row = QWidget()
+        btn_row.setStyleSheet("background: transparent;")
+        btn_layout = QHBoxLayout(btn_row)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(12)
+
+        cancel_btn = self._styled_button("Cancel", self.colors['bg_input'], self.colors['text'], 120)
+        remove_btn = self._styled_button("Remove All", self.colors['red'], "#ffffff", 120)
+
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(remove_btn)
+
+        layout.addWidget(btn_row)
+
+        # Result tracking
+        dialog.result_action = None
+
+        def on_cancel():
+            dialog.result_action = "cancel"
+            dialog.reject()
+
+        def on_remove():
+            dialog.result_action = "remove"
+            dialog.accept()
+
+        cancel_btn.clicked.connect(on_cancel)
+        remove_btn.clicked.connect(on_remove)
+
+        dialog.exec()
+
+        if dialog.result_action == "cancel":
+            return False
+        elif dialog.result_action == "remove":
+            # Move the mods to backup folder
+            mod_files = [mod['file'] for mod in client_mods]
+            removed, failed, backup_folder = self.modpack_manager.remove_client_mods(mods_folder, mod_files)
+            self._log(self.modpack_run_console, f"\n✓ Moved {removed} client-only mods\n", "success")
+            self._log(self.modpack_run_console, f"  (Moved to: client_mods_deleted/)\n", "info")
+            if failed > 0:
+                self._log(self.modpack_run_console, f"Failed to move {failed} mods\n", "warning")
+            return True
+
+        return False
+
     def _start_mp(self):
         if not self.modpack_server_manager:
             return
+
+        # Check for client-only mods first
+        if self.modpack_server_path:
+            mods_folder = os.path.join(self.modpack_server_path, "mods")
+            if os.path.exists(mods_folder):
+                if not self._check_and_remove_client_mods(mods_folder):
+                    return  # User cancelled
+
+        # Get Minecraft version (from our detection)
+        mc_version = None
+        if self.modpack_server_path:
+            mc_version = self._detect_modpack_mc_version(self.modpack_server_path)
+
+        if not mc_version:
+            mc_version = "1.20"  # Default assumption for unknown versions
+            self._log(self.modpack_run_console, "\nCould not detect MC version, assuming Java 17+ required\n", "warning")
+
+        # Check Java compatibility
+        required_java = self.java_manager.get_required_java_version(mc_version)
+        java_info = self.java_manager.detect_java_version()
+
+        needs_java = False
+        pycraft_java = None
+
+        # Check if we have a PyCraft-installed Java
+        install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
+        if install_dir.exists():
+            java_exe = self.java_manager._find_java_executable(install_dir)
+            if java_exe:
+                pycraft_java = str(java_exe)
+
+        if not pycraft_java:
+            if not java_info:
+                needs_java = True
+            else:
+                _, installed_major = java_info
+                if installed_major < required_java:
+                    needs_java = True
+
+        if needs_java:
+            # Show dialog with options
+            msg = QMessageBox(self)
+            msg.setWindowTitle("Java Required")
+            msg.setIcon(QMessageBox.Icon.Warning)
+            msg.setText(f"Minecraft {mc_version} requires Java {required_java}+")
+
+            if java_info:
+                _, installed_major = java_info
+                msg.setInformativeText(
+                    f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
+                    f"What would you like to do?"
+                )
+            else:
+                msg.setInformativeText(
+                    f"Java is not installed on your system.\n\n"
+                    f"What would you like to do?"
+                )
+
+            install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
+            settings_btn = msg.addButton("Go to Settings", QMessageBox.ButtonRole.ActionRole)
+            cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+
+            msg.exec()
+
+            clicked = msg.clickedButton()
+            if clicked == settings_btn:
+                self._go_to("settings")
+                return
+            elif clicked == cancel_btn or clicked is None:
+                return
+            elif clicked == install_btn:
+                if not self._show_java_install_modal(required_java):
+                    QMessageBox.critical(self, "Error", f"Failed to install Java {required_java}. Cannot start server.")
+                    return
+                # Update java reference after successful install
+                install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
+                if install_dir.exists():
+                    java_exe = self.java_manager._find_java_executable(install_dir)
+                    if java_exe:
+                        pycraft_java = str(java_exe)
+
+        # Update server manager with correct Java executable
+        if pycraft_java:
+            self.modpack_server_manager.java_executable = pycraft_java
+            self._log(self.modpack_run_console, f"\nUsing Java: {pycraft_java}\n", "info")
+
+        # Check and accept EULA if needed
+        eula_path = os.path.join(self.modpack_server_path, "eula.txt")
+        if os.path.exists(eula_path):
+            try:
+                with open(eula_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                if 'eula=false' in content:
+                    self._log(self.modpack_run_console, "Accepting EULA automatically...\n", "info")
+                    self.modpack_server_manager.accept_eula()
+            except Exception:
+                pass
 
         self._log(self.modpack_run_console, "\n=== STARTING SERVER ===\n", "info")
         self.mp_start.setEnabled(False)
         self.mp_config.setEnabled(False)
         self.mp_stop.setEnabled(True)
 
+        # Detect server type (forge/fabric) for proper startup with client mod cleaning
+        server_type = self.modpack_server_manager.detect_server_type()
+        java_exe = self.modpack_server_manager.java_executable
+
+        def on_server_stopped():
+            """Called when server process ends (crash or normal stop)"""
+            QTimer.singleShot(0, lambda: self._log(self.modpack_run_console, "\n[Server process ended]\n", "warning"))
+            QTimer.singleShot(0, lambda: self.mp_start.setEnabled(True))
+            QTimer.singleShot(0, lambda: self.mp_config.setEnabled(True))
+            QTimer.singleShot(0, lambda: self.mp_stop.setEnabled(False))
+            QTimer.singleShot(0, lambda: self.mp_cmd_btn.setEnabled(False))
+
         def start():
-            success = self.modpack_server_manager.start_server(
-                ram_mb=self.modpack_ram,
-                log_callback=lambda m: self.log_signal.emit(m, "normal", "m_run"),
-                detached=True
-            )
+            log_cb = lambda m: self.log_signal.emit(m, "normal", "m_run")
+
+            # Use start_modded_server which includes client mod cleaning
+            if server_type in ("forge", "fabric"):
+                success = self.modpack_server_manager.start_modded_server(
+                    server_type=server_type,
+                    ram_mb=self.modpack_ram,
+                    java_executable=java_exe,
+                    log_callback=log_cb,
+                    detached=True,
+                    on_stopped=on_server_stopped
+                )
+            else:
+                # Fallback to generic start_server for unknown types
+                success = self.modpack_server_manager.start_server(
+                    ram_mb=self.modpack_ram,
+                    log_callback=log_cb,
+                    detached=True,
+                    on_stopped=on_server_stopped
+                )
+
             if success:
                 QTimer.singleShot(0, lambda: self.mp_cmd_btn.setEnabled(True))
+            else:
+                # Re-enable start button if failed
+                QTimer.singleShot(0, lambda: self.mp_start.setEnabled(True))
+                QTimer.singleShot(0, lambda: self.mp_config.setEnabled(True))
+                QTimer.singleShot(0, lambda: self.mp_stop.setEnabled(False))
 
         threading.Thread(target=start, daemon=True).start()
 
     def _stop_mp(self):
-        if self.modpack_server_manager:
-            self.modpack_server_manager.stop_server()
-            self._log(self.modpack_run_console, "\nServer stopped\n", "warning")
+        if not self.modpack_server_manager:
+            return
 
-        self.mp_start.setEnabled(True)
-        self.mp_config.setEnabled(True)
+        # Disable buttons immediately to prevent double-clicks
         self.mp_stop.setEnabled(False)
         self.mp_cmd_btn.setEnabled(False)
+        self._log(self.modpack_run_console, "\nStopping server...\n", "warning")
+
+        def stop():
+            self.modpack_server_manager.stop_server()
+            # Update UI from main thread
+            QTimer.singleShot(0, lambda: self._log(self.modpack_run_console, "Server stopped\n", "warning"))
+            QTimer.singleShot(0, lambda: self.mp_start.setEnabled(True))
+            QTimer.singleShot(0, lambda: self.mp_config.setEnabled(True))
+
+        threading.Thread(target=stop, daemon=True).start()
 
     def _send_mp_cmd(self):
         cmd = self.mp_run_cmd.text().strip()
@@ -3522,9 +4134,11 @@ class PyCraftGUI(QMainWindow):
             self.modpack_server_manager.send_command(server_cmd)
             self.mp_run_cmd.clear()
 
-            # Disable button briefly for visual feedback
+            # Disable button briefly for visual feedback, then re-enable if server still running
             self.mp_cmd_btn.setEnabled(False)
-            QTimer.singleShot(1500, lambda: self.mp_cmd_btn.setEnabled(True) if self.modpack_server_manager and self.modpack_server_manager.is_server_running() else None)
+            QTimer.singleShot(1500, lambda: self.mp_cmd_btn.setEnabled(
+                self.modpack_server_manager is not None and self.modpack_server_manager.is_server_running()
+            ))
 
     def _config_mp(self):
         if self.modpack_server_manager and self.modpack_server_manager.is_server_running():
@@ -3684,6 +4298,173 @@ class PyCraftGUI(QMainWindow):
                 )
             self._check_java()
 
+    def _refresh_modpack_list(self):
+        """Refresh the list of installed client modpacks in Settings"""
+        # Clear existing items
+        while self.modpack_list_layout.count():
+            child = self.modpack_list_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        modpacks = self.modpack_manager.get_installed_client_modpacks()
+
+        if not modpacks:
+            label = QLabel("No modpacks installed")
+            label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 13px; border: none;")
+            self.modpack_list_layout.addWidget(label)
+
+            tip = QLabel("Install modpacks from Modded Server > Install Modpack (Client)")
+            tip.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px; border: none;")
+            self.modpack_list_layout.addWidget(tip)
+        else:
+            for mp in modpacks:
+                frame = QFrame()
+                frame.setStyleSheet(f"""
+                    QFrame {{
+                        background-color: {self.colors['bg_input']};
+                        border-radius: 10px;
+                        padding: 10px;
+                    }}
+                """)
+                frame_layout = QHBoxLayout(frame)
+                frame_layout.setContentsMargins(12, 10, 12, 10)
+
+                # Info column
+                info_widget = QWidget()
+                info_widget.setStyleSheet("background: transparent;")
+                info_layout = QVBoxLayout(info_widget)
+                info_layout.setContentsMargins(0, 0, 0, 0)
+                info_layout.setSpacing(2)
+
+                name = QLabel(mp.get("name", mp.get("folder_name", "Unknown")))
+                name.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
+                info_layout.addWidget(name)
+
+                # Version info
+                mc_ver = mp.get("minecraft_version", "Unknown")
+                loader = mp.get("loader", "Unknown")
+                loader_ver = mp.get("loader_version", "")
+
+                # Loader color
+                loader_color = self.colors['text_muted']
+                if loader.lower() == "forge":
+                    loader_color = "#FF6B35"
+                elif loader.lower() == "neoforge":
+                    loader_color = "#D64541"
+                elif loader.lower() == "fabric":
+                    loader_color = "#C6BCA7"
+                elif loader.lower() == "quilt":
+                    loader_color = "#8B5CF6"
+
+                loader_text = f"{loader.capitalize()} {loader_ver}" if loader_ver else loader.capitalize()
+                meta = QLabel(f"MC {mc_ver} | {loader_text}")
+                meta.setStyleSheet(f"color: {loader_color}; font-size: 12px;")
+                info_layout.addWidget(meta)
+
+                # Path info
+                path = QLabel(mp.get("path", ""))
+                path.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 10px;")
+                info_layout.addWidget(path)
+
+                frame_layout.addWidget(info_widget, 1)
+
+                # Open folder button
+                open_btn = QPushButton()
+                open_btn.setFixedSize(36, 36)
+                open_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                open_btn.setIcon(qta.icon("fa5s.folder-open", color=self.colors['text']))
+                open_btn.setIconSize(QSize(16, 16))
+                open_btn.setToolTip("Open folder")
+                open_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        border: 1px solid {self.colors['border']};
+                        border-radius: 8px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: {self.colors['bg_card']};
+                        border: 1px solid {self.colors['text_muted']};
+                    }}
+                """)
+                open_btn.clicked.connect(lambda _, p=mp.get("path", ""): self._open_folder(p))
+                frame_layout.addWidget(open_btn)
+
+                # Delete button
+                delete_btn = QPushButton()
+                delete_btn.setFixedSize(36, 36)
+                delete_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                delete_btn.setIcon(qta.icon("fa5s.trash-alt", color=self.colors['red']))
+                delete_btn.setIconSize(QSize(16, 16))
+                delete_btn.setToolTip("Uninstall modpack")
+                delete_btn.setStyleSheet(f"""
+                    QPushButton {{
+                        background-color: transparent;
+                        border: 1px solid {self.colors['border']};
+                        border-radius: 8px;
+                    }}
+                    QPushButton:hover {{
+                        background-color: rgba(248, 113, 113, 0.2);
+                        border: 1px solid {self.colors['red']};
+                    }}
+                """)
+                delete_btn.clicked.connect(lambda _, folder=mp.get("folder_name", ""), name=mp.get("name", ""): self._uninstall_modpack(folder, name))
+                frame_layout.addWidget(delete_btn)
+
+                self.modpack_list_layout.addWidget(frame)
+
+        # Buttons row at bottom (like Java Management)
+        self.modpack_list_layout.addSpacing(8)
+        btn_widget = QWidget()
+        btn_widget.setStyleSheet("background: transparent;")
+        btn_layout = QHBoxLayout(btn_widget)
+        btn_layout.setContentsMargins(0, 0, 0, 0)
+        btn_layout.setSpacing(10)
+
+        refresh_btn = self._styled_button("Refresh", self.colors['bg_input'], self.colors['text'], 140)
+        refresh_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        refresh_btn.clicked.connect(self._refresh_modpack_list)
+        btn_layout.addWidget(refresh_btn)
+
+        btn_layout.addStretch()
+        self.modpack_list_layout.addWidget(btn_widget)
+
+    def _uninstall_modpack(self, folder_name: str, display_name: str):
+        """Uninstall a client modpack"""
+        reply = QMessageBox.question(
+            self,
+            "Uninstall Modpack",
+            f"Are you sure you want to uninstall '{display_name}'?\n\nThis will delete all modpack files including mods and configs.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            success = self.modpack_manager.uninstall_client_modpack(folder_name)
+
+            if success:
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"'{display_name}' has been uninstalled."
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Could not uninstall '{display_name}'.\n\nThe folder may be in use or you may not have permissions."
+                )
+            self._refresh_modpack_list()
+
+    def _open_folder(self, path: str):
+        """Open a folder in file explorer"""
+        if path and os.path.exists(path):
+            if sys.platform == "win32":
+                os.startfile(path)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", path])
+            else:
+                subprocess.run(["xdg-open", path])
+
     def _show_java_install_modal(self, java_version: int, on_complete: Optional[callable] = None):
         """Shows a modal dialog with progress bar for Java installation"""
         dialog = QDialog(self)
@@ -3819,7 +4600,7 @@ class PyCraftGUI(QMainWindow):
                 try:
                     pct = int(msg.replace("%", "").split()[-1])
                     self.java_progress_signal.emit(pct, -1)
-                except:
+                except Exception:
                     pass
                 return
             elif "extrayendo" in msg_lower or "extracción" in msg_lower:
