@@ -631,7 +631,8 @@ max-world-size=29999984
         query: str,
         platform: str = "modrinth",
         limit: int = 10,
-        offset: int = 0
+        offset: int = 0,
+        side_filter: str = None
     ) -> Tuple[Optional[List[Dict]], int]:
         """
         Searches for modpacks on the specified platform
@@ -641,12 +642,14 @@ max-world-size=29999984
             platform: "modrinth" or "curseforge"
             limit: Maximum number of results per page
             offset: Number of results to skip (for pagination)
+            side_filter: Filter by side - "server" for server-compatible modpacks,
+                        "client" for client-compatible modpacks, None for no filter
 
         Returns:
             Tuple of (list of modpacks, total results count)
         """
         if platform == "modrinth":
-            return self.modrinth_api.search_modpacks(query, limit, offset)
+            return self.modrinth_api.search_modpacks(query, limit, offset, side_filter)
         elif platform == "curseforge":
             if self.curseforge_api and self.curseforge_api.is_configured():
                 results = self.curseforge_api.search_modpacks(query, limit)
@@ -1041,6 +1044,8 @@ max-world-size=29999984
             # ===== UI/HUD mods (pure client) =====
             'modmenu', 'mod_menu', 'catalogue',
             'configured', 'controlling', 'searchables',
+            'forgeconfigscreens', 'forge_config_screens', 'forgeconfigs',
+            'welcomescreen', 'welcome_screen',
             'betterf3', 'better_f3',
             'shulkerboxtooltip', 'advancementinfo', 'betterstats',
             'itemphysic', 'physics_mod', 'physicsmod',
