@@ -24,69 +24,124 @@ class ServerManager:
 
     def detect_minecraft_version(self) -> Optional[str]:
         """
-        Detects the Minecraft version from the server.jar file.
+        Detects the Minecraft version from various sources.
 
-        Reads version.json inside the server.jar to get the exact version.
-        Falls back to analyzing other files if version.json is not available.
+        Checks multiple locations:
+        1. modrinth.index.json (modpack manifest)
+        2. Fabric's .fabric directory
+        3. server.jar version.json
+        4. Server logs
 
         Returns:
             Minecraft version string (e.g., "1.20.4") or None if not detected
         """
+        import re
+
         # Return cached version if available
         if self._detected_version:
             return self._detected_version
 
-        if not os.path.exists(self.server_jar_path):
-            return None
+        # Method 1: Check modrinth.index.json (modpack manifest)
+        modrinth_manifest = os.path.join(self.server_folder, "modrinth.index.json")
+        if os.path.exists(modrinth_manifest):
+            try:
+                with open(modrinth_manifest, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                    deps = manifest.get("dependencies", {})
+                    if "minecraft" in deps:
+                        self._detected_version = deps["minecraft"]
+                        return self._detected_version
+            except:
+                pass
 
-        try:
-            # Method 1: Read version.json from server.jar
-            with zipfile.ZipFile(self.server_jar_path, 'r') as jar:
-                # Try version.json (modern Minecraft servers)
-                if 'version.json' in jar.namelist():
-                    with jar.open('version.json') as f:
-                        version_data = json.load(f)
-                        if 'id' in version_data:
-                            self._detected_version = version_data['id']
-                            return self._detected_version
-                        if 'name' in version_data:
-                            self._detected_version = version_data['name']
-                            return self._detected_version
+        # Method 2: Check Fabric's install directory
+        fabric_version_file = os.path.join(self.server_folder, ".fabric", "server", "version.json")
+        if os.path.exists(fabric_version_file):
+            try:
+                with open(fabric_version_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if "id" in data:
+                        self._detected_version = data["id"]
+                        return self._detected_version
+            except:
+                pass
 
-                # Try META-INF/MANIFEST.MF for older versions
-                if 'META-INF/MANIFEST.MF' in jar.namelist():
-                    with jar.open('META-INF/MANIFEST.MF') as f:
-                        manifest = f.read().decode('utf-8', errors='ignore')
-                        for line in manifest.split('\n'):
-                            if 'Implementation-Version' in line:
-                                version = line.split(':')[-1].strip()
-                                if version:
-                                    self._detected_version = version
-                                    return self._detected_version
+        # Method 3: Check fabric-server-launcher.properties
+        fabric_props = os.path.join(self.server_folder, "fabric-server-launcher.properties")
+        if os.path.exists(fabric_props):
+            try:
+                with open(fabric_props, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if "serverJar" in line:
+                            # Extract version from path like "versions/1.20.1/server-1.20.1.jar"
+                            match = re.search(r'(\d+\.\d+(?:\.\d+)?)', line)
+                            if match:
+                                self._detected_version = match.group(1)
+                                return self._detected_version
+            except:
+                pass
 
-            # Method 2: Check server logs for version info
-            logs_path = os.path.join(self.server_folder, "logs", "latest.log")
-            if os.path.exists(logs_path):
-                try:
-                    with open(logs_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        # Read first 50 lines where version info usually appears
-                        for i, line in enumerate(f):
-                            if i > 50:
-                                break
-                            # Look for patterns like "Starting minecraft server version 1.20.4"
-                            if 'minecraft server version' in line.lower():
-                                import re
-                                match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?)', line, re.IGNORECASE)
-                                if match:
-                                    self._detected_version = match.group(1)
-                                    return self._detected_version
-                except:
-                    pass
+        # Method 4: Check server.jar if it exists
+        if os.path.exists(self.server_jar_path):
+            try:
+                with zipfile.ZipFile(self.server_jar_path, 'r') as jar:
+                    if 'version.json' in jar.namelist():
+                        with jar.open('version.json') as f:
+                            version_data = json.load(f)
+                            if 'id' in version_data:
+                                self._detected_version = version_data['id']
+                                return self._detected_version
+                            if 'name' in version_data:
+                                self._detected_version = version_data['name']
+                                return self._detected_version
 
-            return None
+                    if 'META-INF/MANIFEST.MF' in jar.namelist():
+                        with jar.open('META-INF/MANIFEST.MF') as f:
+                            manifest = f.read().decode('utf-8', errors='ignore')
+                            for line in manifest.split('\n'):
+                                if 'Implementation-Version' in line:
+                                    version = line.split(':')[-1].strip()
+                                    if version:
+                                        self._detected_version = version
+                                        return self._detected_version
+            except:
+                pass
 
-        except (zipfile.BadZipFile, json.JSONDecodeError, KeyError, Exception):
-            return None
+        # Method 5: Check server logs for version info
+        logs_path = os.path.join(self.server_folder, "logs", "latest.log")
+        if os.path.exists(logs_path):
+            try:
+                with open(logs_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    for i, line in enumerate(f):
+                        if i > 100:
+                            break
+                        # Fabric: "Loading Minecraft 1.20.1"
+                        if 'loading minecraft' in line.lower():
+                            match = re.search(r'minecraft\s+(\d+\.\d+(?:\.\d+)?)', line, re.IGNORECASE)
+                            if match:
+                                self._detected_version = match.group(1)
+                                return self._detected_version
+                        # Vanilla/Forge: "Starting minecraft server version 1.20.4"
+                        if 'minecraft server version' in line.lower():
+                            match = re.search(r'version\s+(\d+\.\d+(?:\.\d+)?)', line, re.IGNORECASE)
+                            if match:
+                                self._detected_version = match.group(1)
+                                return self._detected_version
+            except:
+                pass
+
+        # Method 6: Check versions directory created by Fabric
+        versions_dir = os.path.join(self.server_folder, "versions")
+        if os.path.exists(versions_dir):
+            try:
+                for folder in os.listdir(versions_dir):
+                    if re.match(r'^\d+\.\d+(?:\.\d+)?$', folder):
+                        self._detected_version = folder
+                        return self._detected_version
+            except:
+                pass
+
+        return None
 
     def get_version_info(self) -> Tuple[Optional[str], str]:
         """
@@ -1545,6 +1600,8 @@ max-world-size=29999984
             "defaultoptions", "roughly_enough_items_client", "rei-",
             "mouse_tweaks", "mousewheelie", "controlling-client",
             "modmenu", "mod_menu", "shulkerboxtooltip",
+            "forgeconfigscreens", "forge_config_screens", "forgeconfigs",
+            "welcomescreen", "welcome_screen",
             "advancementinfo", "betterstats", "itemphysic", "physics_mod",
             "legendary_tooltips", "legendarytooltips", "equipmentcompare",
             "tooltipfix", "advancedtooltips", "effectdescriptions",
