@@ -359,6 +359,17 @@ class PyCraftGUI(QMainWindow):
         self.client_mp_total_results = 0
         self.client_mp_search_query = ""
 
+        # Debounce timers for real-time search (300ms delay)
+        self.mp_search_timer = QTimer()
+        self.mp_search_timer.setSingleShot(True)
+        self.mp_search_timer.setInterval(350)
+        self.mp_search_timer.timeout.connect(self._search_modpacks)
+
+        self.client_mp_search_timer = QTimer()
+        self.client_mp_search_timer.setSingleShot(True)
+        self.client_mp_search_timer.setInterval(350)
+        self.client_mp_search_timer.timeout.connect(self._search_client_modpacks)
+
         # Version selection state
         self.selected_mp_version = None  # For server install
         self.client_selected_mp_version = None  # For client install
@@ -1231,13 +1242,9 @@ class PyCraftGUI(QMainWindow):
         search_h = QHBoxLayout(search_row)
         search_h.setContentsMargins(0, 0, 0, 0)
 
-        self.mp_search = self._input("Search (e.g., Create, ATM9)...", 450)
-        self.mp_search.returnPressed.connect(self._search_modpacks)
+        self.mp_search = self._input("Search modpacks (min. 3 characters)...", 560)
+        self.mp_search.textChanged.connect(self._on_mp_search_changed)
         search_h.addWidget(self.mp_search)
-
-        search_btn = self._styled_button("Search", self.colors['accent'], "#000000", 100)
-        search_btn.clicked.connect(lambda: self._search_modpacks())
-        search_h.addWidget(search_btn)
 
         search_layout.addWidget(search_row)
 
@@ -1508,13 +1515,9 @@ class PyCraftGUI(QMainWindow):
         search_h = QHBoxLayout(search_row)
         search_h.setContentsMargins(0, 0, 0, 0)
 
-        self.client_mp_search = self._input("Search (e.g., Create, ATM9)...", 450)
-        self.client_mp_search.returnPressed.connect(self._search_client_modpacks)
+        self.client_mp_search = self._input("Search modpacks (min. 3 characters)...", 560)
+        self.client_mp_search.textChanged.connect(self._on_client_mp_search_changed)
         search_h.addWidget(self.client_mp_search)
-
-        search_btn = self._styled_button("Search", self.colors['accent'], "#000000", 100)
-        search_btn.clicked.connect(lambda: self._search_client_modpacks())
-        search_h.addWidget(search_btn)
 
         search_layout.addWidget(search_row)
 
@@ -2137,6 +2140,11 @@ class PyCraftGUI(QMainWindow):
                     self.log_signal.emit("SERVER CREATED SUCCESSFULLY\n", "success", "v_create")
                     self.log_signal.emit("="*50 + "\n", "success", "v_create")
 
+                    # Show success modal
+                    QTimer.singleShot(100, lambda: self._show_vanilla_install_success(
+                        self.selected_version, self.server_folder
+                    ))
+
             except Exception as e:
                 self.log_signal.emit(f"Error: {e}\n", "error", "v_create")
 
@@ -2146,6 +2154,39 @@ class PyCraftGUI(QMainWindow):
                 QTimer.singleShot(0, lambda: self.create_progress_label.setText("0/100%"))
 
         threading.Thread(target=process, daemon=True).start()
+
+    def _show_vanilla_install_success(self, mc_version: str, folder: str):
+        """Show success modal after vanilla server installation"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Server Created Successfully")
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setText(f"Vanilla server Minecraft {mc_version} has been created!")
+        msg.setInformativeText(
+            f"Location: {folder}\n\n"
+            f"Go to 'Vanilla' > 'Run' tab to start your server."
+        )
+        msg.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {self.colors['bg_card']};
+            }}
+            QMessageBox QLabel {{
+                color: {self.colors['text']};
+                font-size: 13px;
+            }}
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: #000000;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 6px;
+                font-weight: 600;
+                min-width: 80px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
+            }}
+        """)
+        msg.exec()
 
     def _select_run_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Server Folder")
@@ -2304,17 +2345,37 @@ class PyCraftGUI(QMainWindow):
         if not self.server_manager:
             return
 
-        # Disable buttons immediately to prevent double-clicks
+        # Disable all buttons immediately to prevent double-clicks
         self.run_stop.setEnabled(False)
+        self.run_start.setEnabled(False)
+        self.run_config.setEnabled(False)
         self.run_cmd_btn.setEnabled(False)
         self._log(self.vanilla_run_console, "\nStopping server...\n", "warning")
 
         def stop():
-            self.server_manager.stop_server()
-            # Update UI from main thread
-            QTimer.singleShot(0, lambda: self._log(self.vanilla_run_console, "Server stopped\n", "warning"))
-            QTimer.singleShot(0, lambda: self.run_start.setEnabled(True))
-            QTimer.singleShot(0, lambda: self.run_config.setEnabled(True))
+            try:
+                self.server_manager.stop_server()
+
+                # stop_server() is blocking, so when it returns the server is stopped
+                # Re-enable buttons on main thread
+                def enable_buttons():
+                    self._log(self.vanilla_run_console, "Server stopped\n", "success")
+                    self.run_start.setEnabled(True)
+                    self.run_config.setEnabled(True)
+                    self.run_stop.setEnabled(False)
+                    self.run_cmd_btn.setEnabled(False)
+
+                QTimer.singleShot(0, enable_buttons)
+            except Exception as e:
+                # If stop_server() fails, still re-enable buttons
+                def enable_buttons_on_error():
+                    self._log(self.vanilla_run_console, f"Error stopping server: {e}\n", "error")
+                    self.run_start.setEnabled(True)
+                    self.run_config.setEnabled(True)
+                    self.run_stop.setEnabled(False)
+                    self.run_cmd_btn.setEnabled(False)
+
+                QTimer.singleShot(0, enable_buttons_on_error)
 
         threading.Thread(target=stop, daemon=True).start()
 
@@ -2761,10 +2822,27 @@ class PyCraftGUI(QMainWindow):
                 self.modpack_server_manager.update_property("max-players", str(max_players))
         dialog.accept()
 
-    # Modpack
+    # Modpack search with debounce
+    def _on_mp_search_changed(self, text: str):
+        """Handle text changes with debounce for real-time search"""
+        # Clear results if text is too short
+        if len(text.strip()) < 3:
+            # Clear previous results
+            while self.mp_results_layout.count():
+                child = self.mp_results_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+            self.mp_pagination_widget.setVisible(False)
+            self.mp_search_timer.stop()
+            return
+
+        # Restart debounce timer
+        self.mp_search_timer.stop()
+        self.mp_search_timer.start()
+
     def _search_modpacks(self, page: int = 1):
         query = self.mp_search.text().strip()
-        if not query:
+        if len(query) < 3:
             return
 
         self.mp_search_query = query
@@ -2776,20 +2854,17 @@ class PyCraftGUI(QMainWindow):
             if child.widget():
                 child.widget().deleteLater()
 
-        self._log(self.modpack_install_console, f"\nSearching '{query}' (page {page})...\n", "info")
-
         def search():
             try:
                 offset = (page - 1) * 10
-                results, total = self.modpack_manager.search_modpacks(query, platform="modrinth", limit=10, offset=offset)
+                # Filter for server-compatible modpacks only
+                results, total = self.modpack_manager.search_modpacks(query, platform="modrinth", limit=10, offset=offset, side_filter="server")
                 self.modpack_results = results
 
                 if results:
-                    self.log_signal.emit(f"Found {total} modpacks (showing {len(results)})\n", "success", "m_install")
                     self.mp_pagination_signal.emit(total)
                     self.modpack_results_signal.emit(results)
                 else:
-                    self.log_signal.emit("No results\n", "warning", "m_install")
                     self.mp_pagination_signal.emit(0)
 
             except Exception as e:
@@ -3281,29 +3356,47 @@ class PyCraftGUI(QMainWindow):
 
     def _show_server_install_notice(self, mp_name: str, mc_version: str, loader_type: str):
         """Show notification after server modpack installation"""
+        try:
+            loader_display = loader_type.capitalize() if loader_type else "Unknown"
+        except:
+            loader_display = "Unknown"
+
         msg = QMessageBox(self)
-        msg.setWindowTitle("Server Installed")
+        msg.setWindowTitle("Server Installed Successfully")
         msg.setIcon(QMessageBox.Icon.Information)
-        msg.setText(f"Server modpack '{mp_name}' installed successfully!")
+        msg.setText(f"Server modpack '{mp_name}' has been installed!")
         msg.setInformativeText(
-            f"IMPORTANT: To play on this server, you need to install\n"
-            f"the same modpack on your client/launcher.\n\n"
             f"Minecraft: {mc_version}\n"
-            f"Loader: {loader_type.capitalize()}\n\n"
-            f"Go to 'Modded Server' > 'Install Client' to install\n"
-            f"the modpack for your launcher."
+            f"Loader: {loader_display}\n\n"
+            f"IMPORTANT: To play on this server, you need to\n"
+            f"install the same modpack on your client.\n\n"
+            f"Go to 'Install Client' tab to download the modpack\n"
+            f"for your launcher."
         )
 
         msg.setStyleSheet(f"""
             QMessageBox {{
-                background-color: {self.colors['bg_main']};
+                background-color: {self.colors['bg_card']};
             }}
             QMessageBox QLabel {{
                 color: {self.colors['text']};
+                font-size: 13px;
+            }}
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: #000000;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 6px;
+                font-weight: 600;
+                min-width: 80px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
             }}
         """)
 
-        ok_btn = msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
+        msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
         client_btn = msg.addButton("Go to Install Client", QMessageBox.ButtonRole.ActionRole)
 
         msg.exec()
@@ -3311,10 +3404,27 @@ class PyCraftGUI(QMainWindow):
         if msg.clickedButton() == client_btn:
             self._go_to("client_install")
 
-    # Client Modpack Installation
+    # Client Modpack Installation with debounce
+    def _on_client_mp_search_changed(self, text: str):
+        """Handle text changes with debounce for real-time search (client)"""
+        # Clear results if text is too short
+        if len(text.strip()) < 3:
+            # Clear previous results
+            while self.client_mp_results_layout.count():
+                child = self.client_mp_results_layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+            self.client_mp_pagination_widget.setVisible(False)
+            self.client_mp_search_timer.stop()
+            return
+
+        # Restart debounce timer
+        self.client_mp_search_timer.stop()
+        self.client_mp_search_timer.start()
+
     def _search_client_modpacks(self, page: int = 1):
         query = self.client_mp_search.text().strip()
-        if not query:
+        if len(query) < 3:
             return
 
         self.client_mp_search_query = query
@@ -3326,20 +3436,17 @@ class PyCraftGUI(QMainWindow):
             if child.widget():
                 child.widget().deleteLater()
 
-        self._log(self.client_install_console, f"\nSearching '{query}' (page {page})...\n", "info")
-
         def search():
             try:
                 offset = (page - 1) * 10
-                results, total = self.modpack_manager.search_modpacks(query, platform="modrinth", limit=10, offset=offset)
+                # Filter for client-compatible modpacks only
+                results, total = self.modpack_manager.search_modpacks(query, platform="modrinth", limit=10, offset=offset, side_filter="client")
                 self.client_mp_results = results
 
                 if results:
-                    self.log_signal.emit(f"Found {total} modpacks (showing {len(results)})\n", "success", "c_install")
                     self.client_mp_pagination_signal.emit(total)
                     self.client_mp_results_signal.emit(results)
                 else:
-                    self.log_signal.emit("No results\n", "warning", "c_install")
                     self.client_mp_pagination_signal.emit(0)
 
             except Exception as e:
@@ -3578,6 +3685,11 @@ class PyCraftGUI(QMainWindow):
                     self.log_signal.emit(f"1. Create a new profile with Minecraft {mc_ver}\n", "normal", "c_install")
                     self.log_signal.emit(f"2. Install {loader} {loader_ver}\n", "normal", "c_install")
                     self.log_signal.emit(f"3. Set game directory to:\n   {install_path}\n", "normal", "c_install")
+
+                    # Show success modal
+                    QTimer.singleShot(100, lambda: self._show_client_install_success(
+                        mp_name, mc_ver, loader, loader_ver, install_path
+                    ))
                 else:
                     self.log_signal.emit("\nInstallation failed\n", "error", "c_install")
 
@@ -3588,6 +3700,43 @@ class PyCraftGUI(QMainWindow):
                 QTimer.singleShot(0, lambda: self.client_mp_install_btn.setEnabled(True))
 
         threading.Thread(target=install, daemon=True).start()
+
+    def _show_client_install_success(self, mp_name: str, mc_ver: str, loader: str, loader_ver: str, install_path: str):
+        """Show success modal after client modpack installation"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Modpack Installed Successfully")
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setText(f"Client modpack '{mp_name}' has been installed!")
+        msg.setInformativeText(
+            f"Minecraft: {mc_ver}\n"
+            f"Loader: {loader} {loader_ver}\n\n"
+            f"To use in your launcher:\n"
+            f"1. Create a profile with Minecraft {mc_ver}\n"
+            f"2. Install {loader} {loader_ver}\n"
+            f"3. Set game directory to:\n{install_path}"
+        )
+        msg.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {self.colors['bg_card']};
+            }}
+            QMessageBox QLabel {{
+                color: {self.colors['text']};
+                font-size: 13px;
+            }}
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: #000000;
+                border: none;
+                padding: 8px 20px;
+                border-radius: 6px;
+                font-weight: 600;
+                min-width: 80px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
+            }}
+        """)
+        msg.exec()
 
     def _select_mp_run_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Server Folder")
@@ -3762,13 +3911,44 @@ class PyCraftGUI(QMainWindow):
                 return f"NeoForge {match.group(1)}"
             return "NeoForge"
 
-        # Check for Fabric
+        # Check for Fabric - multiple detection methods
+        fabric_launch_jar = os.path.join(folder, "fabric-server-launch.jar")
         fabric_jars = glob.glob(os.path.join(folder, "fabric-server-*.jar"))
-        if fabric_jars:
-            jar_name = os.path.basename(fabric_jars[0])
-            match = re.search(r'fabric-server-mc\.[\d.]+-(\d+\.\d+\.\d+)', jar_name)
-            if match:
-                return f"Fabric {match.group(1)}"
+
+        if os.path.exists(fabric_launch_jar) or fabric_jars:
+            # Try to get version from libraries folder
+            fabric_loader_libs = os.path.join(folder, "libraries", "net", "fabricmc", "fabric-loader")
+            if os.path.exists(fabric_loader_libs):
+                try:
+                    versions = os.listdir(fabric_loader_libs)
+                    if versions:
+                        return f"Fabric Loader {versions[0]}"
+                except:
+                    pass
+
+            # Try to get version from server log
+            logs_path = os.path.join(folder, "logs", "latest.log")
+            if os.path.exists(logs_path):
+                try:
+                    with open(logs_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        for i, line in enumerate(f):
+                            if i > 50:
+                                break
+                            # Look for "Fabric Loader 0.16.14"
+                            if 'fabric loader' in line.lower():
+                                match = re.search(r'fabric\s+loader\s+([\d.]+)', line, re.IGNORECASE)
+                                if match:
+                                    return f"Fabric Loader {match.group(1)}"
+                except:
+                    pass
+
+            # Fallback: try old naming pattern
+            if fabric_jars:
+                jar_name = os.path.basename(fabric_jars[0])
+                match = re.search(r'fabric-server-mc\.[\d.]+-(\d+\.\d+\.\d+)', jar_name)
+                if match:
+                    return f"Fabric Loader {match.group(1)}"
+
             return "Fabric"
 
         # Check for Quilt
@@ -4108,17 +4288,37 @@ class PyCraftGUI(QMainWindow):
         if not self.modpack_server_manager:
             return
 
-        # Disable buttons immediately to prevent double-clicks
+        # Disable all buttons immediately to prevent double-clicks
         self.mp_stop.setEnabled(False)
+        self.mp_start.setEnabled(False)
+        self.mp_config.setEnabled(False)
         self.mp_cmd_btn.setEnabled(False)
         self._log(self.modpack_run_console, "\nStopping server...\n", "warning")
 
         def stop():
-            self.modpack_server_manager.stop_server()
-            # Update UI from main thread
-            QTimer.singleShot(0, lambda: self._log(self.modpack_run_console, "Server stopped\n", "warning"))
-            QTimer.singleShot(0, lambda: self.mp_start.setEnabled(True))
-            QTimer.singleShot(0, lambda: self.mp_config.setEnabled(True))
+            try:
+                self.modpack_server_manager.stop_server()
+
+                # stop_server() is blocking, so when it returns the server is stopped
+                # Re-enable buttons on main thread
+                def enable_buttons():
+                    self._log(self.modpack_run_console, "Server stopped\n", "success")
+                    self.mp_start.setEnabled(True)
+                    self.mp_config.setEnabled(True)
+                    self.mp_stop.setEnabled(False)
+                    self.mp_cmd_btn.setEnabled(False)
+
+                QTimer.singleShot(0, enable_buttons)
+            except Exception as e:
+                # If stop_server() fails, still re-enable buttons
+                def enable_buttons_on_error():
+                    self._log(self.modpack_run_console, f"Error stopping server: {e}\n", "error")
+                    self.mp_start.setEnabled(True)
+                    self.mp_config.setEnabled(True)
+                    self.mp_stop.setEnabled(False)
+                    self.mp_cmd_btn.setEnabled(False)
+
+                QTimer.singleShot(0, enable_buttons_on_error)
 
         threading.Thread(target=stop, daemon=True).start()
 
