@@ -104,7 +104,7 @@ class ModrinthAPI:
             "User-Agent": self.USER_AGENT
         }
 
-    def search_modpacks(self, query: str, limit: int = 10, offset: int = 0) -> Tuple[Optional[List[Dict]], int]:
+    def search_modpacks(self, query: str, limit: int = 10, offset: int = 0, side_filter: str = None) -> Tuple[Optional[List[Dict]], int]:
         """
         Busca modpacks en Modrinth
 
@@ -112,16 +112,30 @@ class ModrinthAPI:
             query: Texto de búsqueda
             limit: Número máximo de resultados por página
             offset: Número de resultados a saltar (para paginación)
+            side_filter: Filtro de lado - "server" para mostrar solo modpacks con server pack,
+                        "client" para mostrar solo modpacks con soporte cliente,
+                        None para no filtrar
 
         Returns:
             Tuple de (lista de modpacks, total de resultados)
         """
         try:
             url = f"{self.BASE_URL}/search"
+
+            if side_filter:
+                # When filtering, we need to request from the beginning and paginate after filtering
+                # Request enough results to cover the requested page after filtering
+                # Estimate ~70% pass rate, so request ~1.5x more than needed
+                request_limit = min((offset + limit) * 2, 100)  # Cap at 100 to avoid huge requests
+                request_offset = 0
+            else:
+                request_limit = limit
+                request_offset = offset
+
             params = {
                 "query": query,
-                "limit": limit,
-                "offset": offset,
+                "limit": request_limit,
+                "offset": request_offset,
                 "facets": '[["project_type:modpack"]]'
             }
 
@@ -129,7 +143,35 @@ class ModrinthAPI:
             response.raise_for_status()
             data = response.json()
 
-            return data.get("hits", []), data.get("total_hits", 0)
+            hits = data.get("hits", [])
+            total = data.get("total_hits", 0)
+
+            # Filter by side if specified
+            # Modrinth returns server_side and client_side fields with values:
+            # "required", "optional", "unsupported", "unknown"
+            if side_filter and hits:
+                filtered_hits = []
+                for hit in hits:
+                    if side_filter == "server":
+                        # For server: only show modpacks where server_side is NOT "unsupported"
+                        server_side = hit.get("server_side", "unknown")
+                        if server_side in ("required", "optional"):
+                            filtered_hits.append(hit)
+                    elif side_filter == "client":
+                        # For client: only show modpacks where client_side is NOT "unsupported"
+                        client_side = hit.get("client_side", "unknown")
+                        if client_side in ("required", "optional"):
+                            filtered_hits.append(hit)
+
+                # Apply pagination AFTER filtering
+                hits = filtered_hits[offset:offset + limit]
+
+                # Estimate total filtered results based on ratio
+                if request_limit > 0:
+                    filter_ratio = len(filtered_hits) / request_limit
+                    total = max(int(total * filter_ratio), len(filtered_hits))
+
+            return hits, total
 
         except Exception as e:
             print(f"Error al buscar modpacks en Modrinth: {e}")
