@@ -1,9 +1,10 @@
 import os
 import json
+import sys
 import zipfile
 import shutil
 import requests
-from typing import Optional, Callable, Dict, List, Tuple
+from typing import Optional, Callable, Dict, List, Tuple, Set
 from pathlib import Path
 
 from ...core.api import ModrinthAPI, CurseForgeAPI
@@ -19,10 +20,125 @@ class ModpackManager:
         self.curseforge_api = None  # Initialized if API key is available
         self.loader_manager = LoaderManager()
         self.java_manager = JavaManager()
+        self._known_issues_cache = None
 
     def set_curseforge_api_key(self, api_key: str):
         """Configures the CurseForge API key"""
         self.curseforge_api = CurseForgeAPI(api_key)
+
+    def _load_known_issues(self) -> Dict:
+        """
+        Load the global known_issues.json database.
+        This contains known client-only mods and crash patterns.
+
+        Returns:
+            Dict with known issues data, or empty dict if not found
+        """
+        if self._known_issues_cache is not None:
+            return self._known_issues_cache
+
+        try:
+            # Try PyInstaller bundled location first
+            if hasattr(sys, '_MEIPASS'):
+                path = os.path.join(sys._MEIPASS, 'data', 'known_issues.json')
+            else:
+                # Development path - try multiple locations
+                possible_paths = [
+                    os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'known_issues.json'),
+                    os.path.join(os.path.dirname(__file__), '..', '..', '..', 'src', 'data', 'known_issues.json'),
+                ]
+                path = None
+                for p in possible_paths:
+                    if os.path.exists(p):
+                        path = p
+                        break
+
+            if path and os.path.exists(path):
+                with open(path, 'r', encoding='utf-8') as f:
+                    self._known_issues_cache = json.load(f)
+                    return self._known_issues_cache
+        except Exception:
+            pass
+
+        self._known_issues_cache = {"loaders": {}, "universal_patterns": []}
+        return self._known_issues_cache
+
+    def _get_known_client_mods(self, loader: str = None) -> Set[str]:
+        """
+        Get the set of known client-only mod patterns from known_issues.json.
+
+        Args:
+            loader: Optional loader type ('fabric', 'forge', 'neoforge', 'quilt')
+                   If None, returns mods from all loaders.
+
+        Returns:
+            Set of mod pattern strings (lowercase)
+        """
+        known_issues = self._load_known_issues()
+        patterns = set()
+
+        loaders_data = known_issues.get("loaders", {})
+
+        if loader:
+            # Get patterns for specific loader
+            loader_data = loaders_data.get(loader.lower(), {})
+            for mod in loader_data.get("client_only_mods", []):
+                for pattern in mod.get("patterns", []):
+                    patterns.add(pattern.lower())
+        else:
+            # Get patterns from all loaders
+            for loader_name, loader_data in loaders_data.items():
+                for mod in loader_data.get("client_only_mods", []):
+                    for pattern in mod.get("patterns", []):
+                        patterns.add(pattern.lower())
+
+        return patterns
+
+    # ==================== MOD METADATA ====================
+
+    def _save_mod_metadata(self, server_folder: str, metadata: Dict) -> bool:
+        """
+        Save mod environment metadata to a JSON file in the server folder.
+        This data comes from the mrpack manifest 'env' field.
+
+        Args:
+            server_folder: Path to the server folder
+            metadata: Dict mapping filename -> {client: str, server: str}
+
+        Returns:
+            True if saved successfully
+        """
+        try:
+            metadata_file = Path(server_folder) / "pycraft_mod_metadata.json"
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump({
+                    "version": 1,
+                    "description": "Mod environment metadata from Modrinth mrpack. DO NOT EDIT.",
+                    "mods": metadata
+                }, f, indent=2)
+            return True
+        except Exception:
+            return False
+
+    def _load_mod_metadata(self, server_folder: str) -> Dict:
+        """
+        Load mod environment metadata from the server folder.
+
+        Args:
+            server_folder: Path to the server folder
+
+        Returns:
+            Dict mapping filename -> {client: str, server: str}, empty if not found
+        """
+        try:
+            metadata_file = Path(server_folder) / "pycraft_mod_metadata.json"
+            if metadata_file.exists():
+                with open(metadata_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    return data.get("mods", {})
+        except Exception:
+            pass
+        return {}
 
     # ==================== MODRINTH ====================
 
@@ -69,7 +185,7 @@ class ModpackManager:
                 return False
 
             if log_callback:
-                log_callback(f"✓ Modpack descargado: {os.path.basename(modpack_file)}\n\n")
+                log_callback(f"[OK] Modpack descargado: {os.path.basename(modpack_file)}\n\n")
 
             # Extract modpack
             if log_callback:
@@ -82,7 +198,7 @@ class ModpackManager:
                 zip_ref.extractall(extract_dir)
 
             if log_callback:
-                log_callback("✓ Archivos extraídos correctamente\n\n")
+                log_callback("[OK] Archivos extraídos correctamente\n\n")
 
             # Read manifest (modrinth.index.json)
             manifest_path = extract_dir / "modrinth.index.json"
@@ -101,9 +217,9 @@ class ModpackManager:
 
             if log_callback:
                 log_callback("Paso 3/6: Información del modpack detectada\n")
-                log_callback(f"  • Minecraft: {minecraft_version}\n")
-                log_callback(f"  • Loader: {loader_type}\n")
-                log_callback(f"  • Versión del loader: {loader_version or 'última'}\n\n")
+                log_callback(f"  -Minecraft: {minecraft_version}\n")
+                log_callback(f"  -Loader: {loader_type}\n")
+                log_callback(f"  -Versión del loader: {loader_version or 'última'}\n\n")
 
             # Verify/install Java
             if log_callback:
@@ -116,7 +232,7 @@ class ModpackManager:
                     log_callback("✗ Error: No se pudo instalar Java\n")
                 return False
 
-            # Download mods
+            # Download mods and extract environment metadata
             if log_callback:
                 log_callback("\nPaso 5/6: Descargando mods del modpack...\n")
 
@@ -129,10 +245,55 @@ class ModpackManager:
             if log_callback:
                 log_callback(f"Se descargarán {total_files} mods...\n")
 
-            for i, file_info in enumerate(files, 1):
-                # Modrinth files have "downloads" and "path"
+            # ==================== FETCH MOD SERVER-SIDE INFO FROM API ====================
+            # Extract project IDs from download URLs and query Modrinth API
+            # to get accurate server_side information for each mod
+            if log_callback:
+                log_callback("Verificando compatibilidad de mods con servidor...\n")
+
+            project_ids = []
+            url_to_project_id = {}
+
+            for file_info in files:
                 downloads = file_info.get("downloads", [])
                 file_path = file_info.get("path", "")
+                if downloads and file_path.startswith("mods/"):
+                    download_url = downloads[0]
+                    project_id = self.modrinth_api.extract_project_id_from_url(download_url)
+                    if project_id:
+                        project_ids.append(project_id)
+                        url_to_project_id[download_url] = project_id
+
+            # Query API for all projects at once (batch)
+            project_server_side = {}  # project_id -> server_side value
+            if project_ids:
+                # Remove duplicates
+                unique_project_ids = list(set(project_ids))
+                if log_callback:
+                    log_callback(f"  Consultando API para {len(unique_project_ids)} mods...\n")
+
+                projects_info = self.modrinth_api.get_projects_info(unique_project_ids)
+                if projects_info:
+                    for project in projects_info:
+                        pid = project.get("id")
+                        server_side = project.get("server_side", "unknown")
+                        if pid:
+                            project_server_side[pid] = server_side
+
+                if log_callback:
+                    log_callback(f"  [OK] Información de {len(project_server_side)} mods obtenida\n")
+
+            # Collect environment metadata from mrpack manifest
+            mod_metadata = {}
+
+            # Track skipped client-only mods
+            skipped_client_mods = []
+
+            for i, file_info in enumerate(files, 1):
+                # Modrinth files have "downloads", "path", and optionally "env"
+                downloads = file_info.get("downloads", [])
+                file_path = file_info.get("path", "")
+                env_info = file_info.get("env", {})
 
                 if downloads and file_path:
                     download_url = downloads[0]
@@ -140,6 +301,40 @@ class ModpackManager:
 
                     # Only download mods (not configs or resources)
                     if file_path.startswith("mods/"):
+                        # Extract environment metadata (client/server side info)
+                        # Values can be: "required", "optional", "unsupported"
+                        # If env is not present, assume required on both sides
+                        client_side = env_info.get("client", "required")
+                        server_side = env_info.get("server", "required")
+                        mod_metadata[filename] = {
+                            "client": client_side,
+                            "server": server_side
+                        }
+
+                        # SKIP client-only mods (server: unsupported)
+                        # Check both manifest env AND API response
+                        # Priority: 1) manifest env, 2) API server_side
+                        is_client_only = False
+                        skip_reason = ""
+
+                        if server_side == "unsupported":
+                            is_client_only = True
+                            skip_reason = "manifest: server=unsupported"
+                        else:
+                            # Check API response if manifest doesn't have env info
+                            project_id = url_to_project_id.get(download_url)
+                            if project_id and project_id in project_server_side:
+                                api_server_side = project_server_side[project_id]
+                                if api_server_side == "unsupported":
+                                    is_client_only = True
+                                    skip_reason = "API: server_side=unsupported"
+
+                        if is_client_only:
+                            skipped_client_mods.append(filename)
+                            if log_callback:
+                                log_callback(f"  [{i}/{total_files}] {filename}... [SKIP: {skip_reason}]\n")
+                            continue
+
                         try:
                             dest_file = mods_folder / filename
 
@@ -157,14 +352,28 @@ class ModpackManager:
                                         f.write(chunk)
 
                             if log_callback:
-                                log_callback(" ✓\n")
+                                log_callback(" [OK]\n")
 
                         except Exception as e:
                             if log_callback:
                                 log_callback(f" ✗ Error: {str(e)}\n")
 
+            # Save mod metadata for later use in client-only detection
+            if mod_metadata:
+                self._save_mod_metadata(server_folder, mod_metadata)
+                if log_callback:
+                    log_callback(f"[OK] Metadata de {len(mod_metadata)} mods guardada\n")
+
+            # Report skipped client-only mods
+            if skipped_client_mods and log_callback:
+                log_callback(f"\n⚠ Se omitieron {len(skipped_client_mods)} mods solo para cliente:\n")
+                for mod in skipped_client_mods[:10]:  # Show first 10
+                    log_callback(f"  - {mod}\n")
+                if len(skipped_client_mods) > 10:
+                    log_callback(f"  ... y {len(skipped_client_mods) - 10} más\n")
+
             if log_callback:
-                log_callback("\n✓ Mods descargados\n\n")
+                log_callback("\n[OK] Mods descargados\n\n")
 
             # Copy overrides
             overrides_dir = extract_dir / "overrides"
@@ -175,7 +384,7 @@ class ModpackManager:
                 self._copy_overrides(overrides_dir, Path(server_folder), log_callback)
 
                 if log_callback:
-                    log_callback("✓ Configuraciones copiadas\n\n")
+                    log_callback("[OK] Configuraciones copiadas\n\n")
 
             # Install loader
             if log_callback:
@@ -208,7 +417,7 @@ class ModpackManager:
                     dest_manifest = Path(server_folder) / "modrinth.index.json"
                     shutil.copy2(manifest_path, dest_manifest)
                     if log_callback:
-                        log_callback("\n✓ Manifest guardado para referencia futura\n")
+                        log_callback("\n[OK] Manifest guardado para referencia futura\n")
                 except Exception as e:
                     if log_callback:
                         log_callback(f"⚠ Advertencia: No se pudo guardar el manifest: {e}\n")
@@ -226,7 +435,7 @@ class ModpackManager:
 
             if success and log_callback:
                 log_callback("\n╔════════════════════════════════════════════════╗\n")
-                log_callback("║   ✓ MODPACK INSTALADO EXITOSAMENTE            ║\n")
+                log_callback("║   [OK] MODPACK INSTALADO EXITOSAMENTE            ║\n")
                 log_callback("╚════════════════════════════════════════════════╝\n\n")
 
             return success
@@ -286,7 +495,7 @@ class ModpackManager:
                 return False
 
             if log_callback:
-                log_callback(f"✓ Modpack descargado: {os.path.basename(modpack_file)}\n\n")
+                log_callback(f"[OK] Modpack descargado: {os.path.basename(modpack_file)}\n\n")
 
             # Extract modpack
             if log_callback:
@@ -299,7 +508,7 @@ class ModpackManager:
                 zip_ref.extractall(extract_dir)
 
             if log_callback:
-                log_callback("✓ Archivos extraídos correctamente\n\n")
+                log_callback("[OK] Archivos extraídos correctamente\n\n")
 
             # Read manifest (manifest.json)
             manifest_path = extract_dir / "manifest.json"
@@ -318,9 +527,9 @@ class ModpackManager:
 
             if log_callback:
                 log_callback("Paso 3/6: Información del modpack detectada\n")
-                log_callback(f"  • Minecraft: {minecraft_version}\n")
-                log_callback(f"  • Loader: {loader_type}\n")
-                log_callback(f"  • Versión del loader: {loader_version or 'última'}\n\n")
+                log_callback(f"  -Minecraft: {minecraft_version}\n")
+                log_callback(f"  -Loader: {loader_type}\n")
+                log_callback(f"  -Versión del loader: {loader_version or 'última'}\n\n")
 
             # Verify/install Java
             if log_callback:
@@ -376,7 +585,7 @@ class ModpackManager:
                                             f.write(chunk)
 
                                 if log_callback:
-                                    log_callback(" ✓\n")
+                                    log_callback(" [OK]\n")
                             else:
                                 if log_callback:
                                     log_callback(" ⚠ Sin URL de descarga\n")
@@ -386,7 +595,7 @@ class ModpackManager:
                             log_callback(f" ✗ Error: {str(e)}\n")
 
             if log_callback:
-                log_callback("\n✓ Mods descargados\n\n")
+                log_callback("\n[OK] Mods descargados\n\n")
 
             # Copy overrides
             overrides_dir = extract_dir / manifest.get("overrides", "overrides")
@@ -397,7 +606,7 @@ class ModpackManager:
                 self._copy_overrides(overrides_dir, Path(server_folder), log_callback)
 
                 if log_callback:
-                    log_callback("✓ Configuraciones copiadas\n\n")
+                    log_callback("[OK] Configuraciones copiadas\n\n")
 
             # Install loader
             if log_callback:
@@ -430,7 +639,7 @@ class ModpackManager:
                     dest_manifest = Path(server_folder) / "manifest.json"
                     shutil.copy2(manifest_path, dest_manifest)
                     if log_callback:
-                        log_callback("\n✓ Manifest guardado para referencia futura\n")
+                        log_callback("\n[OK] Manifest guardado para referencia futura\n")
                 except Exception as e:
                     if log_callback:
                         log_callback(f"⚠ Advertencia: No se pudo guardar el manifest: {e}\n")
@@ -448,7 +657,7 @@ class ModpackManager:
 
             if success and log_callback:
                 log_callback("\n╔════════════════════════════════════════════════╗\n")
-                log_callback("║   ✓ MODPACK INSTALADO EXITOSAMENTE            ║\n")
+                log_callback("║   [OK] MODPACK INSTALADO EXITOSAMENTE            ║\n")
                 log_callback("╚════════════════════════════════════════════════╝\n\n")
 
             return success
@@ -481,7 +690,7 @@ class ModpackManager:
                 content = eula_path.read_text(encoding='utf-8')
                 if 'eula=true' in content.lower():
                     if log_callback:
-                        log_callback("✓ EULA ya estaba aceptado\n")
+                        log_callback("[OK] EULA ya estaba aceptado\n")
                     return True
                 # EULA exists but not accepted - overwrite it
                 if log_callback:
@@ -496,7 +705,7 @@ class ModpackManager:
             eula_path.write_text(eula_content, encoding='utf-8')
 
             if log_callback:
-                log_callback("✓ EULA aceptado automáticamente\n")
+                log_callback("[OK] EULA aceptado automáticamente\n")
 
             return True
 
@@ -591,7 +800,7 @@ max-world-size=29999984
             properties_path.write_text(default_properties, encoding='utf-8')
 
             if log_callback:
-                log_callback("✓ server.properties creado\n")
+                log_callback("[OK] server.properties creado\n")
 
             return True
 
@@ -970,188 +1179,197 @@ max-world-size=29999984
         except Exception:
             return False
 
-    def detect_client_only_mods(self, mods_folder: str) -> List[Dict]:
+    def detect_client_only_mods(self, mods_folder: str, server_folder: str = None) -> List[Dict]:
         """
-        Detect client-only mods in a mods folder by analyzing JAR metadata.
-        Uses a multi-step approach:
-        1. Scan all mods to collect dependencies
-        2. Identify mods that are required by other mods (libraries)
-        3. Only flag mods as client-only if they're NOT required by others
+        Detect client-only mods using a multi-source approach (most reliable first):
+
+        1. PRIORITY 1: Check saved Modrinth metadata (pycraft_mod_metadata.json)
+           - This is the most reliable source as it comes directly from the modpack author
+        2. PRIORITY 2: Analyze JAR metadata (fabric.mod.json environment, mods.toml)
+           - Explicit declarations are trustworthy
+        3. PRIORITY 3: Known issues database (known_issues.json)
+           - Mods known to crash servers, loaded from external file
 
         Args:
             mods_folder: Path to the mods folder
+            server_folder: Optional path to server folder (parent of mods_folder)
+                          If not provided, will try to derive from mods_folder
 
         Returns:
-            List of dicts with mod info: {name, file, reason}
+            List of dicts with mod info: {name, file, reason, confidence}
         """
         client_mods = []
 
         if not os.path.exists(mods_folder):
             return client_mods
 
-        # Step 1: Scan all mods to collect dependencies
-        all_mods = {}  # mod_id -> filename
-        required_by_others = set()  # mod_ids that other mods depend on
+        # Derive server_folder if not provided
+        if not server_folder:
+            server_folder = str(Path(mods_folder).parent)
 
+        # Load saved metadata from Modrinth (most reliable source)
+        saved_metadata = self._load_mod_metadata(server_folder)
+
+        # Load known client-only mods from known_issues.json
+        # This is maintained externally and updated with program releases
+        critical_client_mods = self._get_known_client_mods()
+
+        # Step 1: Scan all mods to collect dependencies
+        required_by_others = set()
         for filename in os.listdir(mods_folder):
             if not filename.endswith('.jar'):
                 continue
             jar_path = os.path.join(mods_folder, filename)
-            mod_id, dependencies = self._extract_mod_info(jar_path)
-            if mod_id:
-                all_mods[mod_id] = filename
+            _, dependencies = self._extract_mod_info(jar_path)
             for dep in dependencies:
                 required_by_others.add(dep.lower())
 
-        # Known client-only mod IDs (common ones that cause server crashes)
-        # NOTE: DO NOT add library mods here (puzzleslib, cloth_config, iceberg, etc.)
-        # Those work on both client and server!
-        # CRITICAL: Keep this list synchronized with server_manager.py CLIENT_ONLY_MOD_PATTERNS
-        known_client_mods = {
-            # ===== CRITICAL: Mods that ALWAYS crash dedicated servers =====
-            'ryoamiclights', 'ryoamiclight',  # Dynamic lighting - CRASHES SERVERS
-            'barista', 'barsita',  # Client keybindings - CRASHES SERVERS
-            'obsidianui', 'obsidian_ui',  # Client UI library - CRASHES SERVERS
-            'spruceui', 'spruce_ui',  # Client UI library - CRASHES SERVERS
-            'bocchium',  # Client optimization - CRASHES SERVERS
-
-            # ===== Visual/Rendering mods =====
-            'citresewn', 'cit_resewn', 'citresewn-defaults', 'citreforged',
-            'capes', 'cosmetica', 'ears', 'skinlayers3d', 'skin_layers', '3dskinlayers',
-            'continuity', 'enhancedblockentities', 'enhanced_block_entities',
-            'entity_texture_features', 'entitytexturefeatures', 'etf',
-            'animatica', 'entityculling', 'cullleaves', 'cull_leaves', 'cull_less_leaves',
-            'entity_model_features', 'entitymodelfeatures', 'emf',
-            'custom_entity_models', 'cem', 'geckolib_render',
-            'betteranimationsmod', 'betteranimationscollection', 'playeranimator', 'player_animator',
-
-            # ===== Optimization mods (client-side) =====
-            'badoptimizations', 'bad_optimizations', 'nvidium',
-            'lightspeed', 'immediatelyfast',
-            'notenoughanimations', 'not_enough_animations',
-            'smoothboot', 'smooth_boot', 'lazydfu', 'lazy_dfu',
-            'dashloader', 'exordium', 'ksyxis',
-            'dynamicfps', 'dynamic_fps', 'fpsdisplay',
-            'moreculling', 'more_culling', 'viewdistancefix',
-
-            # ===== Shaders/Graphics =====
-            'iris', 'oculus', 'optifine', 'optifabric',
-            'sodium', 'embeddium', 'rubidium', 'magnesium',
-            'indium', 'reeses_sodium_options', 'sodium_extra', 'reeses_sodium',
-            'sodiumextras', 'sodiumextra', 'bettersodiumbutton',
-            'distant_horizons', 'distanthorizons', 'starlight',
-
-            # ===== UI/HUD mods (pure client) =====
-            'modmenu', 'mod_menu', 'catalogue',
-            'configured', 'controlling', 'searchables',
-            'forgeconfigscreens', 'forge_config_screens', 'forgeconfigs',
-            'welcomescreen', 'welcome_screen',
-            'betterf3', 'better_f3',
-            'shulkerboxtooltip', 'advancementinfo', 'betterstats',
-            'itemphysic', 'physics_mod', 'physicsmod',
-            'blur', 'cleanview', 'fancymenu', 'loadmyresources', 'loadingbackgrounds',
-
-            # ===== Recipe viewers (client only) =====
-            'emi', 'emi_loot', 'emiloot', 'rei', 'roughlyenoughitems',
-            'emi_trades', 'emienchants', 'emi_addon', 'jeiintegration',
-            'jerintegration', 'jeresources',  # JER - client only
-
-            # ===== Sound mods =====
-            'soundphysics', 'sound_physics', 'sound_physics_remastered', 'dynamic_sound_filters',
-            'presencefootsteps', 'presence_footsteps',
-            'ambientsounds', 'ambient_sounds', 'extrasounds', 'auditory',
-            'soundreloader', 'drippysoundengine', 'extreme_sound_muffler',
-            'audio_player', 'music_triggers',
-
-            # ===== Camera mods =====
-            'cameraoverhaul', 'camera_overhaul', 'camerautils',
-            'shoulder_surfing', 'firstperson', 'firstpersonmodel',
-            'bettertps', 'headtilt', 'betterthirdperson', 'better_third_person',
-            'freelook', 'freecamera', 'perspectivemod',
-
-            # ===== Dynamic lights =====
-            'lambdynamiclights', 'dynamiclights', 'dynamic_lights', 'dynamiclightsreforged',
-            'sodiumdynamiclights',
-
-            # ===== GUI mods (pure client rendering) =====
-            'portalsgui', 'portals_gui', 'prism',
-
-            # ===== Visual tweaks =====
-            'feytweaks', 'fey_tweaks', 'legendarytooltips', 'legendary_tooltips',
-            'equipmentcompare', 'advancedtooltips', 'tooltipfix',
-            'bettermodbutton', 'mainmenucredits', 'splashscreen',
-            'fallingleaves', 'falling_leaves', 'visuality', 'visualworkbench',
-            'effectdescriptions', 'enchantmentdescriptions',
-            'itemdescriptions', 'particle_core', 'particlerain', 'particle_rain',
-            'showmeyourskin', 'customskinloader', 'armorstandhud',
-            'bedrockwaters', 'clear_skies', 'betterskybox', 'noisium',
-            'wakes', 'particle_blocker',
-
-            # ===== Inventory/Mouse tweaks =====
-            'inventoryprofiles', 'inventoryprofilesnext', 'invprofiles',
-            'mousewheelie', 'mouse_wheelie', 'mouse_tweaks', 'itemswapper',
-            'itemscroller', 'item_scroller', 'tweakeroo', 'litematica', 'minihud',
-            'malilib', 'inventoryhud', 'inventory_hud', 'invhud',
-            'reacharound', 'advancedchat', 'isxander',
-            'inventory_tweaks', 'trashslot',
-
-            # ===== Zoom mods =====
-            'justzoom', 'zoomify', 'okzoomer', 'logicalzoom', 'logical_zoom', 'wizmiczoom',
-
-            # ===== Screenshot mods =====
-            'screenshot_to_clipboard', 'screenshottoclipboard', 'fabrishot',
-            'screenshot_viewer', 'screenshots_viewer',
-
-            # ===== Chat mods =====
-            'chatheads', 'chat_heads', 'chatpatches', 'chatting',
-            'chatplus', 'chatshortcuts',
-
-            # ===== Memory/Performance (client) =====
-            'memoryleakfix', 'memory_leak_fix', 'memoryusagescreen',
-            'fusion', 'chime',  # CIT mods
-            'findme', 'highlight', 'radon',
-
-            # ===== Overlay/Map mods =====
-            'lightoverlay', 'light_overlay', 'spawnmarkers',
-            'xaeros_minimap', 'xaeros_worldmap', 'xaerominimap', 'xaeroworldmap', 'xaeros',
-            'journeymap', 'voxelmap', 'mapfrontiers',
-            'worldmap', 'minimaps', 'worldedit_cui',
-
-            # ===== Misc client mods =====
-            'notenoughcrashes', 'not_enough_crashes', 'crashassistant', 'yosbr',
-            'betterbiomeblend', 'better_biome_blend',
-            'textureloader', 'lambdabettergrass', 'colinoclient',
-            'modelfix', 'model_fix', 'no_fog', 'fogcontrol',
-            'replaymod', 'replay_mod', 'bobby',
-            'resolutioncontrol', 'resizablechat',
-            'boostedbrightness', 'fullbright', 'gamma_utils', 'nightvisionflash',
-            'borderlessmining', 'windowedmode', 'custom_window_title', 'borderless_window',
-            'fullscreen_windowed',
-            'better_loading_screen', 'loadingscreen', 'customloadingscreen',
-            'darkmode', 'darkmodeeverywhere', 'darkgui',
-            'seamless_loading_screen',
-            'eating_animation', 'eatinganimation', 'bettercombatrenders',
-            'cubesideanywhere',
-
-            # ===== Problematic mods specific to 1.19.2 =====
-            'euphoriapatcher', 'euphoria_patcher',
-            'neko', 'nekoenchanted', 'neko_enchanted',
-            'yungsmenutweaks', 'yungs_menu',
-        }
-
-        # Step 2: Analyze each mod for client-only indicators
+        # Step 2: Analyze each mod using multi-source detection
         for filename in os.listdir(mods_folder):
             if not filename.endswith('.jar'):
                 continue
 
             jar_path = os.path.join(mods_folder, filename)
-            mod_info = self._analyze_mod_jar(jar_path, known_client_mods, required_by_others)
+            mod_info = None
+
+            # PRIORITY 1: Check saved Modrinth metadata (MOST RELIABLE)
+            if filename in saved_metadata:
+                meta = saved_metadata[filename]
+                server_support = meta.get("server", "required")
+                # "unsupported" means the mod doesn't work on server
+                if server_support == "unsupported":
+                    mod_name = filename.replace('.jar', '')
+                    mod_info = {
+                        'name': mod_name,
+                        'file': filename,
+                        'reason': 'Modrinth metadata: server=unsupported',
+                        'confidence': 'HIGH'
+                    }
+
+            # PRIORITY 2: Check JAR metadata (fabric.mod.json, mods.toml)
+            if not mod_info:
+                mod_info = self._analyze_mod_jar_environment(jar_path, required_by_others)
+
+            # PRIORITY 3: Check critical mods list (ONLY for crash-prone mods)
+            if not mod_info:
+                mod_id, _ = self._extract_mod_info(jar_path)
+                filename_lower = filename.lower()
+
+                for critical_mod in critical_client_mods:
+                    if critical_mod in filename_lower or (mod_id and critical_mod == mod_id.lower()):
+                        # Verify it's not required by other mods
+                        if mod_id and mod_id.lower() in required_by_others:
+                            continue
+                        mod_name = filename.replace('.jar', '')
+                        mod_info = {
+                            'name': mod_name,
+                            'file': filename,
+                            'reason': f'Critical client mod: {critical_mod}',
+                            'confidence': 'MEDIUM'
+                        }
+                        break
 
             if mod_info:
                 mod_info['file'] = filename
                 client_mods.append(mod_info)
 
         return client_mods
+
+    def _analyze_mod_jar_environment(self, jar_path: str, required_by_others: set = None) -> Optional[Dict]:
+        """
+        Analyze JAR metadata for EXPLICIT client-only declarations.
+        Only returns a result if the mod explicitly declares itself as client-only.
+
+        Checks:
+        - fabric.mod.json: "environment": "client"
+        - mods.toml: side="CLIENT" or displayTest="IGNORE_ALL_VERSION"
+
+        Args:
+            jar_path: Path to the JAR file
+            required_by_others: Set of mod IDs that other mods depend on
+
+        Returns:
+            Dict with {name, reason, confidence} if client-only, None otherwise
+        """
+        if required_by_others is None:
+            required_by_others = set()
+
+        try:
+            with zipfile.ZipFile(jar_path, 'r') as jar:
+                namelist = jar.namelist()
+                mod_name = os.path.basename(jar_path).replace('.jar', '')
+                mod_id = ''
+
+                # Check Fabric mod (fabric.mod.json)
+                if 'fabric.mod.json' in namelist:
+                    try:
+                        with jar.open('fabric.mod.json') as f:
+                            data = json.load(f)
+                            mod_id = data.get('id', '')
+                            mod_name = data.get('name', mod_id) or mod_name
+                            environment = data.get('environment', '*')
+
+                            # Skip if this mod is required by other mods
+                            if mod_id and mod_id.lower() in required_by_others:
+                                return None
+
+                            # ONLY flag if explicitly client-only
+                            if environment == 'client':
+                                return {
+                                    'name': mod_name,
+                                    'reason': 'fabric.mod.json: environment=client',
+                                    'confidence': 'HIGH'
+                                }
+                    except Exception:
+                        pass
+
+                # Check Forge mod (mods.toml)
+                if 'META-INF/mods.toml' in namelist:
+                    try:
+                        with jar.open('META-INF/mods.toml') as f:
+                            import re
+                            content = f.read().decode('utf-8')
+
+                            # Get mod ID and name
+                            mod_id_match = re.search(r'modId\s*=\s*"([^"]+)"', content)
+                            if mod_id_match:
+                                mod_id = mod_id_match.group(1)
+
+                            display_name_match = re.search(r'displayName\s*=\s*"([^"]+)"', content)
+                            if display_name_match:
+                                mod_name = display_name_match.group(1)
+
+                            # Skip if required by others
+                            if mod_id and mod_id.lower() in required_by_others:
+                                return None
+
+                            # Check for explicit side="CLIENT"
+                            content_upper = content.upper()
+                            if 'SIDE="CLIENT"' in content_upper or 'SIDE = "CLIENT"' in content_upper:
+                                return {
+                                    'name': mod_name,
+                                    'reason': 'mods.toml: side=CLIENT',
+                                    'confidence': 'HIGH'
+                                }
+
+                            # Check for displayTest indicating client-only
+                            # IGNORE_ALL_VERSION means it doesn't need to be on server
+                            display_test_match = re.search(r'displayTest\s*=\s*"([^"]+)"', content)
+                            if display_test_match:
+                                test_value = display_test_match.group(1).upper()
+                                if test_value == 'IGNORE_ALL_VERSION':
+                                    return {
+                                        'name': mod_name,
+                                        'reason': 'mods.toml: displayTest=IGNORE_ALL_VERSION',
+                                        'confidence': 'HIGH'
+                                    }
+                    except Exception:
+                        pass
+
+        except Exception:
+            pass
+
+        return None
 
     def _extract_mod_info(self, jar_path: str) -> Tuple[str, List[str]]:
         """
