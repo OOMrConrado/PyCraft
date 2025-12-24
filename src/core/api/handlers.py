@@ -221,6 +221,58 @@ class ModrinthAPI:
             print(f"Error al obtener información del proyecto: {e}")
             return None
 
+    def get_projects_info(self, project_ids: List[str]) -> Optional[List[Dict]]:
+        """
+        Obtiene información de múltiples proyectos en una sola llamada (batch)
+
+        Args:
+            project_ids: Lista de IDs de proyectos
+
+        Returns:
+            Lista de información de proyectos
+        """
+        if not project_ids:
+            return []
+
+        try:
+            url = f"{self.BASE_URL}/projects"
+            # Modrinth expects the ids as a JSON array string
+            params = {
+                "ids": json.dumps(project_ids)
+            }
+
+            response = requests.get(url, headers=self.headers, params=params, timeout=15)
+            response.raise_for_status()
+
+            return response.json()
+
+        except Exception as e:
+            print(f"Error al obtener información de proyectos: {e}")
+            return None
+
+    def extract_project_id_from_url(self, url: str) -> Optional[str]:
+        """
+        Extrae el project_id de una URL de descarga de Modrinth
+
+        URLs de Modrinth tienen el formato:
+        https://cdn.modrinth.com/data/{project_id}/versions/{version_id}/filename.jar
+
+        Args:
+            url: URL de descarga
+
+        Returns:
+            Project ID o None si no es una URL de Modrinth
+        """
+        try:
+            if 'cdn.modrinth.com/data/' in url:
+                # Extract project_id from URL
+                parts = url.split('cdn.modrinth.com/data/')[1].split('/')
+                if len(parts) >= 1:
+                    return parts[0]
+        except:
+            pass
+        return None
+
     def download_version_file(self, version_id: str, dest_folder: str) -> Optional[str]:
         """
         Descarga el archivo de una versión de modpack
