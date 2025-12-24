@@ -243,57 +243,11 @@ class ModpackManager:
             total_files = len(files)
 
             if log_callback:
-                log_callback(f"Se descargarán {total_files} mods...\n")
-
-            # ==================== FETCH MOD SERVER-SIDE INFO FROM API ====================
-            # Extract project IDs from download URLs and query Modrinth API
-            # to get accurate server_side information for each mod
-            if log_callback:
-                log_callback("Verificando compatibilidad de mods con servidor...\n")
-
-            project_ids = []
-            url_to_project_id = {}
-
-            for file_info in files:
-                downloads = file_info.get("downloads", [])
-                file_path = file_info.get("path", "")
-                if downloads and file_path.startswith("mods/"):
-                    download_url = downloads[0]
-                    project_id = self.modrinth_api.extract_project_id_from_url(download_url)
-                    if project_id:
-                        project_ids.append(project_id)
-                        url_to_project_id[download_url] = project_id
-
-            # Query API for all projects at once (batch)
-            project_server_side = {}  # project_id -> server_side value
-            if project_ids:
-                # Remove duplicates
-                unique_project_ids = list(set(project_ids))
-                if log_callback:
-                    log_callback(f"  Consultando API para {len(unique_project_ids)} mods...\n")
-
-                projects_info = self.modrinth_api.get_projects_info(unique_project_ids)
-                if projects_info:
-                    for project in projects_info:
-                        pid = project.get("id")
-                        server_side = project.get("server_side", "unknown")
-                        if pid:
-                            project_server_side[pid] = server_side
-
-                if log_callback:
-                    log_callback(f"  [OK] Información de {len(project_server_side)} mods obtenida\n")
-
-            # Collect environment metadata from mrpack manifest
-            mod_metadata = {}
-
-            # Track skipped client-only mods
-            skipped_client_mods = []
+                log_callback(f"Descargando {total_files} mods...\n")
 
             for i, file_info in enumerate(files, 1):
-                # Modrinth files have "downloads", "path", and optionally "env"
                 downloads = file_info.get("downloads", [])
                 file_path = file_info.get("path", "")
-                env_info = file_info.get("env", {})
 
                 if downloads and file_path:
                     download_url = downloads[0]
@@ -301,40 +255,6 @@ class ModpackManager:
 
                     # Only download mods (not configs or resources)
                     if file_path.startswith("mods/"):
-                        # Extract environment metadata (client/server side info)
-                        # Values can be: "required", "optional", "unsupported"
-                        # If env is not present, assume required on both sides
-                        client_side = env_info.get("client", "required")
-                        server_side = env_info.get("server", "required")
-                        mod_metadata[filename] = {
-                            "client": client_side,
-                            "server": server_side
-                        }
-
-                        # SKIP client-only mods (server: unsupported)
-                        # Check both manifest env AND API response
-                        # Priority: 1) manifest env, 2) API server_side
-                        is_client_only = False
-                        skip_reason = ""
-
-                        if server_side == "unsupported":
-                            is_client_only = True
-                            skip_reason = "manifest: server=unsupported"
-                        else:
-                            # Check API response if manifest doesn't have env info
-                            project_id = url_to_project_id.get(download_url)
-                            if project_id and project_id in project_server_side:
-                                api_server_side = project_server_side[project_id]
-                                if api_server_side == "unsupported":
-                                    is_client_only = True
-                                    skip_reason = "API: server_side=unsupported"
-
-                        if is_client_only:
-                            skipped_client_mods.append(filename)
-                            if log_callback:
-                                log_callback(f"  [{i}/{total_files}] {filename}... [SKIP: {skip_reason}]\n")
-                            continue
-
                         try:
                             dest_file = mods_folder / filename
 
@@ -356,21 +276,7 @@ class ModpackManager:
 
                         except Exception as e:
                             if log_callback:
-                                log_callback(f" ✗ Error: {str(e)}\n")
-
-            # Save mod metadata for later use in client-only detection
-            if mod_metadata:
-                self._save_mod_metadata(server_folder, mod_metadata)
-                if log_callback:
-                    log_callback(f"[OK] Metadata de {len(mod_metadata)} mods guardada\n")
-
-            # Report skipped client-only mods
-            if skipped_client_mods and log_callback:
-                log_callback(f"\n⚠ Se omitieron {len(skipped_client_mods)} mods solo para cliente:\n")
-                for mod in skipped_client_mods[:10]:  # Show first 10
-                    log_callback(f"  - {mod}\n")
-                if len(skipped_client_mods) > 10:
-                    log_callback(f"  ... y {len(skipped_client_mods) - 10} más\n")
+                                log_callback(f" [ERROR: {str(e)}]\n")
 
             if log_callback:
                 log_callback("\n[OK] Mods descargados\n\n")

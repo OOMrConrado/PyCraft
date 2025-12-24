@@ -5,6 +5,7 @@ Inspired by Revision Tool design
 
 import sys
 import os
+import time
 import threading
 import webbrowser
 import subprocess
@@ -302,6 +303,9 @@ class PyCraftGUI(QMainWindow):
     client_mp_results_signal = Signal(object)  # client modpack search results
     client_mp_pagination_signal = Signal(int)  # client total results
     version_loaded_signal = Signal(object, object)  # versions list, callback function
+    server_crashed_signal = Signal(str)  # server path for crash modal
+    vanilla_server_stopped_signal = Signal(bool)  # success (True = normal stop, False = crash)
+    modpack_server_stopped_signal = Signal(bool)  # success (True = normal stop, False = crash)
     # Modal signals (thread-safe)
     vanilla_install_success_signal = Signal(str, str)  # version, folder
     server_modpack_install_success_signal = Signal(str, str, str)  # name, mc_version, loader
@@ -427,6 +431,9 @@ class PyCraftGUI(QMainWindow):
         self.client_mp_results_signal.connect(self._show_client_mp_results)
         self.client_mp_pagination_signal.connect(self._update_client_mp_pagination)
         self.version_loaded_signal.connect(self._on_versions_loaded)
+        self.server_crashed_signal.connect(self._show_server_crash_dialog)
+        self.vanilla_server_stopped_signal.connect(self._on_vanilla_server_stopped)
+        self.modpack_server_stopped_signal.connect(self._on_modpack_server_stopped)
         # Modal signals - use lambdas with QTimer to avoid blocking
         self.vanilla_install_success_signal.connect(
             lambda v, f: QTimer.singleShot(100, lambda: self._show_vanilla_install_success(v, f))
@@ -546,9 +553,13 @@ class PyCraftGUI(QMainWindow):
         self.page_stack.addWidget(self._build_modpack_install())    # 7
         self.page_stack.addWidget(self._build_modpack_run())        # 8
         self.page_stack.addWidget(self._build_client_install())     # 9
+        self.page_stack.addWidget(self._build_java_management())    # 10
+        self.page_stack.addWidget(self._build_modpack_management()) # 11
 
-        # Footer
-        content_layout.addWidget(self._build_footer())
+        # Footer (will be shown/hidden based on current page)
+        self.footer = self._build_footer()
+        content_layout.addWidget(self.footer)
+        self.footer.setVisible(True)  # Visible on home by default
 
         main_layout.addWidget(content_wrapper, 1)
 
@@ -582,21 +593,26 @@ class PyCraftGUI(QMainWindow):
 
         # Header
         header = QWidget()
-        header.setFixedHeight(90)
+        header.setFixedHeight(110)
         header.setStyleSheet("background: transparent;")
         header_layout = QHBoxLayout(header)
-        header_layout.setContentsMargins(20, 20, 20, 10)
+        header_layout.setContentsMargins(20, 20, 20, 15)
 
         # Logo circle
         logo_frame = QFrame()
-        logo_frame.setFixedSize(64, 64)
+        logo_frame.setFixedSize(78, 78)
         logo_frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {self.colors['bg_card']};
-                border-radius: 32px;
+                border-radius: 39px;
                 border: 2px solid {self.colors['accent']};
             }}
         """)
+
+        # Use layout for consistent centering across different DPI/screens
+        logo_inner_layout = QVBoxLayout(logo_frame)
+        logo_inner_layout.setContentsMargins(0, 0, 0, 0)
+        logo_inner_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         try:
             logo_path = os.path.join(
@@ -604,12 +620,13 @@ class PyCraftGUI(QMainWindow):
                 "PyCraft-Files", "logo.png"
             )
             if os.path.exists(logo_path):
-                logo_label = QLabel(logo_frame)
-                pix = QPixmap(logo_path).scaled(90, 90, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                logo_label = QLabel()
+                pix = QPixmap(logo_path).scaled(74, 74, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 logo_label.setPixmap(pix)
                 logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 logo_label.setStyleSheet("background: transparent; border: none;")
-                logo_label.setGeometry(3, 3, 58, 58)
+                logo_label.setFixedSize(74, 74)
+                logo_inner_layout.addWidget(logo_label)
         except Exception:
             pass
 
@@ -628,48 +645,52 @@ class PyCraftGUI(QMainWindow):
         header_layout.addStretch()
         layout.addWidget(header)
 
-        # Search
-        search_container = QWidget()
-        search_container.setStyleSheet("background: transparent;")
-        search_layout = QHBoxLayout(search_container)
-        search_layout.setContentsMargins(15, 5, 15, 15)
-
-        self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Find a setting")
-        self.search_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {self.colors['bg_input']};
-                color: {self.colors['text']};
-                border: 1px solid {self.colors['border']};
-                border-radius: 8px;
-                padding: 10px 14px;
-                font-size: 13px;
-            }}
-            QLineEdit:focus {{
-                border: 1px solid {self.colors['accent']};
-            }}
-            QLineEdit::placeholder {{
-                color: {self.colors['text_muted']};
-            }}
-        """)
-        search_layout.addWidget(self.search_input)
-        layout.addWidget(search_container)
+        # Horizontal separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.Shape.HLine)
+        separator.setFixedHeight(1)
+        separator.setStyleSheet(f"background-color: {self.colors['border']}; border: none;")
+        layout.addWidget(separator)
 
         # Navigation
         nav_widget = QWidget()
         nav_widget.setStyleSheet("background: transparent;")
         nav_layout = QVBoxLayout(nav_widget)
-        nav_layout.setContentsMargins(0, 5, 0, 5)
+        nav_layout.setContentsMargins(0, 15, 0, 5)
         nav_layout.setSpacing(2)
 
         nav_items = [
             ("home", "Home", "fa5s.home"),
             ("vanilla", "Vanilla Server", "fa5s.cube"),
             ("modded", "Modded Server", "fa5s.puzzle-piece"),
-            ("info", "Info & Help", "fa5s.info-circle"),
+            ("client_modpacks", "Client Modpacks", "fa5s.desktop"),
         ]
 
         for page_id, text, icon in nav_items:
+            btn = SidebarButton(text, icon)
+            btn.clicked.connect(lambda _, p=page_id: self._go_to(p))
+            self.sidebar_buttons[page_id] = btn
+            nav_layout.addWidget(btn)
+
+        # Management section label
+        mgmt_label = QLabel("  Management")
+        mgmt_label.setStyleSheet(f"""
+            color: {self.colors['text_muted']};
+            font-size: 11px;
+            font-weight: bold;
+            padding: 12px 15px 6px 15px;
+            text-transform: uppercase;
+            background: transparent;
+        """)
+        nav_layout.addWidget(mgmt_label)
+
+        # Management items
+        mgmt_items = [
+            ("java_management", "Java", "fa5s.coffee"),
+            ("modpack_management", "Modpacks", "fa5s.box-open"),
+        ]
+
+        for page_id, text, icon in mgmt_items:
             btn = SidebarButton(text, icon)
             btn.clicked.connect(lambda _, p=page_id: self._go_to(p))
             self.sidebar_buttons[page_id] = btn
@@ -714,9 +735,13 @@ class PyCraftGUI(QMainWindow):
         modrinth.clicked.connect(lambda: webbrowser.open("https://modrinth.com/modpacks"))
         layout.addWidget(modrinth)
 
-        help_link = FooterLink("Documentation", "Get Help", "fa5s.book")
-        help_link.clicked.connect(lambda: self._go_to("info"))
-        layout.addWidget(help_link)
+        curseforge = FooterLink("CurseForge", "Browse Mods", "fa5s.fire")
+        curseforge.clicked.connect(lambda: webbrowser.open("https://www.curseforge.com/minecraft"))
+        layout.addWidget(curseforge)
+
+        webpage = FooterLink("Web Page", "Visit Our Site", "fa5s.globe")
+        webpage.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft"))
+        layout.addWidget(webpage)
 
         return footer
 
@@ -857,20 +882,6 @@ class PyCraftGUI(QMainWindow):
 
         cards_layout.addWidget(row1)
 
-        # Second row: Install Client (below Install Server)
-        row2 = QWidget()
-        row2.setStyleSheet("background: transparent;")
-        row2_layout = QHBoxLayout(row2)
-        row2_layout.setContentsMargins(0, 0, 0, 0)
-        row2_layout.setSpacing(20)
-        row2_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-
-        client_card = OptionCard("Install Client", "Install modpack for your launcher", "fa5s.desktop")
-        client_card.clicked.connect(lambda: self._go_to("client_install"))
-        row2_layout.addWidget(client_card)
-
-        cards_layout.addWidget(row2)
-
         layout.addWidget(cards)
         layout.addStretch()
 
@@ -896,8 +907,8 @@ class PyCraftGUI(QMainWindow):
 
         sections = [
             ("Playing with Friends", "1. Install Hamachi or ZeroTier VPN\n2. Create a network and share with friends\n3. Friends connect using your VPN IP\n4. Disable firewall or allow Minecraft\n\nPyCraft sets online-mode=false automatically."),
-            ("Common Issues", "Server won't start:\n- Check Java installation in Settings\n- Verify enough RAM is available\n\nFriends can't connect:\n- Ensure same VPN network\n- Check firewall settings\n- Use correct IP address"),
-            ("System Requirements", "- Java 17+ (installable via Settings)\n- 4GB RAM minimum (8GB for modded)\n- 2GB disk space\n- Internet connection"),
+            ("Common Issues", "Server won't start:\n- Check Java in the Management section\n- Verify enough RAM is available\n\nFriends can't connect:\n- Ensure same VPN network\n- Check firewall settings\n- Use correct IP address"),
+            ("System Requirements", "- Java 17+ (installable via Java Management)\n- 4GB RAM minimum (8GB for modded)\n- 2GB disk space\n- Internet connection"),
         ]
 
         for sec_title, sec_content in sections:
@@ -935,8 +946,50 @@ class PyCraftGUI(QMainWindow):
         title.setStyleSheet(f"color: {self.colors['text']}; font-size: 26px; font-weight: bold;")
         layout.addWidget(title)
 
+        # About section
+        about_frame = self._section_frame("About PyCraft")
+        about_layout = about_frame.layout()
+
+        about_text = QLabel(
+            "PyCraft is a Minecraft server manager that makes it easy to run\n"
+            "vanilla and modded servers with your friends.\n\n"
+            "Use the sidebar to manage Java installations and client modpacks."
+        )
+        about_text.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px; background: transparent;")
+        about_text.setWordWrap(True)
+        about_layout.addWidget(about_text)
+
+        layout.addWidget(about_frame)
+
+        layout.addStretch()
+        scroll.setWidget(content)
+
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
+
+        return page
+
+    def _build_java_management(self) -> QWidget:
+        """Build Java management page"""
+        page = QWidget()
+        page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(self._scroll_style())
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(40, 30, 40, 30)
+        layout.setSpacing(20)
+
+        title = QLabel("Java Management")
+        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 26px; font-weight: bold;")
+        layout.addWidget(title)
+
         # Java section
-        java_frame = self._section_frame("Java Management")
+        java_frame = self._section_frame("Installed Java Versions")
         java_layout = java_frame.layout()
 
         self.java_info = QWidget()
@@ -950,8 +1003,39 @@ class PyCraftGUI(QMainWindow):
 
         QTimer.singleShot(100, self._check_java)
 
+        layout.addStretch()
+        scroll.setWidget(content)
+
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
+        page_layout.addWidget(scroll)
+
+        return page
+
+    def _build_modpack_management(self) -> QWidget:
+        """Build modpack management page"""
+        page = QWidget()
+        page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet(self._scroll_style())
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(40, 30, 40, 30)
+        layout.setSpacing(20)
+
+        title = QLabel("Client Modpacks")
+        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 26px; font-weight: bold;")
+        layout.addWidget(title)
+
+        subtitle = QLabel("Manage modpacks installed for your Minecraft launcher")
+        subtitle.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px;")
+        layout.addWidget(subtitle)
+
         # Modpack Management section
-        modpack_frame = self._section_frame("Modpack Management")
+        modpack_frame = self._section_frame("Installed Modpacks")
         modpack_layout = modpack_frame.layout()
 
         # Modpack list container
@@ -1785,7 +1869,7 @@ class PyCraftGUI(QMainWindow):
             }}
         """
 
-    def _log(self, console: QTextEdit, msg: str, level: str = "normal", max_lines: int = 200):
+    def _log(self, console: QTextEdit, msg: str, level: str = "normal", max_lines: int = 500):
         colors = {
             "normal": "#ffffff", "info": "#60a5fa",
             "success": "#4ade80", "warning": "#fbbf24", "error": "#f87171"
@@ -1821,15 +1905,21 @@ class PyCraftGUI(QMainWindow):
         pages = {
             "home": 0, "vanilla": 1, "modded": 2, "info": 3, "settings": 4,
             "vanilla_create": 5, "vanilla_run": 6, "modpack_install": 7, "modpack_run": 8,
-            "client_install": 9
+            "client_install": 9, "client_modpacks": 9,
+            "java_management": 10, "modpack_management": 11
         }
         if page in pages:
             self.page_stack.setCurrentIndex(pages[page])
 
+        # Show footer only on home page
+        self.footer.setVisible(page == "home")
+
         sidebar_map = {
             "home": "home", "vanilla": "vanilla", "vanilla_create": "vanilla", "vanilla_run": "vanilla",
-            "modded": "modded", "modpack_install": "modded", "modpack_run": "modded", "client_install": "modded",
-            "info": "info", "settings": "settings"
+            "modded": "modded", "modpack_install": "modded", "modpack_run": "modded",
+            "client_install": "client_modpacks", "client_modpacks": "client_modpacks",
+            "settings": "settings",
+            "java_management": "java_management", "modpack_management": "modpack_management"
         }
         for k, btn in self.sidebar_buttons.items():
             btn.setChecked(k == sidebar_map.get(page, ""))
@@ -2079,14 +2169,14 @@ class PyCraftGUI(QMainWindow):
                 )
 
             install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
-            settings_btn = msg.addButton("Go to Settings", QMessageBox.ButtonRole.ActionRole)
+            java_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
             cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
 
             msg.exec()
 
             clicked = msg.clickedButton()
-            if clicked == settings_btn:
-                self._go_to("settings")
+            if clicked == java_btn:
+                self._go_to("java_management")
                 return
             elif clicked == cancel_btn or clicked is None:
                 return
@@ -2246,7 +2336,13 @@ class PyCraftGUI(QMainWindow):
 
                 self.run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
                 self.run_start.setEnabled(True)
-                self.run_config.setEnabled(True)
+
+                # Enable config only if server.properties exists
+                has_properties = os.path.exists(os.path.join(folder, "server.properties"))
+                self.run_config.setEnabled(has_properties)
+                if not has_properties:
+                    self._log(self.vanilla_run_console, "Run server once to generate server.properties\n", "warning")
+
                 self.run_stop.setEnabled(False)
             else:
                 self.server_folder = None
@@ -2314,14 +2410,14 @@ class PyCraftGUI(QMainWindow):
                 )
 
             install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
-            settings_btn = msg.addButton("Go to Settings", QMessageBox.ButtonRole.ActionRole)
+            java_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
             cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
 
             msg.exec()
 
             clicked = msg.clickedButton()
-            if clicked == settings_btn:
-                self._go_to("settings")
+            if clicked == java_btn:
+                self._go_to("java_management")
                 return
             elif clicked == cancel_btn or clicked is None:
                 return
@@ -2346,18 +2442,26 @@ class PyCraftGUI(QMainWindow):
         self.run_config.setEnabled(False)
         self.run_stop.setEnabled(True)
 
+        # Track if server started successfully
+        self._vanilla_server_started_successfully = False
+
         def on_server_stopped():
             """Called when server process ends (crash or normal stop)"""
-            QTimer.singleShot(0, lambda: self._log(self.vanilla_run_console, "\n[Server process ended]\n", "warning"))
-            QTimer.singleShot(0, lambda: self.run_start.setEnabled(True))
-            QTimer.singleShot(0, lambda: self.run_config.setEnabled(True))
-            QTimer.singleShot(0, lambda: self.run_stop.setEnabled(False))
-            QTimer.singleShot(0, lambda: self.run_cmd_btn.setEnabled(False))
+            # Emit signal to update UI from main thread
+            self.vanilla_server_stopped_signal.emit(self._vanilla_server_started_successfully)
+
+        def log_callback(line: str):
+            """Monitor server output"""
+            # Check for successful start
+            if "Done" in line and "!" in line:
+                self._vanilla_server_started_successfully = True
+            # Forward to UI
+            self.log_signal.emit(line, "normal", "v_run")
 
         def start():
             success = self.server_manager.start_server(
                 ram_mb=self.vanilla_ram,
-                log_callback=lambda m: self.log_signal.emit(m, "normal", "v_run"),
+                log_callback=log_callback,
                 detached=True,
                 on_stopped=on_server_stopped
             )
@@ -2371,8 +2475,36 @@ class PyCraftGUI(QMainWindow):
 
         threading.Thread(target=start, daemon=True).start()
 
+    def _on_vanilla_server_stopped(self, started_successfully: bool):
+        """Handle vanilla server stopped (called from main thread via signal)"""
+        # Re-enable UI elements
+        self.run_start.setEnabled(True)
+
+        # Enable config only if server.properties exists (may have been generated on first run)
+        if self.server_folder:
+            has_properties = os.path.exists(os.path.join(self.server_folder, "server.properties"))
+            self.run_config.setEnabled(has_properties)
+        else:
+            self.run_config.setEnabled(False)
+
+        self.run_stop.setEnabled(False)
+        self.run_cmd_btn.setEnabled(False)
+
+        if started_successfully:
+            self.log_signal.emit("\n[Server stopped - Ready to restart]\n", "info", "v_run")
+        else:
+            # Server crashed before "Done"
+            self.log_signal.emit("\n[Server crashed - Ready to restart]\n", "error", "v_run")
+            # Show crash dialog after a brief delay to ensure UI is updated
+            QTimer.singleShot(100, lambda: self.server_crashed_signal.emit(self.server_folder))
+
     def _stop_vanilla(self):
         if not self.server_manager:
+            return
+
+        # Check if server is actually running
+        if not self.server_manager.is_server_running():
+            self._log(self.vanilla_run_console, "\nServer is not running\n", "warning")
             return
 
         # Disable all buttons immediately to prevent double-clicks
@@ -2389,7 +2521,7 @@ class PyCraftGUI(QMainWindow):
                 # stop_server() is blocking, so when it returns the server is stopped
                 # Re-enable buttons on main thread
                 def enable_buttons():
-                    self._log(self.vanilla_run_console, "Server stopped\n", "success")
+                    self._log(self.vanilla_run_console, "Server stopped - Ready to restart\n", "success")
                     self.run_start.setEnabled(True)
                     self.run_config.setEnabled(True)
                     self.run_stop.setEnabled(False)
@@ -2409,6 +2541,23 @@ class PyCraftGUI(QMainWindow):
 
         threading.Thread(target=stop, daemon=True).start()
 
+    def _blink_send_button(self, btn: QPushButton, manager):
+        """Blink the send button for visual feedback when sending a command."""
+        blink_count = [0]  # Use list to modify in nested function
+
+        def toggle():
+            if blink_count[0] >= 2:  # 2 full blinks (on-off-on-off)
+                btn.setEnabled(manager is not None and manager.is_server_running())
+                return
+
+            # Toggle enabled state
+            btn.setEnabled(not btn.isEnabled())
+            blink_count[0] += 1
+            QTimer.singleShot(400, toggle)  # 400ms = half of 0.8s cycle
+
+        btn.setEnabled(False)
+        QTimer.singleShot(400, toggle)
+
     def _send_vanilla_cmd(self):
         cmd = self.run_cmd.text().strip()
         if cmd and self.server_manager:
@@ -2421,11 +2570,8 @@ class PyCraftGUI(QMainWindow):
             self.server_manager.send_command(server_cmd)
             self.run_cmd.clear()
 
-            # Disable button briefly for visual feedback, then re-enable if server still running
-            self.run_cmd_btn.setEnabled(False)
-            QTimer.singleShot(1500, lambda: self.run_cmd_btn.setEnabled(
-                self.server_manager is not None and self.server_manager.is_server_running()
-            ))
+            # Blink button for visual feedback
+            self._blink_send_button(self.run_cmd_btn, self.server_manager)
 
     def _config_vanilla(self):
         if self.server_manager and self.server_manager.is_server_running():
@@ -3404,8 +3550,8 @@ class PyCraftGUI(QMainWindow):
             f"Loader: {loader_display}\n\n"
             f"IMPORTANT: To play on this server, you need to\n"
             f"install the same modpack on your client.\n\n"
-            f"Go to 'Install Client' tab to download the modpack\n"
-            f"for your launcher."
+            f"Go to 'Client Modpacks' in the sidebar to download\n"
+            f"the modpack for your launcher."
         )
 
         msg.setStyleSheet(f"""
@@ -3431,12 +3577,12 @@ class PyCraftGUI(QMainWindow):
         """)
 
         msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
-        client_btn = msg.addButton("Go to Install Client", QMessageBox.ButtonRole.ActionRole)
+        client_btn = msg.addButton("Client Modpacks", QMessageBox.ButtonRole.ActionRole)
 
         msg.exec()
 
         if msg.clickedButton() == client_btn:
-            self._go_to("client_install")
+            self._go_to("client_modpacks")
 
     # Client Modpack Installation with debounce
     def _on_client_mp_search_changed(self, text: str):
@@ -3787,7 +3933,13 @@ class PyCraftGUI(QMainWindow):
                 self.is_modpack_configured = True
 
                 self.mp_start.setEnabled(True)
-                self.mp_config.setEnabled(True)
+
+                # Enable config only if server.properties exists
+                has_properties = os.path.exists(os.path.join(folder, "server.properties"))
+                self.mp_config.setEnabled(has_properties)
+                if not has_properties:
+                    self._log(self.modpack_run_console, "Run server once to generate server.properties\n", "warning")
+
                 self.mp_stop.setEnabled(False)
 
                 self._log(self.modpack_run_console, f"\nServer found: {folder}\n", "success")
@@ -4053,333 +4205,9 @@ class PyCraftGUI(QMainWindow):
 
         return ""
 
-    def _show_healing_confirmation_dialog(self) -> tuple:
-        """
-        Show confirmation dialog before starting server with auto-healing.
-
-        Returns:
-            Tuple of (should_continue: bool, enable_auto_healing: bool)
-        """
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Start Server")
-        dialog.setFixedSize(480, 220)
-        dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        # Title
-        title = QLabel("Scan and fix potential crashes?")
-        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 15px; font-weight: bold;")
-        title.setWordWrap(True)
-        layout.addWidget(title)
-
-        # Description
-        desc = QLabel(
-            "The auto-repair system will detect problematic mods and "
-            "automatically retry if the server crashes.\n\n"
-            "Disabled mods will be moved to: client_mods_deleted/"
-        )
-        desc.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-        desc.setWordWrap(True)
-        layout.addWidget(desc)
-
-        layout.addStretch()
-
-        # Buttons
-        btn_row = QWidget()
-        btn_row.setStyleSheet("background: transparent;")
-        btn_layout = QHBoxLayout(btn_row)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(12)
-
-        no_btn = self._styled_button("No", self.colors['bg_input'], self.colors['text'], 100)
-        yes_btn = self._styled_button("Yes", self.colors['accent'], "#000000", 100)
-
-        btn_layout.addStretch()
-        btn_layout.addWidget(no_btn)
-        btn_layout.addWidget(yes_btn)
-
-        layout.addWidget(btn_row)
-
-        # Result tracking
-        dialog.result = (False, False)  # (should_continue, enable_healing)
-
-        def on_no():
-            dialog.result = (True, False)  # Continue without healing
-            dialog.accept()
-
-        def on_yes():
-            dialog.result = (True, True)  # Continue with healing
-            dialog.accept()
-
-        no_btn.clicked.connect(on_no)
-        yes_btn.clicked.connect(on_yes)
-
-        # Close button (X) should cancel
-        dialog.rejected.connect(lambda: setattr(dialog, 'result', (False, False)))
-
-        dialog.exec()
-        return dialog.result
-
-    def _show_healing_summary_dialog(self, summary: Dict):
-        """
-        Show unified summary dialog after server start with auto-healing.
-
-        Args:
-            summary: Dict from AutoHealer.get_summary() with:
-                    - result: 'success' or 'failed'
-                    - attempts: number of attempts
-                    - mods_removed: list of dicts with 'filename' and 'reason'
-                    - mods_installed: list of dicts with 'filename' and 'title'
-                    - report_path: path to detailed report file
-        """
-        mods_removed = summary.get('mods_removed', [])
-        mods_installed = summary.get('mods_installed', [])
-        attempts = summary.get('attempts', 0)
-        report_path = summary.get('report_path', '')
-
-        if not mods_removed and not mods_installed:
-            return
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Server Started Successfully")
-        dialog.setFixedSize(500, 450)
-        dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        # Success title
-        title = QLabel("Server started successfully")
-        title.setStyleSheet(f"color: {self.colors['accent']}; font-size: 18px; font-weight: bold;")
-        layout.addWidget(title)
-
-        # Subtitle with summary
-        subtitle_text = "The auto-healer made the following changes:"
-        subtitle = QLabel(subtitle_text)
-        subtitle.setStyleSheet(f"color: {self.colors['text']}; font-size: 13px;")
-        layout.addWidget(subtitle)
-
-        # Scrollable list
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(f"""
-            QScrollArea {{
-                background: transparent;
-                border: 1px solid {self.colors['border']};
-                border-radius: 8px;
-            }}
-            QScrollBar:vertical {{
-                background-color: {self.colors['bg_input']};
-                width: 10px;
-                border-radius: 5px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: #4a4a4a;
-                border-radius: 5px;
-                min-height: 30px;
-            }}
-        """)
-
-        list_widget = QWidget()
-        list_widget.setStyleSheet(f"background-color: {self.colors['bg_input']};")
-        list_layout = QVBoxLayout(list_widget)
-        list_layout.setContentsMargins(12, 12, 12, 12)
-        list_layout.setSpacing(6)
-
-        # Show installed dependencies first (positive action)
-        if mods_installed:
-            deps_header = QLabel("Installed dependencies:")
-            deps_header.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; font-weight: bold;")
-            list_layout.addWidget(deps_header)
-
-            for mod in mods_installed:
-                filename = mod.get('filename', mod.get('slug', 'Unknown'))
-                title_text = mod.get('title', '')
-                dep_label = QLabel(f"  + {filename}")
-                dep_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px;")
-                list_layout.addWidget(dep_label)
-                if title_text:
-                    title_label = QLabel(f"      ({title_text})")
-                    title_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 10px;")
-                    list_layout.addWidget(title_label)
-
-            if mods_removed:
-                spacer = QLabel("")
-                spacer.setFixedHeight(8)
-                list_layout.addWidget(spacer)
-
-        # Show removed mods
-        if mods_removed:
-            mods_header = QLabel("Removed mods:")
-            mods_header.setStyleSheet(f"color: #ff6b6b; font-size: 12px; font-weight: bold;")
-            list_layout.addWidget(mods_header)
-
-            for mod in mods_removed:
-                mod_label = QLabel(f"  - {mod['filename']}")
-                mod_label.setStyleSheet(f"color: {self.colors['text']}; font-size: 12px;")
-                list_layout.addWidget(mod_label)
-
-                if mod.get('reason'):
-                    reason_label = QLabel(f"      {mod['reason']}")
-                    reason_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 10px;")
-                    list_layout.addWidget(reason_label)
-
-        list_layout.addStretch()
-        scroll.setWidget(list_widget)
-        layout.addWidget(scroll, 1)
-
-        # Info section
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(4)
-
-        attempts_label = QLabel(f"Attempts: {attempts}/6")
-        attempts_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-        info_layout.addWidget(attempts_label)
-
-        if mods_removed:
-            location_label = QLabel("Removed mods location: mod_removed_by_pycraft/")
-            location_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-            info_layout.addWidget(location_label)
-
-        report_label = QLabel(f"Full report: logs/pycraft_healing_report.txt")
-        report_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-        info_layout.addWidget(report_label)
-
-        layout.addLayout(info_layout)
-
-        # OK button
-        ok_btn = self._styled_button("OK", self.colors['accent'], "#000000", 120)
-        ok_btn.clicked.connect(dialog.accept)
-        layout.addWidget(ok_btn, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        dialog.exec()
-
-    def _show_crash_error_dialog(self, error_message: str, summary: Dict = None):
-        """
-        Show error dialog when server crash could not be resolved.
-
-        Args:
-            error_message: User-friendly error message
-            summary: Optional summary from AutoHealer with attempts and actions taken
-        """
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Server Error")
-        dialog.setFixedSize(500, 380)
-        dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(16)
-
-        # Error title
-        title = QLabel("Server could not start")
-        title.setStyleSheet(f"color: {self.colors['red']}; font-size: 18px; font-weight: bold;")
-        layout.addWidget(title)
-
-        # Attempts info
-        if summary:
-            attempts = summary.get('attempts', 0)
-            attempts_label = QLabel(f"After {attempts} attempt(s), the server still crashes.")
-            attempts_label.setStyleSheet(f"color: {self.colors['text']}; font-size: 13px;")
-            layout.addWidget(attempts_label)
-
-        # Error message
-        error_box = QLabel(f"Last error detected:\n\"{error_message}\"")
-        error_box.setStyleSheet(f"""
-            color: {self.colors['text']};
-            font-size: 12px;
-            background-color: {self.colors['bg_input']};
-            padding: 12px;
-            border-radius: 6px;
-        """)
-        error_box.setWordWrap(True)
-        layout.addWidget(error_box)
-
-        # Actions taken (if any)
-        if summary:
-            mods_removed = summary.get('mods_removed', [])
-            mods_installed = summary.get('mods_installed', [])
-            if mods_removed or mods_installed:
-                actions_text = "Actions taken:"
-                if mods_removed:
-                    actions_text += f"\n  • Removed {len(mods_removed)} mod(s)"
-                if mods_installed:
-                    actions_text += f"\n  • Installed {len(mods_installed)} dependency(ies)"
-                actions_label = QLabel(actions_text)
-                actions_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-                layout.addWidget(actions_label)
-
-        # Report info
-        report_label = QLabel("Check the detailed report for more information:\nlogs/pycraft_healing_report.txt")
-        report_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-        layout.addWidget(report_label)
-
-        layout.addStretch()
-
-        # Buttons
-        btn_row = QWidget()
-        btn_row.setStyleSheet("background: transparent;")
-        btn_layout = QHBoxLayout(btn_row)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(12)
-
-        btn_layout.addStretch()
-
-        # Open Logs Folder button
-        logs_folder = None
-        if summary and summary.get('report_path'):
-            logs_folder = os.path.dirname(summary.get('report_path'))
-        elif self.modpack_server_manager:
-            logs_folder = os.path.join(self.modpack_server_manager.server_path, "logs")
-
-        if logs_folder and os.path.exists(logs_folder):
-            open_logs_btn = self._styled_button("Open Logs Folder", self.colors['accent'], "#000000", 140)
-
-            def open_logs():
-                try:
-                    if sys.platform == 'win32':
-                        os.startfile(logs_folder)
-                    elif sys.platform == 'darwin':
-                        subprocess.run(['open', logs_folder])
-                    else:
-                        subprocess.run(['xdg-open', logs_folder])
-                except Exception:
-                    pass
-
-            open_logs_btn.clicked.connect(open_logs)
-            btn_layout.addWidget(open_logs_btn)
-
-        close_btn = self._styled_button("Close", self.colors['bg_input'], self.colors['text'], 100)
-        close_btn.clicked.connect(dialog.accept)
-        btn_layout.addWidget(close_btn)
-
-        layout.addWidget(btn_row)
-
-        dialog.exec()
-
-    def _check_and_remove_client_mods(self, mods_folder: str) -> bool:
-        """
-        Legacy method - Check for client-only mods and offer to remove them.
-        Kept for backwards compatibility, now redirects to healing dialog.
-
-        Returns:
-            True if should continue starting server, False if cancelled
-        """
-        # Use the new healing confirmation dialog
-        should_continue, _ = self._show_healing_confirmation_dialog()
-        return should_continue
-
     def _start_mp(self):
+        """Start modded server"""
         if not self.modpack_server_manager:
-            return
-
-        # Show healing confirmation dialog
-        should_continue, enable_healing = self._show_healing_confirmation_dialog()
-        if not should_continue:
             return
 
         # Get Minecraft version (from our detection)
@@ -4433,14 +4261,14 @@ class PyCraftGUI(QMainWindow):
                 )
 
             install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
-            settings_btn = msg.addButton("Go to Settings", QMessageBox.ButtonRole.ActionRole)
+            java_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
             cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
 
             msg.exec()
 
             clicked = msg.clickedButton()
-            if clicked == settings_btn:
-                self._go_to("settings")
+            if clicked == java_btn:
+                self._go_to("java_management")
                 return
             elif clicked == cancel_btn or clicked is None:
                 return
@@ -4474,61 +4302,24 @@ class PyCraftGUI(QMainWindow):
 
         # Detect server type (forge/fabric) for proper startup
         server_type = self.modpack_server_manager.detect_server_type()
+        if server_type == "unknown":
+            self._log(self.modpack_run_console, "Could not detect server type (Forge/Fabric).", "error")
+            return
+
         java_exe = self.modpack_server_manager.java_executable
 
         self._log(self.modpack_run_console, "\n=== STARTING SERVER ===\n", "info")
-        self.mp_start.setEnabled(False)
-        self.mp_config.setEnabled(False)
-        self.mp_stop.setEnabled(True)
 
-        # Store references for the healing loop
-        self._current_auto_healer = None
-        self._server_log_buffer = []
+        # Track if server started successfully
         self._server_started_successfully = False
-        self._healing_in_progress = False
-        self._enable_healing = enable_healing
-        self._server_type_for_healing = server_type
 
-        def on_server_stopped():
+        def on_stopped():
             """Called when server process ends (crash or normal stop)"""
-            # Check if server started successfully (found "Done" in logs)
-            full_log = "".join(self._server_log_buffer)
-
-            # Debug logging
-            self.log_signal.emit(f"\n[Debug] on_server_stopped called\n", "info", "m_run")
-            self.log_signal.emit(f"[Debug] _server_started_successfully = {self._server_started_successfully}\n", "info", "m_run")
-            self.log_signal.emit(f"[Debug] _current_auto_healer = {self._current_auto_healer is not None}\n", "info", "m_run")
-            self.log_signal.emit(f"[Debug] _healing_in_progress = {self._healing_in_progress}\n", "info", "m_run")
-            self.log_signal.emit(f"[Debug] log_buffer length = {len(full_log)} chars\n", "info", "m_run")
-
-            if self._server_started_successfully:
-                # Normal stop after successful start
-                QTimer.singleShot(0, lambda: self._log(self.modpack_run_console, "\n[Server stopped]\n", "info"))
-                QTimer.singleShot(0, self._on_server_stopped_normal)
-
-                # Show summary if any actions were taken
-                if self._current_auto_healer:
-                    self._current_auto_healer.mark_success()
-                    self._current_auto_healer.generate_report_file()
-                    summary = self._current_auto_healer.get_summary()
-                    if summary.get('mods_removed') or summary.get('mods_installed'):
-                        QTimer.singleShot(100, lambda: self._show_healing_summary_dialog(summary))
-            else:
-                # Server crashed before "Done"
-                if self._current_auto_healer and not self._healing_in_progress:
-                    self._healing_in_progress = True
-                    QTimer.singleShot(0, lambda: self._handle_server_crash(full_log))
-                else:
-                    QTimer.singleShot(0, lambda: self._log(self.modpack_run_console, "\n[Server crashed]\n", "error"))
-                    QTimer.singleShot(0, self._on_server_stopped_normal)
+            # Emit signal to update UI from main thread
+            self.modpack_server_stopped_signal.emit(self._server_started_successfully)
 
         def log_callback(line: str):
-            """Capture server output for crash analysis"""
-            # Add to buffer (keep last 1000 lines)
-            self._server_log_buffer.append(line)
-            if len(self._server_log_buffer) > 1000:
-                self._server_log_buffer.pop(0)
-
+            """Forward server output to UI"""
             # Check for successful start
             if "Done" in line and "!" in line:
                 self._server_started_successfully = True
@@ -4536,25 +4327,13 @@ class PyCraftGUI(QMainWindow):
             # Forward to UI
             self.log_signal.emit(line, "normal", "m_run")
 
-        def start():
-            # Initialize auto-healer if enabled (runs in thread to not block UI)
-            if self._enable_healing:
-                try:
-                    from src.managers.server.auto_healer import AutoHealer
-                    auto_healer = AutoHealer(
-                        server_path=self.modpack_server_path,
-                        loader=self._server_type_for_healing,
-                        minecraft_version=None,  # Will auto-detect
-                        log_callback=lambda m: self.log_signal.emit(m, "info", "m_run")
-                    )
-                    # Run preventive scan to remove known client-only mods
-                    auto_healer.run_prescan()
-                    self._current_auto_healer = auto_healer
-                except Exception as e:
-                    self.log_signal.emit(f"[AutoHealer] Could not initialize: {e}\n", "warning", "m_run")
-                    self._current_auto_healer = None
+        # Disable start, enable stop
+        self.mp_start.setEnabled(False)
+        self.mp_config.setEnabled(False)
+        self.mp_stop.setEnabled(True)
 
-            # Use start_modded_server which includes client mod cleaning
+        def start():
+            # Use start_modded_server which handles the server type properly
             if server_type in ("forge", "fabric", "neoforge", "quilt"):
                 success = self.modpack_server_manager.start_modded_server(
                     server_type=server_type,
@@ -4562,7 +4341,7 @@ class PyCraftGUI(QMainWindow):
                     java_executable=java_exe,
                     log_callback=log_callback,
                     detached=True,
-                    on_stopped=on_server_stopped
+                    on_stopped=on_stopped
                 )
             else:
                 # Fallback to generic start_server for unknown types
@@ -4570,7 +4349,7 @@ class PyCraftGUI(QMainWindow):
                     ram_mb=self.modpack_ram,
                     log_callback=log_callback,
                     detached=True,
-                    on_stopped=on_server_stopped
+                    on_stopped=on_stopped
                 )
 
             if success:
@@ -4581,136 +4360,133 @@ class PyCraftGUI(QMainWindow):
 
         threading.Thread(target=start, daemon=True).start()
 
+    def _show_server_crash_dialog(self, server_path: str):
+        """Displays a simple modal dialog when server crashes."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Server Crashed")
+        dialog.setFixedSize(420, 220)
+        dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(24, 24, 24, 20)
+        layout.setSpacing(16)
+
+        # Icon and title row
+        title_row = QHBoxLayout()
+        title_row.setSpacing(12)
+
+        try:
+            icon_label = QLabel()
+            icon = qta.icon("fa5s.exclamation-triangle", color=self.colors['red'])
+            icon_label.setPixmap(icon.pixmap(32, 32))
+            title_row.addWidget(icon_label)
+        except Exception:
+            pass
+
+        title = QLabel("Server Crashed")
+        title.setStyleSheet(f"color: {self.colors['red']}; font-size: 18px; font-weight: bold;")
+        title_row.addWidget(title)
+        title_row.addStretch()
+        layout.addLayout(title_row)
+
+        # Message
+        msg = QLabel("The server has stopped unexpectedly.\nCheck the logs or crash reports for more details.")
+        msg.setStyleSheet(f"color: {self.colors['text']}; font-size: 13px;")
+        msg.setWordWrap(True)
+        layout.addWidget(msg)
+
+        layout.addStretch()
+
+        # Buttons row
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+
+        # Open Logs button
+        logs_folder = os.path.join(server_path, "logs") if server_path else None
+        if logs_folder and os.path.exists(logs_folder):
+            logs_btn = self._styled_button("Open Logs", self.colors['bg_input'], self.colors['text'], 120)
+
+            def open_logs():
+                try:
+                    if sys.platform == 'win32':
+                        os.startfile(logs_folder)
+                    elif sys.platform == 'darwin':
+                        subprocess.run(['open', logs_folder])
+                    else:
+                        subprocess.run(['xdg-open', logs_folder])
+                except Exception:
+                    pass
+
+            logs_btn.clicked.connect(open_logs)
+            btn_row.addWidget(logs_btn)
+
+        # Open Crash Reports button
+        crash_folder = os.path.join(server_path, "crash-reports") if server_path else None
+        if crash_folder and os.path.exists(crash_folder):
+            crash_btn = self._styled_button("Crash Reports", self.colors['bg_input'], self.colors['text'], 120)
+
+            def open_crash():
+                try:
+                    if sys.platform == 'win32':
+                        os.startfile(crash_folder)
+                    elif sys.platform == 'darwin':
+                        subprocess.run(['open', crash_folder])
+                    else:
+                        subprocess.run(['xdg-open', crash_folder])
+                except Exception:
+                    pass
+
+            crash_btn.clicked.connect(open_crash)
+            btn_row.addWidget(crash_btn)
+
+        btn_row.addStretch()
+
+        # OK button
+        ok_btn = self._styled_button("OK", self.colors['accent'], "#000000", 80)
+        ok_btn.clicked.connect(dialog.accept)
+        btn_row.addWidget(ok_btn)
+
+        layout.addLayout(btn_row)
+
+        dialog.exec()
+
     def _on_server_stopped_normal(self):
         """Reset UI state when server stops normally"""
         self.mp_start.setEnabled(True)
         self.mp_config.setEnabled(True)
         self.mp_stop.setEnabled(False)
         self.mp_cmd_btn.setEnabled(False)
-        self._healing_in_progress = False
 
-    def _handle_server_crash(self, log_content: str):
-        """Handle a server crash with auto-healing"""
-        self._log(self.modpack_run_console, "\n[Debug] _handle_server_crash called\n", "info")
+    def _on_modpack_server_stopped(self, started_successfully: bool):
+        """Handle modpack server stopped (called from main thread via signal)"""
+        # Re-enable UI elements
+        self.mp_start.setEnabled(True)
 
-        if not self._current_auto_healer:
-            self._log(self.modpack_run_console, "[Debug] No auto_healer, stopping\n", "warning")
-            self._on_server_stopped_normal()
-            return
+        # Enable config only if server.properties exists (may have been generated on first run)
+        if self.modpack_server_path:
+            has_properties = os.path.exists(os.path.join(self.modpack_server_path, "server.properties"))
+            self.mp_config.setEnabled(has_properties)
+        else:
+            self.mp_config.setEnabled(False)
 
-        try:
-            from src.managers.server.auto_healer import detect_crash_in_log
+        self.mp_stop.setEnabled(False)
+        self.mp_cmd_btn.setEnabled(False)
 
-            # Check if it's actually a crash
-            is_crash = detect_crash_in_log(log_content)
-            self._log(self.modpack_run_console, f"[Debug] detect_crash_in_log = {is_crash}\n", "info")
-
-            if not is_crash:
-                self._log(self.modpack_run_console, "\n[Server stopped unexpectedly]\n", "warning")
-                self._on_server_stopped_normal()
-                return
-
-            # Try to heal - returns (should_retry, error_message)
-            should_retry, error_message = self._current_auto_healer.handle_crash(log_content)
-
-            if should_retry:
-                # Clear buffer and restart
-                self._server_log_buffer = []
-                self._server_started_successfully = False
-                self._healing_in_progress = False
-
-                self._log(self.modpack_run_console, "\n[AutoHealer] Fix applied. Restarting server...\n", "warning")
-
-                # Wait a bit before restarting
-                QTimer.singleShot(2000, self._restart_server_after_healing)
-            else:
-                # Could not heal - generate report and show error dialog
-                self._current_auto_healer.generate_report_file()
-                summary = self._current_auto_healer.get_summary()
-
-                self._log(self.modpack_run_console, f"\n[AutoHealer] {error_message}\n", "error")
-                self._on_server_stopped_normal()
-
-                # Show error dialog with summary
-                QTimer.singleShot(100, lambda: self._show_crash_error_dialog(error_message, summary))
-
-        except Exception as e:
-            self._log(self.modpack_run_console, f"\n[AutoHealer] Error: {e}\n", "error")
-            self._on_server_stopped_normal()
-
-    def _restart_server_after_healing(self):
-        """Restart the server after a healing action"""
-        if not self.modpack_server_manager:
-            self._on_server_stopped_normal()
-            return
-
-        server_type = self.modpack_server_manager.detect_server_type()
-        java_exe = self.modpack_server_manager.java_executable
-
-        def on_server_stopped():
-            """Called when server process ends"""
-            full_log = "".join(self._server_log_buffer)
-
-            # Debug logging
-            self.log_signal.emit(f"\n[Debug] Restart callback - on_server_stopped called\n", "info", "m_run")
-            self.log_signal.emit(f"[Debug] _server_started_successfully = {self._server_started_successfully}\n", "info", "m_run")
-            self.log_signal.emit(f"[Debug] _current_auto_healer = {self._current_auto_healer is not None}\n", "info", "m_run")
-            self.log_signal.emit(f"[Debug] _healing_in_progress = {self._healing_in_progress}\n", "info", "m_run")
-
-            if self._server_started_successfully:
-                QTimer.singleShot(0, lambda: self._log(self.modpack_run_console, "\n[Server stopped]\n", "info"))
-                QTimer.singleShot(0, self._on_server_stopped_normal)
-
-                # Show summary if any actions were taken
-                if self._current_auto_healer:
-                    self._current_auto_healer.mark_success()
-                    self._current_auto_healer.generate_report_file()
-                    summary = self._current_auto_healer.get_summary()
-                    if summary.get('mods_removed') or summary.get('mods_installed'):
-                        QTimer.singleShot(100, lambda: self._show_healing_summary_dialog(summary))
-            else:
-                if self._current_auto_healer and not self._healing_in_progress:
-                    self._healing_in_progress = True
-                    QTimer.singleShot(0, lambda: self._handle_server_crash(full_log))
-                else:
-                    QTimer.singleShot(0, lambda: self._log(self.modpack_run_console, "\n[Server crashed]\n", "error"))
-                    QTimer.singleShot(0, self._on_server_stopped_normal)
-
-        def log_callback(line: str):
-            self._server_log_buffer.append(line)
-            if len(self._server_log_buffer) > 1000:
-                self._server_log_buffer.pop(0)
-            if "Done" in line and "!" in line:
-                self._server_started_successfully = True
-            self.log_signal.emit(line, "normal", "m_run")
-
-        def start():
-            if server_type in ("forge", "fabric", "neoforge", "quilt"):
-                success = self.modpack_server_manager.start_modded_server(
-                    server_type=server_type,
-                    ram_mb=self.modpack_ram,
-                    java_executable=java_exe,
-                    log_callback=log_callback,
-                    detached=True,
-                    on_stopped=on_server_stopped
-                )
-            else:
-                success = self.modpack_server_manager.start_server(
-                    ram_mb=self.modpack_ram,
-                    log_callback=log_callback,
-                    detached=True,
-                    on_stopped=on_server_stopped
-                )
-
-            if success:
-                QTimer.singleShot(0, lambda: self.mp_cmd_btn.setEnabled(True))
-            else:
-                QTimer.singleShot(0, self._on_server_stopped_normal)
-
-        threading.Thread(target=start, daemon=True).start()
+        if started_successfully:
+            self.log_signal.emit("\n[Server stopped - Ready to restart]\n", "info", "m_run")
+        else:
+            # Server crashed before "Done"
+            self.log_signal.emit("\n[Server crashed - Ready to restart]\n", "error", "m_run")
+            # Show crash dialog after a brief delay to ensure UI is updated
+            QTimer.singleShot(100, lambda: self.server_crashed_signal.emit(self.modpack_server_path))
 
     def _stop_mp(self):
         if not self.modpack_server_manager:
+            return
+
+        # Check if server is actually running
+        if not self.modpack_server_manager.is_server_running():
+            self._log(self.modpack_run_console, "\nServer is not running\n", "warning")
             return
 
         # Disable all buttons immediately to prevent double-clicks
@@ -4727,7 +4503,7 @@ class PyCraftGUI(QMainWindow):
                 # stop_server() is blocking, so when it returns the server is stopped
                 # Re-enable buttons on main thread
                 def enable_buttons():
-                    self._log(self.modpack_run_console, "Server stopped\n", "success")
+                    self._log(self.modpack_run_console, "Server stopped - Ready to restart\n", "success")
                     self.mp_start.setEnabled(True)
                     self.mp_config.setEnabled(True)
                     self.mp_stop.setEnabled(False)
@@ -4759,11 +4535,8 @@ class PyCraftGUI(QMainWindow):
             self.modpack_server_manager.send_command(server_cmd)
             self.mp_run_cmd.clear()
 
-            # Disable button briefly for visual feedback, then re-enable if server still running
-            self.mp_cmd_btn.setEnabled(False)
-            QTimer.singleShot(1500, lambda: self.mp_cmd_btn.setEnabled(
-                self.modpack_server_manager is not None and self.modpack_server_manager.is_server_running()
-            ))
+            # Blink button for visual feedback
+            self._blink_send_button(self.mp_cmd_btn, self.modpack_server_manager)
 
     def _config_mp(self):
         if self.modpack_server_manager and self.modpack_server_manager.is_server_running():
