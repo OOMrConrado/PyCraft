@@ -443,9 +443,9 @@ max-world-size=29999984
 
             # Report success with details
             if old_difficulty and old_difficulty != difficulty:
-                success_msg = f"✓ Configuración actualizada:\n  • Dificultad cambiada de '{old_difficulty}' a '{difficulty}'"
+                success_msg = f"[OK] Configuración actualizada:\n  -Dificultad cambiada de '{old_difficulty}' a '{difficulty}'"
             else:
-                success_msg = f"✓ Configuración aplicada:\n  • Dificultad: {difficulty}"
+                success_msg = f"[OK] Configuración aplicada:\n  -Dificultad: {difficulty}"
 
             print(success_msg)
             if log_callback:
@@ -568,11 +568,11 @@ max-world-size=29999984
             has_perms, perm_msg = system_utils.check_write_permissions(self.server_folder)
             if not has_perms:
                 if log_callback:
-                    log_callback(f"\n❌ {perm_msg}\n")
+                    log_callback(f"\n[ERROR] {perm_msg}\n")
                 return False
 
             if log_callback:
-                log_callback("✓ Permisos de escritura confirmados\n\n")
+                log_callback("[OK] Permisos de escritura confirmados\n\n")
 
             # 2. Check available RAM (minimum 1GB for server)
             if log_callback:
@@ -607,30 +607,30 @@ max-world-size=29999984
             # 5. Validate EULA file
             if not system_utils.validate_eula_file(self.eula_path):
                 if log_callback:
-                    log_callback("\n❌ EULA no se generó correctamente o está corrupto\n")
+                    log_callback("\n[ERROR] EULA no se generó correctamente o está corrupto\n")
                     log_callback("   Posibles causas:\n")
-                    log_callback("   • Java no se ejecutó correctamente\n")
-                    log_callback("   • El proceso se interrumpió\n")
-                    log_callback("   • Problemas de permisos\n")
+                    log_callback("   -Java no se ejecutó correctamente\n")
+                    log_callback("   -El proceso se interrumpió\n")
+                    log_callback("   -Problemas de permisos\n")
                 return False
 
             # 6. Accept EULA
             if os.path.exists(self.eula_path):
                 if log_callback:
-                    log_callback("✓ EULA generado correctamente\n")
+                    log_callback("[OK] EULA generado correctamente\n")
                     log_callback("Aceptando EULA automáticamente...\n")
                 if not self.accept_eula():
                     if log_callback:
-                        log_callback("❌ Error al aceptar EULA\n")
+                        log_callback("[ERROR] Error al aceptar EULA\n")
                     return False
             else:
                 if log_callback:
-                    log_callback("❌ Archivo EULA no encontrado\n")
+                    log_callback("[ERROR] Archivo EULA no encontrado\n")
                 return False
 
             # 7. Second execution (will generate all server files) - Increased timeout to 40s
             if log_callback:
-                log_callback("✓ EULA aceptado\n\n")
+                log_callback("[OK] EULA aceptado\n\n")
                 log_callback("Generando archivos del servidor (esto puede tomar hasta 40 segundos)...\n")
 
             self._run_server_and_wait(log_callback, timeout=40, check_for="server.properties")
@@ -641,36 +641,36 @@ max-world-size=29999984
             # 8. Validate server.properties file
             if not system_utils.validate_properties_file(self.properties_path):
                 if log_callback:
-                    log_callback("\n❌ server.properties no se generó correctamente o está corrupto\n")
+                    log_callback("\n[ERROR] server.properties no se generó correctamente o está corrupto\n")
                     log_callback("   Posibles causas:\n")
-                    log_callback("   • El servidor no tuvo tiempo suficiente para inicializar\n")
-                    log_callback("   • Versión de Minecraft incompatible\n")
-                    log_callback("   • Problemas de permisos\n")
+                    log_callback("   -El servidor no tuvo tiempo suficiente para inicializar\n")
+                    log_callback("   -Versión de Minecraft incompatible\n")
+                    log_callback("   -Problemas de permisos\n")
                 return False
 
             # 9. Modify server.properties
             if os.path.exists(self.properties_path):
                 if log_callback:
-                    log_callback("✓ server.properties generado correctamente\n")
+                    log_callback("[OK] server.properties generado correctamente\n")
                     log_callback("Configurando server.properties...\n")
                 if not self.configure_server_properties(log_callback=log_callback):
                     if log_callback:
-                        log_callback("❌ Error al modificar server.properties\n")
+                        log_callback("[ERROR] Error al modificar server.properties\n")
                     return False
             else:
                 if log_callback:
-                    log_callback("❌ Archivo server.properties no encontrado\n")
+                    log_callback("[ERROR] Archivo server.properties no encontrado\n")
                 return False
 
             # 10. Configuration complete
             if log_callback:
-                log_callback("\n✅ ¡Configuración completada exitosamente!\n\n")
+                log_callback("\n[OK] ¡Configuración completada exitosamente!\n\n")
 
             return True
 
         except Exception as e:
             if log_callback:
-                log_callback(f"\n❌ Error durante la configuración: {e}\n")
+                log_callback(f"\n[ERROR] Error durante la configuración: {e}\n")
                 log_callback(f"   Tipo de error: {type(e).__name__}\n")
             return False
         finally:
@@ -790,18 +790,8 @@ max-world-size=29999984
                     log_callback("El servidor ya está en ejecución\n")
                 return False
 
-            # Always clean client-only mods before starting (safety measure)
-            mods_folder = os.path.join(self.server_folder, "mods")
-            if os.path.exists(mods_folder):
-                if log_callback:
-                    log_callback("\n=== LIMPIANDO MODS SOLO-CLIENTE ===\n")
-                removed = self.clean_client_only_mods(log_callback)
-                if removed:
-                    if log_callback:
-                        log_callback(f"\n✓ {len(removed)} mods solo-cliente removidos\n\n")
-                else:
-                    if log_callback:
-                        log_callback("✓ No se encontraron mods solo-cliente\n\n")
+            # NOTE: Client-only mods detection/removal is now handled by main_window.py
+            # with user choice (Continue/Remove). Don't auto-remove here.
 
             # Ensure EULA is accepted before starting
             self.ensure_eula_accepted(log_callback)
@@ -1036,21 +1026,45 @@ max-world-size=29999984
 
     def detect_server_type(self) -> str:
         """
-        Detecta el tipo de servidor (vanilla, forge, fabric)
+        Detecta el tipo de servidor (vanilla, forge, fabric, neoforge, quilt)
 
         Returns:
-            "vanilla", "forge", "fabric", o "unknown"
+            "vanilla", "forge", "fabric", "neoforge", "quilt", o "unknown"
         """
+        # Verificar si es Quilt
+        for file in os.listdir(self.server_folder):
+            if file.startswith("quilt-server") and file.endswith(".jar"):
+                return "quilt"
+
         # Verificar si es Fabric
         fabric_launcher = os.path.join(self.server_folder, "fabric-server-launch.jar")
         if os.path.exists(fabric_launcher):
             return "fabric"
+
+        # Verificar NeoForge (check libraries folder for neoforge)
+        neoforge_libs = os.path.join(self.server_folder, "libraries", "net", "neoforged")
+        if os.path.exists(neoforge_libs):
+            return "neoforge"
+
+        # Buscar archivos neoforge-*.jar
+        for file in os.listdir(self.server_folder):
+            if "neoforge" in file.lower() and file.endswith(".jar"):
+                return "neoforge"
 
         # Verificar si es Forge (buscar archivos run.bat/run.sh o forge jar)
         run_bat = os.path.join(self.server_folder, "run.bat")
         run_sh = os.path.join(self.server_folder, "run.sh")
 
         if os.path.exists(run_bat) or os.path.exists(run_sh):
+            # Check if it's actually NeoForge by reading the file
+            try:
+                run_file = run_bat if os.path.exists(run_bat) else run_sh
+                with open(run_file, 'r', encoding='utf-8') as f:
+                    content = f.read().lower()
+                    if 'neoforge' in content:
+                        return "neoforge"
+            except Exception:
+                pass
             return "forge"
 
         # Buscar archivos forge-*.jar
@@ -1074,10 +1088,10 @@ max-world-size=29999984
         on_stopped: Optional[Callable[[], None]] = None
     ) -> bool:
         """
-        Inicia un servidor con mods (Forge o Fabric)
+        Inicia un servidor con mods (Forge, Fabric, NeoForge o Quilt)
 
         Args:
-            server_type: "forge" o "fabric"
+            server_type: "forge", "fabric", "neoforge", o "quilt"
             ram_mb: RAM en megabytes a asignar
             java_executable: Ejecutable de Java a usar
             log_callback: Función callback para recibir logs del servidor
@@ -1093,19 +1107,8 @@ max-world-size=29999984
                     log_callback("El servidor ya está en ejecución\n")
                 return False
 
-            # Limpiar mods solo-cliente automáticamente
-            if log_callback:
-                log_callback("\n=== LIMPIANDO MODS SOLO-CLIENTE ===\n")
-
-            removed_mods = self.clean_client_only_mods(log_callback)
-
-            if removed_mods:
-                if log_callback:
-                    log_callback(f"\n✓ {len(removed_mods)} mods solo-cliente removidos automáticamente\n")
-                    log_callback("  (Moved to: client_mods_deleted/)\n\n")
-            else:
-                if log_callback:
-                    log_callback("✓ No se encontraron mods solo-cliente\n\n")
+            # NOTE: Client-only mods detection/removal is now handled by main_window.py
+            # with user choice (Continue/Remove). Don't auto-remove here.
 
             # === PRE-EMPTIVE EULA ACCEPTANCE ===
             # Accept EULA BEFORE starting the server - this allows the server to
@@ -1115,11 +1118,11 @@ max-world-size=29999984
 
             if not self.ensure_eula_accepted(log_callback):
                 if log_callback:
-                    log_callback("\n❌ Error: No se pudo aceptar el EULA\n")
+                    log_callback("\n[ERROR] Error: No se pudo aceptar el EULA\n")
                 return False
 
             if log_callback:
-                log_callback("✓ Configuración completada\n\n")
+                log_callback("[OK] Configuración completada\n\n")
 
             ram_min = f"-Xms{ram_mb}M"
             ram_max = f"-Xmx{ram_mb}M"
@@ -1334,7 +1337,7 @@ max-world-size=29999984
             # Pre-create EULA BEFORE running the server (no need for start -> stop -> start cycle)
             if not self.ensure_eula_accepted(log_callback):
                 if log_callback:
-                    log_callback("❌ Error al aceptar EULA\n")
+                    log_callback("[ERROR] Error al aceptar EULA\n")
                 return False
 
             # Single execution to generate server files (EULA already accepted)
@@ -1349,7 +1352,7 @@ max-world-size=29999984
             # Modificar server.properties
             if os.path.exists(self.properties_path):
                 if log_callback:
-                    log_callback("✓ server.properties generado\n")
+                    log_callback("[OK] server.properties generado\n")
                     log_callback("Configurando server.properties...\n")
                 if not self.configure_server_properties():
                     if log_callback:
@@ -1359,13 +1362,13 @@ max-world-size=29999984
                     log_callback("⚠ server.properties no encontrado (se generará al iniciar)\n")
 
             if log_callback:
-                log_callback("✓ ¡Configuración completada!\n")
+                log_callback("[OK] ¡Configuración completada!\n")
 
             return True
 
         except Exception as e:
             if log_callback:
-                log_callback(f"❌ Error durante la configuración: {e}\n")
+                log_callback(f"[ERROR] Error durante la configuración: {e}\n")
             return False
 
     def _run_modded_server_and_wait(
@@ -1555,7 +1558,11 @@ max-world-size=29999984
         log_callback: Optional[Callable[[str], None]] = None
     ) -> list:
         """
-        Detecta y remueve automáticamente mods solo-cliente que causan crashes en servidores
+        Remove mods that are KNOWN to crash dedicated servers.
+        This is a minimal list - only mods proven to cause server crashes.
+
+        NOTE: This function is now rarely used. The main detection is done by
+        modpack_manager.detect_client_only_mods() which uses Modrinth metadata.
 
         Args:
             log_callback: Función callback para reportar progreso
@@ -1563,122 +1570,23 @@ max-world-size=29999984
         Returns:
             Lista de mods removidos
         """
-        # EXHAUSTIVE list of client-only mod patterns
-        # IMPORTANT: These patterns are searched in the filename (case-insensitive)
+        # CRITICAL ONLY: Mods that actually CRASH dedicated servers
+        # This list is intentionally minimal - better to miss some than remove needed mods
         CLIENT_ONLY_MOD_PATTERNS = [
-            # ===== CRITICAL: Mods that ALWAYS crash dedicated servers =====
-            "ryoamiclights", "ryoamiclight", "ryoamic",  # Dynamic lighting - CRASHES SERVERS
-            "barista", "barsita",  # Client keybindings - CRASHES SERVERS
-            "obsidianui", "obsidian_ui",  # Client UI library - CRASHES SERVERS
+            # Rendering mods that access client-only OpenGL/rendering classes
+            "sodium", "embeddium", "rubidium", "magnesium",
+            "iris", "oculus", "optifine", "optifabric",
+            "indium", "nvidium",
 
-            # ===== Rendering & Graphics =====
-            "entity_texture_features", "entity_model_features", "etf-", "emf-",
-            "embeddium", "rubidium", "oculus", "iris", "magnesium", "reforgium",
-            "optifine", "optifabric", "sodium", "sodiumextra", "reeses_sodium",
-            "phosphor", "starlight", "indium",
-            "immediatelyfast", "nvidium", "badoptimizations",
-            "continuity", "enhancedblockentities", "enhanced_block_entities",
+            # Dynamic lighting mods (crash on dedicated server)
+            "lambdynamiclights", "ryoamiclights", "ryoamiclight",
+            "dynamiclights", "sodiumdynamiclights",
 
-            # ===== Visual Effects =====
-            "betteranimationscollection", "betteranimationsmod", "notenoughanimations",
-            "not_enough_animations", "playeranimator", "player_animator",
-            "visuality", "falling_leaves", "fallingleaves", "particle_rain",
-            "skinlayers3d", "3dskinlayers", "skin_layers",
-            "blur", "cleanview", "betterskybox", "clear_skies",
-            "dynamiclights", "sodiumdynamiclights", "lambdynamiclights",
-            "dynamiclightsreforged", "fancy_video_player",
-            "presence_footsteps", "presencefootsteps",
-            "wakes", "bedrockwaters", "particle_blocker",
+            # Client UI libraries that crash servers
+            "obsidianui", "spruceui", "spruce_ui",
 
-            # ===== UI & HUD =====
-            "betterf3", "better_f3", "betterthirdperson", "better_third_person",
-            "chat_heads", "chatheads", "chatpatches", "chatting",
-            "fancymenu", "loadingbackgrounds", "inventoryhud", "inventory_hud",
-            "xaerosminimap", "xaeroworldmap", "xaeros", "journeymap",
-            "voxelmap", "mapfrontiers", "worldmap", "minimaps",
-            "bhmenu", "catalogue", "configured", "controlling", "searchables",
-            "defaultoptions", "roughly_enough_items_client", "rei-",
-            "mouse_tweaks", "mousewheelie", "controlling-client",
-            "modmenu", "mod_menu", "shulkerboxtooltip",
-            "forgeconfigscreens", "forge_config_screens", "forgeconfigs",
-            "welcomescreen", "welcome_screen",
-            "advancementinfo", "betterstats", "itemphysic", "physics_mod",
-            "legendary_tooltips", "legendarytooltips", "equipmentcompare",
-            "tooltipfix", "advancedtooltips", "effectdescriptions",
-            "enchantmentdescriptions", "itemdescriptions",
-
-            # ===== Camera & Controls =====
-            "cameraoverhaul", "camera_overhaul", "camerautils",
-            "zoomify", "justzoom", "logical_zoom", "okzoomer", "wizmiczoom",
-            "shoulder_surfing", "firstperson", "firstpersonmodel",
-            "freelook", "freecamera", "perspectivemod",
-            "better_third_person", "bettertps", "headtilt",
-
-            # ===== Client Optimization =====
-            "lazydfu", "lazy_dfu", "dashloader", "smoothboot", "smooth_boot",
-            "starlight-client", "ferrite_core-client", "ferritecore-client",
-            "entityculling", "cullleaves", "cull_leaves", "cull_less_leaves",
-            "memoryleakfix", "memory_leak_fix", "memoryusagescreen",
-            "dynamicfps", "dynamic_fps", "fpsdisplay", "exordium", "ksyxis",
-            "moreculling", "more_culling", "viewdistancefix",
-
-            # ===== Audio =====
-            "soundphysics", "sound_physics", "sound_physics_remastered",
-            "extreme_sound_muffler", "audio_player", "music_triggers",
-            "dynamic_sound_filters", "ambientsounds", "ambient_sounds",
-            "extrasounds", "auditory", "soundreloader", "drippysoundengine",
-
-            # ===== Client-side Utilities =====
-            "screenshots_viewer", "screenshot_to_clipboard", "screenshottoclipboard",
-            "fabrishot", "borderless_window", "borderlessmining", "windowedmode",
-            "fullscreen_windowed", "custom_window_title",
-            "replay_mod", "replaymod", "bobby",
-            "minihud", "tweakeroo", "litematica", "item_scroller", "itemscroller",
-            "malilib", "inventoryprofiles", "inventoryprofilesnext", "invprofiles",
-            "itemswapper", "reacharound", "advancedchat",
-
-            # ===== Shaders & Resource Packs =====
-            "shader", "complementary", "bsl", "sildurs",
-            "seus", "kuda", "continuum",
-            "cit_resewn", "citresewn", "citreforged", "chime", "cem",
-            "custom_entity_models", "fusion",  # CIT mod
-
-            # ===== Recipe Viewers (Client-only) =====
-            "emi-", "emi_loot", "emi_trades", "emienchants",
-            "jeiintegration", "jerintegration",
-
-            # ===== Cosmetics =====
-            "capes", "cosmetica", "ears", "customskinloader",
-            "showmeyourskin", "armorstandhud",
-
-            # ===== Screen/Loading =====
-            "better_loading_screen", "loadingscreen", "customloadingscreen",
-            "seamless_loading_screen", "splashscreen", "mainmenucredits",
-            "bettermodbutton", "darkmode", "darkmodeeverywhere", "darkgui",
-
-            # ===== Misc Client-only =====
-            "light_overlay", "lightoverlay", "spawnmarkers",
-            "appleskin-client", "torohealth", "damage_indicator",
-            "inventory_tweaks", "inventory_profiles", "trashslot",
-            "mod_menu", "fabric_api-client",
-            "notenoughcrashes", "not_enough_crashes", "crashassistant", "yosbr",
-            "betterbiomeblend", "better_biome_blend", "noisium",
-            "textureloader", "lambdabettergrass", "colinoclient",
-            "modelfix", "model_fix", "no_fog", "fogcontrol",
-            "resolutioncontrol", "resizablechat",
-            "boostedbrightness", "fullbright", "gamma_utils", "nightvisionflash",
-            "eating_animation", "eatinganimation", "bettercombatrenders",
-            "cubesideanywhere", "findme", "highlight", "radon",
-            "distant_horizons", "distanthorizons",
-            "worldedit_cui",
-
-            # ===== Problematic mods specific to 1.19.2 =====
-            "euphoriapatcher", "euphoria_patcher",
-            "neko", "nekoenchanted",
-            "yungsmenutweaks", "yungs_menu",
-            "spruceui", "spruce_ui",
-            "bocchium",
-            "jeresources", "jer-", "justplayer",
+            # Client-only optimization mods that crash servers
+            "immediatelyfast", "entityculling", "bocchium",
         ]
 
         try:
