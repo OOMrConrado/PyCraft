@@ -1,0 +1,173 @@
+{
+  "version": "2.0.0",
+  "last_updated": "2025-12-24",
+  "description": "Unified mod database for PyCraft auto-healer",
+
+  "known_client_mods": {
+    "_comment": "Mods that are known to be client-only and should never be on a server",
+    "mods": [
+      {"slug": "sodium", "patterns": ["sodium"], "reason": "Rendering optimization - client only"},
+      {"slug": "iris", "patterns": ["iris", "irisshaders"], "reason": "Shader mod - client only"},
+      {"slug": "indium", "patterns": ["indium"], "reason": "Sodium addon - client rendering"},
+      {"slug": "nvidium", "patterns": ["nvidium"], "reason": "NVIDIA rendering - client only"},
+      {"slug": "lithium", "patterns": ["lithium"], "reason": "Game logic optimization - some versions client only"},
+      {"slug": "modmenu", "patterns": ["modmenu", "mod-menu"], "reason": "Mod menu UI - client only"},
+      {"slug": "sodium-extra", "patterns": ["sodium-extra", "sodiumextra"], "reason": "Sodium addon - client only"},
+      {"slug": "reeses-sodium-options", "patterns": ["reeses-sodium", "reeses_sodium"], "reason": "Sodium UI - client only"},
+      {"slug": "immediatelyfast", "patterns": ["immediatelyfast", "immediately-fast"], "reason": "Rendering optimization - client only"},
+      {"slug": "entityculling", "patterns": ["entityculling", "entity-culling"], "reason": "Entity rendering - client only"},
+      {"slug": "continuity", "patterns": ["continuity"], "reason": "Connected textures - client only"},
+      {"slug": "lambdynamiclights", "patterns": ["lambdynamiclights", "sodiumdynamiclights"], "reason": "Dynamic lighting - client only"},
+      {"slug": "citresewn", "patterns": ["citresewn", "cit-resewn", "cit_resewn"], "reason": "CIT Resewn - client textures only"},
+      {"slug": "cit", "patterns": ["cit-"], "reason": "CIT mod - client textures"},
+      {"slug": "animatica", "patterns": ["animatica"], "reason": "Animated textures - client only"},
+      {"slug": "fabricskyboxes", "patterns": ["fabricskyboxes", "fabric-skyboxes"], "reason": "Custom skyboxes - client only"},
+      {"slug": "entity-texture-features", "patterns": ["entity_texture_features", "entitytexturefeatures", "etf"], "reason": "Entity textures - client only"},
+      {"slug": "capes", "patterns": ["capes"], "reason": "Cape rendering - client only"},
+      {"slug": "cosmetica", "patterns": ["cosmetica"], "reason": "Cosmetics - client only"},
+      {"slug": "ears", "patterns": ["ears"], "reason": "Skin features - client only"},
+      {"slug": "customskinloader", "patterns": ["customskinloader"], "reason": "Skin loader - client only"},
+      {"slug": "skinlayers3d", "patterns": ["skinlayers3d", "skin-layers-3d", "3dskinlayers"], "reason": "3D skin layers - client only"},
+      {"slug": "notenoughanimations", "patterns": ["notenoughanimations", "not-enough-animations"], "reason": "Player animations - client only"},
+      {"slug": "firstperson", "patterns": ["firstperson", "first-person", "firstpersonmod"], "reason": "First person model - client only"},
+      {"slug": "betterf3", "patterns": ["betterf3", "better-f3"], "reason": "Debug screen - client only"},
+      {"slug": "blur", "patterns": ["blur-fabric", "blur-forge"], "reason": "Menu blur - client only"},
+      {"slug": "controlling", "patterns": ["controlling"], "reason": "Controls UI - client only"},
+      {"slug": "configured", "patterns": ["configured"], "reason": "Config UI - client only"},
+      {"slug": "catalogue", "patterns": ["catalogue"], "reason": "Mod menu - client only"},
+      {"slug": "appleskin", "patterns": ["appleskin"], "reason": "Food UI overlay - client only"},
+      {"slug": "shulkerboxtooltip", "patterns": ["shulkerboxtooltip"], "reason": "Tooltip UI - client only"},
+      {"slug": "jade", "patterns": ["jade-"], "reason": "WAILA/HWYLA - has server component but UI is client"},
+      {"slug": "wthit", "patterns": ["wthit"], "reason": "What The Hell Is That - client only"},
+      {"slug": "embeddium", "patterns": ["embeddium"], "reason": "Sodium port for Forge - client only"},
+      {"slug": "rubidium", "patterns": ["rubidium"], "reason": "Sodium port for Forge - client only"},
+      {"slug": "oculus", "patterns": ["oculus"], "reason": "Iris port for Forge - client only"},
+      {"slug": "optifine", "patterns": ["optifine", "optifabric"], "reason": "Rendering optimization - client only"},
+      {"slug": "replaymod", "patterns": ["replaymod", "replay-mod"], "reason": "Recording mod - client only"},
+      {"slug": "emotecraft", "patterns": ["emotecraft"], "reason": "Emotes - client only"},
+      {"slug": "controllable", "patterns": ["controllable"], "reason": "Controller support - client only"},
+      {"slug": "controlify", "patterns": ["controlify"], "reason": "Controller support - client only"},
+      {"slug": "midnightcontrols", "patterns": ["midnightcontrols"], "reason": "Controller support - client only"},
+      {"slug": "fancymenu", "patterns": ["fancymenu"], "reason": "Menu customization - client only"},
+      {"slug": "drippyloadingscreen", "patterns": ["drippyloadingscreen", "drippy-loading"], "reason": "Loading screen - client only"},
+      {"slug": "loadmyresources", "patterns": ["loadmyresources"], "reason": "Resource pack loader - client only"},
+      {"slug": "enhancedvisuals", "patterns": ["enhancedvisuals", "enhanced-visuals"], "reason": "Visual effects - client only"},
+      {"slug": "screenshot", "patterns": ["screenshot", "forgeshot", "fabrishot"], "reason": "Screenshot mod - client only"},
+      {"slug": "borderlesswindow", "patterns": ["borderless", "cubeswithoutborders", "fullscreenwindowed"], "reason": "Borderless window - client only"},
+      {"slug": "itemlocks", "patterns": ["itemlocks", "ktnilcks"], "reason": "Item locking UI - client only"},
+      {"slug": "chimelib", "patterns": ["chimelib", "chime-lib"], "reason": "Chime library - client rendering"},
+      {"slug": "obsidianui", "patterns": ["obsidianui"], "reason": "UI library - client only"},
+      {"slug": "spruceui", "patterns": ["spruceui", "spruce_ui"], "reason": "UI library - client only"},
+      {"slug": "cloth-config", "patterns": ["cloth-config", "clothconfig"], "reason": "Config UI library - mostly client"},
+      {"slug": "modmenu", "patterns": ["modmenu"], "reason": "Mod menu - client only"},
+      {"slug": "dynamic-fps", "patterns": ["dynamic-fps", "dynamicfps"], "reason": "FPS management - client only"},
+      {"slug": "smoothboot", "patterns": ["smoothboot", "smooth-boot"], "reason": "Boot optimization - client focused"},
+      {"slug": "lazydfu", "patterns": ["lazydfu", "lazy-dfu"], "reason": "DFU optimization - can cause issues on server"},
+      {"slug": "bobby", "patterns": ["bobby"], "reason": "Chunk caching - client only"},
+      {"slug": "distanthorizons", "patterns": ["distanthorizons", "distant-horizons"], "reason": "LOD rendering - client only"},
+      {"slug": "physics-mod", "patterns": ["physics-mod", "physicsmod"], "reason": "Physics rendering - client only"},
+      {"slug": "effective", "patterns": ["effective"], "reason": "Visual effects - client only"},
+      {"slug": "visuality", "patterns": ["visuality"], "reason": "Particle effects - client only"},
+      {"slug": "presence-footsteps", "patterns": ["presence-footsteps", "presencefootsteps"], "reason": "Sound mod - client only"},
+      {"slug": "soundphysics", "patterns": ["soundphysics", "sound-physics"], "reason": "Sound mod - client only"},
+      {"slug": "ambientsounds", "patterns": ["ambientsounds", "ambient-sounds"], "reason": "Sound mod - client only"},
+      {"slug": "extrasounds", "patterns": ["extrasounds", "extra-sounds"], "reason": "Sound mod - client only"}
+    ]
+  },
+
+  "error_patterns": {
+    "_comment": "Known error patterns and how to handle them",
+    "patterns": [
+      {
+        "id": "client_class_dedicated_server",
+        "regex": "Attempted to load class.*for invalid dist DEDICATED_SERVER",
+        "description": "Client-only class loaded on dedicated server",
+        "action": "identify_and_remove",
+        "extract_mod_from": "mixin_config"
+      },
+      {
+        "id": "mixin_client_target_not_found",
+        "regex": "@Mixin target.*client.*was not found",
+        "description": "Mixin targeting client class on server",
+        "action": "identify_and_remove",
+        "extract_mod_from": "mixin_config"
+      },
+      {
+        "id": "missing_dependency",
+        "regex": "Mod.*requires.*is not installed|requires.*not installed|Unsatisfied dependency",
+        "description": "Missing mod dependency",
+        "action": "install_or_remove",
+        "extract_mod_from": "error_message"
+      },
+      {
+        "id": "fabric_environment_mismatch",
+        "regex": "environment.*CLIENT.*DEDICATED_SERVER|cannot load.*client.*on.*server",
+        "description": "Fabric mod in wrong environment",
+        "action": "identify_and_remove",
+        "extract_mod_from": "mod_id"
+      },
+      {
+        "id": "class_not_found_client",
+        "regex": "NoClassDefFoundError.*(net/minecraft/client/|com/mojang/blaze3d/)",
+        "description": "Client class not found on server",
+        "action": "identify_and_remove",
+        "extract_mod_from": "stacktrace"
+      },
+      {
+        "id": "mixin_apply_error",
+        "regex": "Mixin apply.*failed|MixinApplyError",
+        "description": "Mixin failed to apply",
+        "action": "identify_and_remove",
+        "extract_mod_from": "mixin_config"
+      },
+      {
+        "id": "mod_loading_exception",
+        "regex": "ModLoadingException|LoadingFailedException",
+        "description": "General mod loading error",
+        "action": "identify_and_remove",
+        "extract_mod_from": "error_message"
+      }
+    ]
+  },
+
+  "fatal_errors": {
+    "_comment": "Errors that cannot be auto-fixed and require user intervention",
+    "patterns": [
+      {
+        "id": "out_of_memory",
+        "regex": "OutOfMemoryError|GC overhead limit exceeded|Java heap space",
+        "description": "Server ran out of memory",
+        "user_message": "The server ran out of memory. Go to Settings and increase the allocated RAM."
+      },
+      {
+        "id": "port_in_use",
+        "regex": "Address already in use|EADDRINUSE|Failed to bind to port",
+        "description": "Port 25565 is already in use",
+        "user_message": "Port 25565 is already in use. Close any other Minecraft server or change the port in server.properties."
+      },
+      {
+        "id": "java_version_mismatch",
+        "regex": "UnsupportedClassVersionError|class file version.*current.*version",
+        "description": "Wrong Java version",
+        "user_message": "Incorrect Java version. Go to Settings > Java to install the correct version."
+      },
+      {
+        "id": "corrupted_world",
+        "regex": "Exception reading.*level\\.dat|Corrupted.*region file|InvalidNBTException",
+        "description": "World data is corrupted",
+        "user_message": "World data appears to be corrupted. Try restoring a backup or deleting the world/ folder."
+      },
+      {
+        "id": "duplicate_mod",
+        "regex": "Duplicate mod|Found duplicate|already loaded.*same id",
+        "description": "Duplicate mod detected",
+        "user_message": "There are duplicate mods. Check the mods/ folder and remove duplicate copies."
+      }
+    ]
+  },
+
+  "modrinth_cache": {
+    "_comment": "Cache of mod info from Modrinth API - populated at runtime",
+    "mods": {}
+  }
+}
