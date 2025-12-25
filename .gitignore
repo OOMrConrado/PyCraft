@@ -35,9 +35,12 @@ env/
 *~
 .DS_Store
 
-# PyInstaller build outputs
+# PyInstaller build outputs (keep only .iss and .spec for GitHub Actions)
 executable-files/build/
 executable-files/dist/
+executable-files/*.bat
+executable-files/*.py
+executable-files/README.md
 
 # Logs
 *.log
