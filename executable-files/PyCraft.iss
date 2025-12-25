@@ -1,14 +1,9 @@
-; PyCraft Inno Setup Script
-; Auto-updatable Minecraft Server Manager Installer
-
 #define MyAppName "PyCraft"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "OOMrConrado"
 #define MyAppURL "https://github.com/OOMrConrado/PyCraft"
 #define MyAppExeName "PyCraft.exe"
-
 [Setup]
-; App Information
 AppId={{B8E9F3A1-2D4C-4E8B-9F1A-6C7D8E9F0A1B}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -17,82 +12,53 @@ AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}/issues
 AppUpdatesURL={#MyAppURL}/releases
-
-; Installation Directories
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-
-; Output Configuration
 OutputDir=..\dist
 OutputBaseFilename=PyCraft-Setup
 SetupIconFile=..\PyCraft-Files\icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-
-; Compression
 Compression=lzma2/max
 SolidCompression=yes
-
-; Windows Version Requirements
 MinVersion=10.0.17763
 ArchitecturesInstallIn64BitMode=x64
-
-; Privileges
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
-
-; UI Configuration
 WizardStyle=modern
 DisableWelcomePage=no
 LicenseFile=..\LICENSE
-
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
-
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
-
 [Files]
-; Main executable
 Source: "dist\PyCraft.exe"; DestDir: "{app}"; Flags: ignoreversion
-
-; Application files
 Source: "..\PyCraft-Files\*"; DestDir: "{app}\PyCraft-Files"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; NOTE: Don't use "Flags: ignoreversion" on any shared system files
-
 [Icons]
-; Start Menu
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\PyCraft-Files\icon.ico"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-
-; Desktop icon (optional)
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\PyCraft-Files\icon.ico"; Tasks: desktopicon
-
 [Run]
-; Launch app after installation
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
-
 [Code]
 // Check if app is running and close it before update
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  ResultCode: Integer;
+ResultCode: Integer;
 begin
-  // Try to close PyCraft if it's running
-  Exec('taskkill', '/F /IM PyCraft.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Result := '';
+// Try to close PyCraft if it's running
+Exec('taskkill', '/F /IM PyCraft.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+Result := '';
 end;
-
 // Custom messages for silent update mode
 function InitializeSetup(): Boolean;
 begin
-  Result := True;
-
-  // If running in silent mode (for auto-update), don't show anything
-  if WizardSilent then
-  begin
-    Log('Running in silent update mode');
-  end;
+Result := True;
+// If running in silent mode (for auto-update), don't show anything
+if WizardSilent then
+begin
+Log('Running in silent update mode');
+end;
 end;
