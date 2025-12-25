@@ -33,13 +33,10 @@ jobs:
           echo "Building version: $version"
 
       - name: Update version in __version__.py
-        shell: pwsh
+        shell: bash
         run: |
-          $version = "${{ steps.get_version.outputs.VERSION }}"
-          Set-Content -Path "src/__version__.py" -Value "`"``"``"PyCraft version information`"``"``"`n__version__ = `"$version`""
-
-      - name: Convert icon
-        run: python executable-files/convert_icon.py
+          echo '"""PyCraft version information"""' > src/__version__.py
+          echo '__version__ = "${{ steps.get_version.outputs.VERSION }}"' >> src/__version__.py
 
       - name: Build executable with PyInstaller
         working-directory: executable-files
@@ -77,8 +74,7 @@ jobs:
         id: installer
         shell: pwsh
         run: |
-          $version = "${{ steps.get_version.outputs.VERSION }}"
-          $filename = "PyCraft-Setup-$version.exe"
+          $filename = "PyCraft-Setup.exe"
           echo "FILENAME=$filename" >> $env:GITHUB_OUTPUT
           echo "Installer filename: $filename"
 

@@ -4,19 +4,38 @@
 
 **Una herramienta intuitiva para crear y gestionar servidores de Minecraft vanilla y con modpacks**
 
-PyCraft simplifica la creación de servidores de Minecraft, permitiéndote descargar, configurar e iniciar servidores vanilla o con modpacks de forma automática. Con soporte para Forge, Fabric, y búsqueda integrada de modpacks de Modrinth.
+PyCraft simplifica la creación de servidores de Minecraft, permitiéndote descargar, configurar e iniciar servidores vanilla o con modpacks de forma automática. Con soporte para Forge, Fabric, NeoForge, Quilt, y búsqueda integrada de modpacks de Modrinth.
 
 ---
 
 ## Características
 
+### Gestión de Servidores
 - **Servidores Vanilla**: Crea servidores Minecraft vanilla con un solo clic
-- **Modpacks**: Busca e instala modpacks directamente desde Modrinth
+- **Servidores con Mods**: Instala y gestiona servidores con Forge, Fabric, NeoForge o Quilt
+- **Instalación de Modpacks**: Busca e instala modpacks de servidor directamente desde Modrinth
+- **Modpacks de Cliente**: Instala modpacks para tu launcher de Minecraft
 - **Configuración Automática**: EULA aceptado y server.properties configurado automáticamente
-- **Loaders**: Soporte para Forge y Fabric
-- **Java**: Verificación e instalación automática de Java
-- **Gestión Completa**: Inicia, detiene y envía comandos a tus servidores
-- **Interfaz Intuitiva**: GUI moderna con PySide6 (framework Qt)
+- **Reinicio Rápido**: Estado del servidor mantenido tras detener/crash para reinicio instantáneo
+
+### Interfaz
+- **UI Moderna**: Interfaz limpia construida con PySide6 (framework Qt)
+- **Sidebar Organizado**: Navegación fácil con secciones dedicadas para:
+  - Inicio
+  - Servidor Vanilla
+  - Servidor con Mods
+  - Modpacks de Cliente
+  - Gestión (Java y Modpacks)
+  - Configuración
+- **Consola en Tiempo Real**: Consola de 500 líneas con resaltado de sintaxis
+- **Enlaces Rápidos**: Acceso directo a GitHub, Modrinth, CurseForge
+
+### Características Avanzadas
+- **Gestión de Java**: Detección e instalación automática de Java con compatibilidad de versiones
+- **Detección de Crashes**: Detección automática de crashes con acceso directo a logs y reportes de crash
+- **Editor de Config**: Editor integrado de server.properties (habilitado tras primera ejecución)
+- **Feedback Visual**: Animaciones de botones e indicadores de estado
+- **Operaciones Thread-safe**: Gestión confiable del servidor con threading apropiado
 
 ---
 
@@ -24,7 +43,7 @@ PyCraft simplifica la creación de servidores de Minecraft, permitiéndote desca
 
 ### Requisitos Previos
 - **Python 3.8+** instalado
-- **Java 17+** (o la versión será instalada automáticamente)
+- **Java 17+** (o será instalado automáticamente)
 - **Windows 10/11** (Linux y macOS compatibles)
 
 ### Pasos de Instalación
@@ -59,38 +78,52 @@ python main.py
 ### Crear un Servidor Vanilla
 
 1. Abre PyCraft
-2. Ve a la pestaña **"Servidor Vanilla"**
+2. Ve a **"Servidor Vanilla"** en el sidebar
 3. Selecciona **"Crear Servidor Nuevo"**
 4. Busca y selecciona una versión de Minecraft
 5. Elige una carpeta de destino
 6. Haz clic en **"Descargar e Instalar Servidor"**
 7. Una vez completado, haz clic en **"Iniciar Servidor"**
+8. El servidor generará `server.properties` en la primera ejecución
+9. Usa el botón **"Config"** para personalizar la configuración del servidor
 
-### Instalar un Modpack
+### Instalar un Modpack de Servidor
 
-1. Ve a la pestaña **"Servidor con Mods"**
-2. Selecciona **"Instalación de Modpack"**
+1. Ve a **"Servidor con Mods"** en el sidebar
+2. Selecciona **"Instalar Servidor"**
 3. Busca tu modpack favorito (ej: "Create", "ATM9")
 4. Selecciona el modpack y la versión
 5. Elige una carpeta de destino
 6. Haz clic en **"Instalar Modpack"**
-7. PyCraft descargará e instalará todo automáticamente
+7. PyCraft descargará y configurará todo automáticamente
+8. Haz clic en **"Iniciar Servidor"** cuando esté listo
 
-### Gestionar un Servidor con Modpack
+### Gestionar un Servidor Existente
 
-1. En **"Servidor con Mods"**, selecciona **"Gestión de Servidor"**
+1. En **"Servidor con Mods"**, selecciona **"Ejecutar Servidor"**
 2. Elige la carpeta del servidor
-3. PyCraft detectará automáticamente el tipo (Forge/Fabric)
+3. PyCraft detectará automáticamente el tipo (Forge/Fabric/NeoForge/Quilt)
 4. Haz clic en **"Iniciar Servidor"**
+5. Envía comandos a través de la consola
+6. Usa **"Config"** para editar las propiedades del servidor (tras primera ejecución)
+
+### Instalar Modpacks de Cliente
+
+1. Ve a **"Modpacks de Cliente"** en el sidebar
+2. Busca un modpack
+3. Selecciona versión y destino
+4. Haz clic en **"Instalar"**
+5. Sigue las instrucciones para agregarlo a tu launcher
 
 ---
 
 ## Tecnologías
 
 - **Python 3.x**
-- **CustomTkinter** - Interfaz gráfica moderna
+- **PySide6** - Framework GUI moderno basado en Qt
+- **QtAwesome** - Biblioteca de iconos para una interfaz hermosa
 - **Requests** - Comunicación con APIs
-- **Threading** - Ejecución asíncrona
+- **Threading** - Operaciones asíncronas para UI fluida
 
 ---
 
@@ -104,19 +137,48 @@ PyCraft/
 │   └── es/             # Documentación en español
 ├── src/
 │   ├── core/           # Lógica de negocio
-│   │   ├── api/       # APIs (Minecraft, Modrinth)
-│   │   └── download/  # Sistema de descargas
-│   ├── managers/      # Gestores de recursos
-│   │   ├── java/      # Gestión de Java
-│   │   ├── server/    # Servidores Minecraft
-│   │   ├── modpack/   # Instalación de modpacks
-│   │   └── loader/    # Forge y Fabric
-│   └── gui/           # Interfaz gráfica
-│       ├── tabs/      # Pestañas modulares
-│       └── utils/     # Utilidades GUI
+│   │   ├── api.py      # Manejadores de API (Minecraft, Modrinth)
+│   │   └── download.py # Sistema de descargas
+│   ├── managers/       # Gestores de recursos
+│   │   ├── java/       # Detección e instalación de Java
+│   │   ├── server/     # Gestión de servidores
+│   │   └── modpack/    # Instalación de modpacks
+│   ├── gui/            # Interfaz gráfica
+│   │   └── main_window.py  # UI principal
+│   └── utils/          # Utilidades
+└── PyCraft-Files/      # Assets (logo, iconos)
 ```
 
 Para información detallada de la arquitectura, ver [docs/es/STRUCTURE.md](docs/es/STRUCTURE.md)
+
+---
+
+## Vista General de la Interfaz
+
+### Navegación por Sidebar
+- **Inicio**: Página de bienvenida con enlaces rápidos
+- **Servidor Vanilla**: Crea y gestiona servidores vanilla
+- **Servidor con Mods**: Instala y ejecuta servidores con mods
+- **Modpacks de Cliente**: Instala modpacks para tu launcher
+- **Sección de Gestión**:
+  - **Java**: Gestiona instalaciones de Java
+  - **Modpacks**: Visualiza y gestiona modpacks de cliente instalados
+- **Configuración**: Ajustes de la aplicación e información
+
+### Características de la Consola
+- Salida del servidor en tiempo real
+- Resaltado de sintaxis (errores, advertencias, info)
+- Buffer de 500 líneas para logs completos
+- Entrada de comandos con prefijo `/`
+- Feedback visual al enviar comandos
+
+### Manejo de Crashes
+- Detección automática de crashes
+- Diálogo modal con información del crash
+- Enlaces directos a:
+  - Carpeta de logs del servidor
+  - Carpeta de reportes de crash
+- Servidor listo para reiniciar inmediatamente
 
 ---
 
@@ -152,4 +214,5 @@ Este proyecto está bajo la Licencia MIT. Ver [LICENSE](LICENSE) para más detal
 
 - [Mojang](https://www.minecraft.net/) - Por Minecraft
 - [Modrinth](https://modrinth.com/) - Por su excelente API de modpacks
-- [CustomTkinter](https://github.com/TomSchimansky/CustomTkinter) - Por la biblioteca de GUI
+- [PySide6](https://www.qt.io/qt-for-python) - Por el framework Qt
+- [QtAwesome](https://github.com/spyder-ide/qtawesome) - Por la biblioteca de iconos

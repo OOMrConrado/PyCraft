@@ -51,7 +51,7 @@ class UpdateChecker:
                 file_size = 0
 
                 for asset in release_data.get('assets', []):
-                    if asset['name'].startswith('PyCraft-Setup') and asset['name'].endswith('.exe'):
+                    if asset['name'] == 'PyCraft-Setup.exe':
                         download_url = asset['browser_download_url']
                         asset_name = asset['name']
                         file_size = asset.get('size', 0)

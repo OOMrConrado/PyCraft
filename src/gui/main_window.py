@@ -416,10 +416,10 @@ class PyCraftGUI(QMainWindow):
 
         try:
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            icon_path = os.path.join(base_path, "PyCraft-Files", "icon.ico")
+            logo_path = os.path.join(base_path, "PyCraft-Files", "logo.png")
 
-            if os.path.exists(icon_path):
-                self.setWindowIcon(QIcon(icon_path))
+            if os.path.exists(logo_path):
+                self.setWindowIcon(QIcon(logo_path))
         except Exception:
             pass
 
