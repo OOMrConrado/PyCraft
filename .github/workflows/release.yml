@@ -1,0 +1,103 @@
+name: Build and Release PyCraft
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Triggers on version tags like v1.0.0, v1.2.3, etc.
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller pillow
+
+      - name: Extract version from tag
+        id: get_version
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "Building version: $version"
+
+      - name: Update version in __version__.py
+        shell: pwsh
+        run: |
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          Set-Content -Path "src/__version__.py" -Value "`"``"``"PyCraft version information`"``"``"`n__version__ = `"$version`""
+
+      - name: Convert icon
+        run: python executable-files/convert_icon.py
+
+      - name: Build executable with PyInstaller
+        working-directory: executable-files
+        run: pyinstaller --clean PyCraft.spec
+
+      - name: Download and Install Inno Setup
+        shell: pwsh
+        run: |
+          # Download Inno Setup installer
+          $innoUrl = "https://jrsoftware.org/download.php/is.exe"
+          $innoInstaller = "$env:TEMP\innosetup.exe"
+          Invoke-WebRequest -Uri $innoUrl -OutFile $innoInstaller
+
+          # Install silently
+          Start-Process -FilePath $innoInstaller -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-" -Wait
+
+          # Add to PATH
+          echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
+
+      - name: Update version in Inno Setup script
+        shell: pwsh
+        run: |
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $issContent = Get-Content -Path "executable-files/PyCraft.iss" -Raw
+          $issContent = $issContent -replace '#define MyAppVersion ".*"', "#define MyAppVersion `"$version`""
+          Set-Content -Path "executable-files/PyCraft.iss" -Value $issContent
+
+      - name: Build installer with Inno Setup
+        shell: pwsh
+        working-directory: executable-files
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" PyCraft.iss
+
+      - name: Get installer filename
+        id: installer
+        shell: pwsh
+        run: |
+          $version = "${{ steps.get_version.outputs.VERSION }}"
+          $filename = "PyCraft-Setup-$version.exe"
+          echo "FILENAME=$filename" >> $env:GITHUB_OUTPUT
+          echo "Installer filename: $filename"
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          name: PyCraft v${{ steps.get_version.outputs.VERSION }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/${{ steps.installer.outputs.FILENAME }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PyCraft-Installer
+          path: dist/${{ steps.installer.outputs.FILENAME }}
+          retention-days: 90

@@ -1017,6 +1017,70 @@ class PyCraftGUI(QMainWindow):
 
         updates_layout.addWidget(update_container)
 
+        # Download progress bar (hidden by default)
+        self.download_progress_widget = QWidget()
+        self.download_progress_widget.setStyleSheet("background: transparent;")
+        progress_layout = QVBoxLayout(self.download_progress_widget)
+        progress_layout.setContentsMargins(0, 10, 0, 0)
+        progress_layout.setSpacing(5)
+
+        # Progress bar
+        self.download_progress_bar = QProgressBar()
+        self.download_progress_bar.setFixedHeight(24)
+        self.download_progress_bar.setStyleSheet(f"""
+            QProgressBar {{
+                border: none;
+                border-radius: 4px;
+                background-color: {self.colors['bg_input']};
+                text-align: center;
+                color: {self.colors['text']};
+                font-size: 11px;
+            }}
+            QProgressBar::chunk {{
+                border-radius: 4px;
+                background-color: {self.colors['accent']};
+            }}
+        """)
+        progress_layout.addWidget(self.download_progress_bar)
+
+        # Progress label
+        self.download_progress_label = QLabel("")
+        self.download_progress_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px; background: transparent;")
+        progress_layout.addWidget(self.download_progress_label)
+
+        self.download_progress_widget.hide()  # Hidden by default
+        updates_layout.addWidget(self.download_progress_widget)
+
+        # Install button (hidden by default)
+        self.install_update_btn = QPushButton("Install Update Now")
+        self.install_update_btn.setFixedHeight(36)
+        self.install_update_btn.setMinimumWidth(160)
+        self.install_update_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.install_update_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: #000000;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 0 16px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {self.colors['bg_input']};
+                color: {self.colors['text_muted']};
+            }}
+        """)
+        self.install_update_btn.clicked.connect(self._install_downloaded_update)
+        self.install_update_btn.hide()  # Hidden by default
+        updates_layout.addWidget(self.install_update_btn)
+
+        # Store downloaded installer path
+        self.downloaded_installer_path = None
+
         layout.addWidget(updates_frame)
 
         layout.addStretch()
@@ -4773,20 +4837,20 @@ class PyCraftGUI(QMainWindow):
                     self.update_status_label.setText(f"Update available: v{new_version}")
                     self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; font-weight: 600; background: transparent;")
 
-                    # Show update dialog
+                    # Show update dialog with download option
                     reply = QMessageBox.question(
                         self,
                         "Update Available",
                         f"A new version is available!\n\n"
                         f"Current version: {__version__}\n"
                         f"New version: {new_version}\n\n"
-                        f"Would you like to download the update?",
+                        f"Would you like to download and install the update automatically?",
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                         QMessageBox.StandardButton.Yes
                     )
 
                     if reply == QMessageBox.StandardButton.Yes:
-                        self.update_checker.open_download_page(update_info['download_url'])
+                        self._download_and_install_update(update_info)
                 else:
                     # No update available
                     self.update_status_label.setText("You're up to date!")
@@ -4795,6 +4859,91 @@ class PyCraftGUI(QMainWindow):
             QTimer.singleShot(0, update_ui)
 
         threading.Thread(target=check_thread, daemon=True).start()
+
+    def _download_and_install_update(self, update_info: dict):
+        """Download and prepare update for installation"""
+        # Hide check button, show progress
+        self.check_update_btn.hide()
+        self.download_progress_widget.show()
+        self.download_progress_bar.setValue(0)
+        self.download_progress_label.setText("Downloading update...")
+        self.update_status_label.setText("Downloading...")
+
+        def progress_callback(downloaded: int, total: int):
+            """Update progress bar from download thread"""
+            if total > 0:
+                progress = int((downloaded / total) * 100)
+                # Convert bytes to MB
+                downloaded_mb = downloaded / (1024 * 1024)
+                total_mb = total / (1024 * 1024)
+
+                def update_progress():
+                    self.download_progress_bar.setValue(progress)
+                    self.download_progress_label.setText(
+                        f"Downloading: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
+                    )
+
+                QTimer.singleShot(0, update_progress)
+
+        def download_thread():
+            """Download installer in background thread"""
+            installer_path = self.update_checker.download_update(
+                update_info['download_url'],
+                progress_callback
+            )
+
+            def download_complete():
+                if installer_path:
+                    # Download successful
+                    self.downloaded_installer_path = installer_path
+                    self.download_progress_widget.hide()
+                    self.install_update_btn.show()
+                    self.update_status_label.setText("Download complete! Ready to install.")
+                    self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; font-weight: 600; background: transparent;")
+
+                    # Ask if user wants to install now
+                    reply = QMessageBox.question(
+                        self,
+                        "Download Complete",
+                        "Update downloaded successfully!\n\n"
+                        "Would you like to install it now?\n\n"
+                        "Note: PyCraft will close and restart after installation.",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes
+                    )
+
+                    if reply == QMessageBox.StandardButton.Yes:
+                        self._install_downloaded_update()
+                else:
+                    # Download failed
+                    self.download_progress_widget.hide()
+                    self.check_update_btn.show()
+                    self.update_status_label.setText("Download failed. Please try again.")
+                    self.update_status_label.setStyleSheet(f"color: #ef4444; font-size: 12px; background: transparent;")
+
+            QTimer.singleShot(0, download_complete)
+
+        threading.Thread(target=download_thread, daemon=True).start()
+
+    def _install_downloaded_update(self):
+        """Install the downloaded update"""
+        if not self.downloaded_installer_path:
+            return
+
+        # Confirm installation
+        reply = QMessageBox.question(
+            self,
+            "Install Update",
+            "PyCraft will now close and install the update.\n\n"
+            "The application will restart automatically after installation.\n\n"
+            "Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            # Install update (this will close the application)
+            self.update_checker.install_update(self.downloaded_installer_path, silent=True)
 
     def _refresh_modpack_list(self):
         """Refresh the list of installed client modpacks in Settings"""
