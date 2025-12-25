@@ -81,6 +81,8 @@ from ..managers.server import ServerManager
 from ..managers.modpack import ModpackManager
 from ..managers.java import JavaManager
 from ..utils import system_utils
+from ..utils.updater import UpdateChecker
+from ..__version__ import __version__
 
 
 class SidebarButton(QPushButton):
@@ -340,6 +342,7 @@ class PyCraftGUI(QMainWindow):
         self.modpack_manager = ModpackManager()
         self.java_manager = JavaManager()
         self.api_config = APIConfig()
+        self.update_checker = UpdateChecker(__version__)
 
         cf_key = self.api_config.get_curseforge_key()
         if cf_key:
@@ -731,17 +734,13 @@ class PyCraftGUI(QMainWindow):
         github.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft"))
         layout.addWidget(github)
 
-        modrinth = FooterLink("Modrinth", "Browse Modpacks", "fa5s.box-open")
-        modrinth.clicked.connect(lambda: webbrowser.open("https://modrinth.com/modpacks"))
-        layout.addWidget(modrinth)
+        documentation = FooterLink("Documentation", "User Guide", "fa5s.book")
+        documentation.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft/wiki"))
+        layout.addWidget(documentation)
 
-        curseforge = FooterLink("CurseForge", "Browse Mods", "fa5s.fire")
-        curseforge.clicked.connect(lambda: webbrowser.open("https://www.curseforge.com/minecraft"))
-        layout.addWidget(curseforge)
-
-        webpage = FooterLink("Web Page", "Visit Our Site", "fa5s.globe")
-        webpage.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft"))
-        layout.addWidget(webpage)
+        support = FooterLink("Support", "Get Help", "fa5s.question-circle")
+        support.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft/issues"))
+        layout.addWidget(support)
 
         return footer
 
@@ -960,6 +959,65 @@ class PyCraftGUI(QMainWindow):
         about_layout.addWidget(about_text)
 
         layout.addWidget(about_frame)
+
+        # Updates section
+        updates_frame = self._section_frame("Application Updates")
+        updates_layout = updates_frame.layout()
+
+        # Current version info
+        version_container = QWidget()
+        version_container.setStyleSheet("background: transparent;")
+        version_layout = QHBoxLayout(version_container)
+        version_layout.setContentsMargins(0, 0, 0, 0)
+        version_layout.setSpacing(10)
+
+        version_label = QLabel(f"Current version: {__version__}")
+        version_label.setStyleSheet(f"color: {self.colors['text']}; font-size: 13px; background: transparent;")
+        version_layout.addWidget(version_label)
+        version_layout.addStretch()
+
+        updates_layout.addWidget(version_container)
+
+        # Update button container
+        update_container = QWidget()
+        update_container.setStyleSheet("background: transparent;")
+        update_btn_layout = QHBoxLayout(update_container)
+        update_btn_layout.setContentsMargins(0, 5, 0, 0)
+        update_btn_layout.setSpacing(10)
+
+        self.check_update_btn = QPushButton("Check for Updates")
+        self.check_update_btn.setFixedHeight(36)
+        self.check_update_btn.setMinimumWidth(160)
+        self.check_update_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.check_update_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: #000000;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: 600;
+                padding: 0 16px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
+            }}
+            QPushButton:disabled {{
+                background-color: {self.colors['bg_input']};
+                color: {self.colors['text_muted']};
+            }}
+        """)
+        self.check_update_btn.clicked.connect(self._check_for_updates)
+        update_btn_layout.addWidget(self.check_update_btn)
+
+        self.update_status_label = QLabel("")
+        self.update_status_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 12px; background: transparent;")
+        update_btn_layout.addWidget(self.update_status_label)
+        update_btn_layout.addStretch()
+
+        updates_layout.addWidget(update_container)
+
+        layout.addWidget(updates_frame)
 
         layout.addStretch()
         scroll.setWidget(content)
@@ -4695,6 +4753,48 @@ class PyCraftGUI(QMainWindow):
                     f"Windows permission dialog."
                 )
             self._check_java()
+
+    def _check_for_updates(self):
+        """Check for application updates from GitHub"""
+        # Disable button during check
+        self.check_update_btn.setEnabled(False)
+        self.update_status_label.setText("Checking for updates...")
+        self.update_status_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 12px; background: transparent;")
+
+        def check_thread():
+            update_info = self.update_checker.check_for_updates()
+
+            def update_ui():
+                self.check_update_btn.setEnabled(True)
+
+                if update_info:
+                    # Update available
+                    new_version = update_info['version']
+                    self.update_status_label.setText(f"Update available: v{new_version}")
+                    self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; font-weight: 600; background: transparent;")
+
+                    # Show update dialog
+                    reply = QMessageBox.question(
+                        self,
+                        "Update Available",
+                        f"A new version is available!\n\n"
+                        f"Current version: {__version__}\n"
+                        f"New version: {new_version}\n\n"
+                        f"Would you like to download the update?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes
+                    )
+
+                    if reply == QMessageBox.StandardButton.Yes:
+                        self.update_checker.open_download_page(update_info['download_url'])
+                else:
+                    # No update available
+                    self.update_status_label.setText("You're up to date!")
+                    self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; background: transparent;")
+
+            QTimer.singleShot(0, update_ui)
+
+        threading.Thread(target=check_thread, daemon=True).start()
 
     def _refresh_modpack_list(self):
         """Refresh the list of installed client modpacks in Settings"""
