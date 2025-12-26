@@ -99,6 +99,35 @@ class SidebarButton(QPushButton):
         self.setIconSize(QSize(20, 20))
         self._apply_style(False)
 
+        # Notification dot (hidden by default)
+        self._notification_dot = QLabel(self)
+        self._notification_dot.setFixedSize(8, 8)
+        self._notification_dot.setStyleSheet("background-color: #fbbf24; border-radius: 4px;")
+        self._notification_dot.hide()
+
+        # Blink timer for notification
+        self._blink_timer = QTimer(self)
+        self._blink_timer.timeout.connect(self._toggle_dot_visibility)
+        self._dot_visible = True
+
+    def _toggle_dot_visibility(self):
+        """Toggle dot visibility for blinking effect"""
+        self._dot_visible = not self._dot_visible
+        self._notification_dot.setVisible(self._dot_visible)
+
+    def show_notification(self, show: bool = True):
+        """Show or hide the notification dot"""
+        if show:
+            self._notification_dot.show()
+        else:
+            self._notification_dot.hide()
+
+    def resizeEvent(self, event):
+        """Position the notification dot when button is resized"""
+        super().resizeEvent(event)
+        # Position dot at the right side of the button
+        self._notification_dot.move(self.width() - 20, (self.height() - 8) // 2)
+
     def _apply_style(self, selected: bool):
         if selected:
             self.setIcon(qta.icon(self.icon_name, color="#4ade80"))
@@ -288,6 +317,117 @@ class FooterLink(QFrame):
         self.clicked.emit()
 
 
+class ToastNotification(QFrame):
+    """Toast notification widget that appears temporarily"""
+
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(280, 70)
+        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self._setup_ui()
+        self._auto_hide_timer = QTimer(self)
+        self._auto_hide_timer.timeout.connect(self._fade_out)
+        self._opacity = 1.0
+        self._fade_timer = QTimer(self)
+        self._fade_timer.timeout.connect(self._do_fade)
+        self._fading_out = False
+
+    def _setup_ui(self):
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #2a2a2a;
+                border: 1px solid #fbbf24;
+                border-radius: 10px;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(10)
+
+        # Icon
+        icon_label = QLabel()
+        icon_label.setPixmap(qta.icon("fa5s.arrow-circle-up", color="#fbbf24").pixmap(24, 24))
+        icon_label.setStyleSheet("background: transparent; border: none;")
+        layout.addWidget(icon_label)
+
+        # Text container
+        text_widget = QWidget()
+        text_widget.setStyleSheet("background: transparent;")
+        text_layout = QVBoxLayout(text_widget)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(2)
+
+        self._title_label = QLabel("Update available")
+        self._title_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #fbbf24; background: transparent; border: none;")
+        text_layout.addWidget(self._title_label)
+
+        self._subtitle_label = QLabel("Go to Settings to update")
+        self._subtitle_label.setStyleSheet("font-size: 11px; color: #8b949e; background: transparent; border: none;")
+        text_layout.addWidget(self._subtitle_label)
+
+        layout.addWidget(text_widget)
+        layout.addStretch()
+
+        # Close button
+        close_btn = QPushButton("×")
+        close_btn.setFixedSize(20, 20)
+        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #6e7681;
+                border: none;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                color: #ffffff;
+            }
+        """)
+        close_btn.clicked.connect(self.close_immediately)
+        layout.addWidget(close_btn)
+
+    def show_update(self, version: str, duration_ms: int = 15000):
+        """Show the toast with update info"""
+        self._title_label.setText(f"Update available: v{version}")
+        self._opacity = 1.0
+        self._fading_out = False
+        self.setWindowOpacity(1.0)
+        self.show()
+        self.raise_()
+        self._auto_hide_timer.start(duration_ms)
+
+    def close_immediately(self):
+        """Close the toast immediately without animation"""
+        self._auto_hide_timer.stop()
+        self._fade_timer.stop()
+        self.hide()
+
+    def _fade_out(self):
+        """Start fade out animation"""
+        self._auto_hide_timer.stop()
+        self._fading_out = True
+        self._fade_timer.start(30)  # 30ms interval for smooth fade
+
+    def _do_fade(self):
+        """Perform fade animation step"""
+        self._opacity -= 0.05
+        if self._opacity <= 0:
+            self._fade_timer.stop()
+            self.hide()
+            self._opacity = 1.0
+        else:
+            self.setWindowOpacity(self._opacity)
+
+    def mousePressEvent(self, event):
+        if not self._fading_out:
+            self.clicked.emit()
+            self.close_immediately()
+
+
 class PyCraftGUI(QMainWindow):
     """Main PyCraft Application Window"""
 
@@ -308,10 +448,16 @@ class PyCraftGUI(QMainWindow):
     server_crashed_signal = Signal(str)  # server path for crash modal
     vanilla_server_stopped_signal = Signal(bool)  # success (True = normal stop, False = crash)
     modpack_server_stopped_signal = Signal(bool)  # success (True = normal stop, False = crash)
+    vanilla_server_started_signal = Signal(bool)  # success
+    modpack_server_started_signal = Signal(bool)  # success
     # Modal signals (thread-safe)
     vanilla_install_success_signal = Signal(str, str)  # version, folder
     server_modpack_install_success_signal = Signal(str, str, str)  # name, mc_version, loader
     client_modpack_install_success_signal = Signal(str, str, str, str, str)  # name, mc_ver, loader, loader_ver, path
+    update_check_complete_signal = Signal(object)  # update_info dict or None
+    update_download_progress_signal = Signal(int, float, float)  # progress%, downloaded_mb, total_mb
+    update_download_complete_signal = Signal(str)  # installer_path or empty string if failed
+    startup_update_check_signal = Signal(object)  # update_info dict or None (for startup check)
 
     def __init__(self):
         super().__init__()
@@ -437,6 +583,8 @@ class PyCraftGUI(QMainWindow):
         self.server_crashed_signal.connect(self._show_server_crash_dialog)
         self.vanilla_server_stopped_signal.connect(self._on_vanilla_server_stopped)
         self.modpack_server_stopped_signal.connect(self._on_modpack_server_stopped)
+        self.vanilla_server_started_signal.connect(self._on_vanilla_server_started)
+        self.modpack_server_started_signal.connect(self._on_modpack_server_started)
         # Modal signals - use lambdas with QTimer to avoid blocking
         self.vanilla_install_success_signal.connect(
             lambda v, f: QTimer.singleShot(100, lambda: self._show_vanilla_install_success(v, f))
@@ -568,6 +716,56 @@ class PyCraftGUI(QMainWindow):
 
         # Remove borders from ALL QLabels
         self._remove_label_borders()
+
+        # Toast notification for updates (positioned in bottom-right)
+        self.update_toast = ToastNotification(self)
+        self.update_toast.hide()
+        self.update_toast.clicked.connect(lambda: self._go_to("settings"))
+        self.startup_update_check_signal.connect(self._on_startup_update_check)
+
+        # Store pending update info
+        self._pending_update_info = None
+
+        # Check for updates on startup (small delay to let UI load first)
+        QTimer.singleShot(500, self._check_for_updates_startup)
+
+    def _position_toast(self):
+        """Position the toast in the bottom-right corner"""
+        if self.update_toast:
+            margin = 20
+            x = self.width() - self.update_toast.width() - margin
+            y = self.height() - self.update_toast.height() - margin - 80  # 80 for footer
+            self.update_toast.move(x, y)
+
+    def resizeEvent(self, event):
+        """Handle window resize to reposition toast"""
+        super().resizeEvent(event)
+        self._position_toast()
+
+    def _check_for_updates_startup(self):
+        """Check for updates in background on startup"""
+        def check_thread():
+            try:
+                update_info = self.update_checker.check_for_updates()
+            except Exception:
+                update_info = None
+            self.startup_update_check_signal.emit(update_info)
+
+        threading.Thread(target=check_thread, daemon=True).start()
+
+    def _on_startup_update_check(self, update_info):
+        """Handle startup update check result"""
+        if update_info:
+            # Store update info for later use
+            self._pending_update_info = update_info
+            new_version = update_info['version']
+
+            # Show blinking dot on Settings tab
+            self.sidebar_buttons["settings"].show_notification(True)
+
+            # Show toast notification
+            self._position_toast()
+            self.update_toast.show_update(new_version, duration_ms=15000)
 
     def _remove_label_borders(self):
         """Remove borders from all QLabel widgets to fix PySide6 rendering bug"""
@@ -1011,7 +1209,7 @@ class PyCraftGUI(QMainWindow):
         update_btn_layout.addWidget(self.check_update_btn)
 
         self.update_status_label = QLabel("")
-        self.update_status_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 12px; background: transparent;")
+        self.update_status_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 12px; background: transparent; border: none;")
         update_btn_layout.addWidget(self.update_status_label)
         update_btn_layout.addStretch()
 
@@ -1080,6 +1278,14 @@ class PyCraftGUI(QMainWindow):
 
         # Store downloaded installer path
         self.downloaded_installer_path = None
+
+        # Update check animation timer
+        self.update_check_timer = QTimer(self)
+        self.update_check_timer.timeout.connect(self._animate_update_dots)
+        self.update_dot_count = 0
+        self.update_check_complete_signal.connect(self._on_update_check_complete)
+        self.update_download_progress_signal.connect(self._on_download_progress)
+        self.update_download_complete_signal.connect(self._on_download_complete)
 
         layout.addWidget(updates_frame)
 
@@ -2036,6 +2242,14 @@ class PyCraftGUI(QMainWindow):
         # Show footer only on home page
         self.footer.setVisible(page == "home")
 
+        # Hide update toast when leaving Home
+        if page != "home" and hasattr(self, 'update_toast'):
+            self.update_toast.close_immediately()
+
+        # Hide notification dot when entering Settings
+        if page == "settings":
+            self.sidebar_buttons["settings"].show_notification(False)
+
         sidebar_map = {
             "home": "home", "vanilla": "vanilla", "vanilla_create": "vanilla", "vanilla_run": "vanilla",
             "modded": "modded", "modpack_install": "modded", "modpack_run": "modded",
@@ -2587,15 +2801,20 @@ class PyCraftGUI(QMainWindow):
                 detached=True,
                 on_stopped=on_server_stopped
             )
-            if success:
-                QTimer.singleShot(0, lambda: self.run_cmd_btn.setEnabled(True))
-            else:
-                # Re-enable start button if failed
-                QTimer.singleShot(0, lambda: self.run_start.setEnabled(True))
-                QTimer.singleShot(0, lambda: self.run_config.setEnabled(True))
-                QTimer.singleShot(0, lambda: self.run_stop.setEnabled(False))
+            # Emit signal to update UI from main thread
+            self.vanilla_server_started_signal.emit(success)
 
         threading.Thread(target=start, daemon=True).start()
+
+    def _on_vanilla_server_started(self, success: bool):
+        """Handle vanilla server started (called from main thread via signal)"""
+        if success:
+            self.run_cmd_btn.setEnabled(True)
+        else:
+            # Re-enable start button if failed
+            self.run_start.setEnabled(True)
+            self.run_config.setEnabled(True)
+            self.run_stop.setEnabled(False)
 
     def _on_vanilla_server_stopped(self, started_successfully: bool):
         """Handle vanilla server stopped (called from main thread via signal)"""
@@ -4474,13 +4693,18 @@ class PyCraftGUI(QMainWindow):
                     on_stopped=on_stopped
                 )
 
-            if success:
-                QTimer.singleShot(0, lambda: self.mp_cmd_btn.setEnabled(True))
-            else:
-                # Re-enable start button if failed
-                QTimer.singleShot(0, self._on_server_stopped_normal)
+            # Emit signal to update UI from main thread
+            self.modpack_server_started_signal.emit(success)
 
         threading.Thread(target=start, daemon=True).start()
+
+    def _on_modpack_server_started(self, success: bool):
+        """Handle modpack server started (called from main thread via signal)"""
+        if success:
+            self.mp_cmd_btn.setEnabled(True)
+        else:
+            # Re-enable start button if failed
+            self._on_server_stopped_normal()
 
     def _show_server_crash_dialog(self, server_path: str):
         """Displays a simple modal dialog when server crashes."""
@@ -4818,47 +5042,100 @@ class PyCraftGUI(QMainWindow):
                 )
             self._check_java()
 
+    def _animate_update_dots(self):
+        """Animate the dots in 'Checking for updates' label"""
+        self.update_dot_count = (self.update_dot_count % 3) + 1
+        dots = "." * self.update_dot_count
+        self.update_status_label.setText(f"Checking for updates{dots}")
+
+    def _on_update_check_complete(self, update_info):
+        """Handle update check completion (called via signal from thread)"""
+        # Stop animation
+        self.update_check_timer.stop()
+        self.check_update_btn.setEnabled(True)
+
+        if update_info:
+            # Update available
+            new_version = update_info['version']
+            self.update_status_label.setText(f"Update available: v{new_version}")
+            self.update_status_label.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 12px; font-weight: 600; background: transparent; border: none;")
+
+            # Show update dialog with download option
+            reply = QMessageBox.question(
+                self,
+                "Update Available",
+                f"A new version is available!\n\n"
+                f"Current version: {__version__}\n"
+                f"New version: {new_version}\n\n"
+                f"Would you like to download and install the update automatically?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self._download_and_install_update(update_info)
+        else:
+            # No update available
+            self.update_status_label.setText("Already up to date")
+            self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; font-weight: 600; background: transparent; border: none;")
+
     def _check_for_updates(self):
         """Check for application updates from GitHub"""
         # Disable button during check
         self.check_update_btn.setEnabled(False)
-        self.update_status_label.setText("Checking for updates...")
-        self.update_status_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 12px; background: transparent;")
+
+        # Start animated dots
+        self.update_dot_count = 0
+        self.update_status_label.setText("Checking for updates.")
+        self.update_status_label.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 12px; font-weight: 600; background: transparent; border: none;")
+        self.update_check_timer.start(400)  # Update dots every 400ms
 
         def check_thread():
-            update_info = self.update_checker.check_for_updates()
-
-            def update_ui():
-                self.check_update_btn.setEnabled(True)
-
-                if update_info:
-                    # Update available
-                    new_version = update_info['version']
-                    self.update_status_label.setText(f"Update available: v{new_version}")
-                    self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; font-weight: 600; background: transparent;")
-
-                    # Show update dialog with download option
-                    reply = QMessageBox.question(
-                        self,
-                        "Update Available",
-                        f"A new version is available!\n\n"
-                        f"Current version: {__version__}\n"
-                        f"New version: {new_version}\n\n"
-                        f"Would you like to download and install the update automatically?",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.Yes
-                    )
-
-                    if reply == QMessageBox.StandardButton.Yes:
-                        self._download_and_install_update(update_info)
-                else:
-                    # No update available
-                    self.update_status_label.setText("You're up to date!")
-                    self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; background: transparent;")
-
-            QTimer.singleShot(0, update_ui)
+            try:
+                update_info = self.update_checker.check_for_updates()
+            except Exception:
+                update_info = None
+            # Emit signal to main thread
+            self.update_check_complete_signal.emit(update_info)
 
         threading.Thread(target=check_thread, daemon=True).start()
+
+    def _on_download_progress(self, progress: int, downloaded_mb: float, total_mb: float):
+        """Handle download progress update (called via signal from thread)"""
+        self.download_progress_bar.setValue(progress)
+        self.download_progress_label.setText(
+            f"Downloading: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
+        )
+
+    def _on_download_complete(self, installer_path: str):
+        """Handle download completion (called via signal from thread)"""
+        if installer_path:
+            # Download successful
+            self.downloaded_installer_path = installer_path
+            self.download_progress_widget.hide()
+            self.install_update_btn.show()
+            self.update_status_label.setText("Download complete! Ready to install.")
+            self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; font-weight: 600; background: transparent; border: none;")
+
+            # Ask if user wants to install now
+            reply = QMessageBox.question(
+                self,
+                "Download Complete",
+                "Update downloaded successfully!\n\n"
+                "Would you like to install it now?\n\n"
+                "Note: PyCraft will close and restart after installation.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes
+            )
+
+            if reply == QMessageBox.StandardButton.Yes:
+                self._install_downloaded_update()
+        else:
+            # Download failed
+            self.download_progress_widget.hide()
+            self.check_update_btn.show()
+            self.update_status_label.setText("Download failed. Please try again.")
+            self.update_status_label.setStyleSheet(f"color: {self.colors['red']}; font-size: 12px; font-weight: 600; background: transparent; border: none;")
 
     def _download_and_install_update(self, update_info: dict):
         """Download and prepare update for installation"""
@@ -4873,55 +5150,20 @@ class PyCraftGUI(QMainWindow):
             """Update progress bar from download thread"""
             if total > 0:
                 progress = int((downloaded / total) * 100)
-                # Convert bytes to MB
                 downloaded_mb = downloaded / (1024 * 1024)
                 total_mb = total / (1024 * 1024)
-
-                def update_progress():
-                    self.download_progress_bar.setValue(progress)
-                    self.download_progress_label.setText(
-                        f"Downloading: {downloaded_mb:.1f} MB / {total_mb:.1f} MB ({progress}%)"
-                    )
-
-                QTimer.singleShot(0, update_progress)
+                self.update_download_progress_signal.emit(progress, downloaded_mb, total_mb)
 
         def download_thread():
             """Download installer in background thread"""
-            installer_path = self.update_checker.download_update(
-                update_info['download_url'],
-                progress_callback
-            )
-
-            def download_complete():
-                if installer_path:
-                    # Download successful
-                    self.downloaded_installer_path = installer_path
-                    self.download_progress_widget.hide()
-                    self.install_update_btn.show()
-                    self.update_status_label.setText("Download complete! Ready to install.")
-                    self.update_status_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 12px; font-weight: 600; background: transparent;")
-
-                    # Ask if user wants to install now
-                    reply = QMessageBox.question(
-                        self,
-                        "Download Complete",
-                        "Update downloaded successfully!\n\n"
-                        "Would you like to install it now?\n\n"
-                        "Note: PyCraft will close and restart after installation.",
-                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                        QMessageBox.StandardButton.Yes
-                    )
-
-                    if reply == QMessageBox.StandardButton.Yes:
-                        self._install_downloaded_update()
-                else:
-                    # Download failed
-                    self.download_progress_widget.hide()
-                    self.check_update_btn.show()
-                    self.update_status_label.setText("Download failed. Please try again.")
-                    self.update_status_label.setStyleSheet(f"color: #ef4444; font-size: 12px; background: transparent;")
-
-            QTimer.singleShot(0, download_complete)
+            try:
+                installer_path = self.update_checker.download_update(
+                    update_info['download_url'],
+                    progress_callback
+                )
+                self.update_download_complete_signal.emit(installer_path or "")
+            except Exception:
+                self.update_download_complete_signal.emit("")
 
         threading.Thread(target=download_thread, daemon=True).start()
 
