@@ -1,29 +1,29 @@
-# Guía de Contribución - PyCraft
+# Guia de Contribucion - PyCraft
 
-¡Gracias por tu interés en contribuir a PyCraft! Este documento te guiará en el proceso.
+Gracias por tu interes en contribuir a PyCraft! Este documento te guiara en el proceso.
 
 ## Tabla de Contenidos
 
-- [Código de Conducta](#código-de-conducta)
-- [Cómo Puedo Contribuir](#cómo-puedo-contribuir)
+- [Codigo de Conducta](#codigo-de-conducta)
+- [Como Puedo Contribuir](#como-puedo-contribuir)
 - [Estructura del Proyecto](#estructura-del-proyecto)
-- [Configuración del Entorno](#configuración-del-entorno)
+- [Configuracion del Entorno](#configuracion-del-entorno)
 - [Proceso de Desarrollo](#proceso-de-desarrollo)
-- [Estándares de Código](#estándares-de-código)
+- [Estandares de Codigo](#estandares-de-codigo)
 - [Proceso de Pull Request](#proceso-de-pull-request)
 
-## Código de Conducta
+## Codigo de Conducta
 
-Este proyecto se adhiere a un código de conducta. Al participar, se espera que mantengas un ambiente respetuoso y profesional.
+Este proyecto se adhiere a un codigo de conducta. Al participar, se espera que mantengas un ambiente respetuoso y profesional.
 
-### Nuestros Estándares
+### Nuestros Estandares
 
 - Usa lenguaje acogedor e inclusivo
 - Respeta diferentes puntos de vista
-- Acepta críticas constructivas
-- Enfócate en lo mejor para la comunidad
+- Acepta criticas constructivas
+- Enfocate en lo mejor para la comunidad
 
-## Cómo Puedo Contribuir
+## Como Puedo Contribuir
 
 ### Reportar Bugs
 
@@ -31,60 +31,63 @@ Los bugs se rastrean como [issues de GitHub](https://github.com/OOMrConrado/PyCr
 
 **Antes de crear un issue:**
 - Verifica que no exista un issue similar
-- Asegúrate de que sea realmente un bug
+- Asegurate de que sea realmente un bug
 
 **Al reportar un bug incluye:**
-- Título claro y descriptivo
+- Titulo claro y descriptivo
 - Pasos detallados para reproducir el problema
 - Comportamiento esperado vs actual
 - Screenshots si aplica
-- Tu entorno (OS, versión de Python, etc.)
+- Tu entorno (OS, version de Python, etc.)
 
 ### Sugerir Mejoras
 
-Las sugerencias también se rastrean como issues.
+Las sugerencias tambien se rastrean como issues.
 
 **Incluye:**
-- Descripción clara de la mejora
-- Por qué sería útil
+- Descripcion clara de la mejora
+- Por que seria util
 - Ejemplos de uso
 
-### Contribuir con Código
+### Contribuir con Codigo
 
 1. **Fork el repositorio**
 2. **Crea una rama** para tu feature
-3. **Desarrolla** siguiendo los estándares
-4. **Prueba** tu código
-5. **Envía** un Pull Request
+3. **Desarrolla** siguiendo los estandares
+4. **Prueba** tu codigo
+5. **Envia** un Pull Request
 
 ## Estructura del Proyecto
 
 ```
 src/
-├── core/              # Lógica de negocio
-│   ├── api/          # Comunicación con APIs externas
+├── core/              # Logica de negocio
+│   ├── api/          # Comunicacion con APIs externas
 │   ├── download/     # Sistema de descargas
-│   └── config/       # Configuración
+│   └── config/       # Configuracion
 ├── managers/         # Gestores de recursos
-│   ├── java/         # Gestión de Java
-│   ├── server/       # Gestión de servidores
-│   ├── modpack/      # Gestión de modpacks
-│   └── loader/       # Gestión de loaders (Forge/Fabric)
-└── gui/              # Interfaz gráfica
-    ├── tabs/         # Pestañas de la GUI
-    └── utils/        # Utilidades GUI
+│   ├── java/         # Gestion de Java
+│   ├── server/       # Gestion de servidores
+│   ├── modpack/      # Gestion de modpacks
+│   └── loader/       # Gestion de loaders (Forge/Fabric)
+├── gui/              # Interfaz grafica (PySide6)
+│   ├── tabs/         # Pestanas de la GUI
+│   └── utils/        # Utilidades GUI
+└── utils/            # Utilidades comunes
+    ├── system_utils.py  # Utilidades del sistema
+    └── updater.py       # Sistema de actualizaciones
 ```
 
-Para más detalles, ver [STRUCTURE.md](STRUCTURE.md).
+Para mas detalles, ver [STRUCTURE.md](STRUCTURE.md).
 
 ### Principios de Arquitectura
 
-1. **Separación de Responsabilidades**: Cada módulo tiene un propósito claro
-2. **Core**: Lógica de negocio independiente de la GUI
-3. **Managers**: Gestores especializados para recursos específicos
-4. **GUI**: Interfaz gráfica que usa los managers
+1. **Separacion de Responsabilidades**: Cada modulo tiene un proposito claro
+2. **Core**: Logica de negocio independiente de la GUI
+3. **Managers**: Gestores especializados para recursos especificos
+4. **GUI**: Interfaz grafica que usa los managers
 
-## Configuración del Entorno
+## Configuracion del Entorno
 
 ### 1. Fork y Clona
 
@@ -107,6 +110,14 @@ source .venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 
+Las dependencias principales son:
+- **PySide6**: Framework de interfaz grafica (Qt for Python)
+- **qtawesome**: Iconos Font Awesome para Qt
+- **requests**: Comunicacion HTTP con APIs
+- **Pillow**: Procesamiento de imagenes
+- **psutil**: Utilidades de sistema y procesos
+- **packaging**: Parseo de versiones
+
 ### 4. Crea una Rama
 
 ```bash
@@ -118,32 +129,32 @@ git checkout -b feature/mi-nueva-feature
 ### 1. Antes de Empezar
 
 - Revisa los issues abiertos
-- Comenta en el issue que trabajarás en él
-- Asegúrate de entender los requisitos
+- Comenta en el issue que trabajaras en el
+- Asegurate de entender los requisitos
 
 ### 2. Durante el Desarrollo
 
-- Escribe código limpio y documentado
-- Sigue los estándares del proyecto
-- Prueba tu código regularmente
-- Haz commits pequeños y frecuentes
+- Escribe codigo limpio y documentado
+- Sigue los estandares del proyecto
+- Prueba tu codigo regularmente
+- Haz commits pequenos y frecuentes
 
 ### 3. Mensajes de Commit
 
 Usa el formato:
 
 ```
-tipo(alcance): descripción corta
+tipo(alcance): descripcion corta
 
-Descripción más detallada si es necesario.
+Descripcion mas detallada si es necesario.
 ```
 
 **Tipos:**
-- `feat`: Nueva característica
-- `fix`: Corrección de bug
-- `docs`: Cambios en documentación
-- `style`: Formato de código (no afecta funcionalidad)
-- `refactor`: Refactorización
+- `feat`: Nueva caracteristica
+- `fix`: Correccion de bug
+- `docs`: Cambios en documentacion
+- `style`: Formato de codigo (no afecta funcionalidad)
+- `refactor`: Refactorizacion
 - `test`: Agregar tests
 - `chore`: Tareas de mantenimiento
 
@@ -153,17 +164,17 @@ feat(modpack): agregar soporte para CurseForge
 
 fix(server): corregir error al iniciar servidor Forge
 
-docs(readme): actualizar instrucciones de instalación
+docs(readme): actualizar instrucciones de instalacion
 ```
 
-## Estándares de Código
+## Estandares de Codigo
 
 ### Python
 
 - Sigue [PEP 8](https://www.python.org/dev/peps/pep-0008/)
 - Usa type hints cuando sea posible
 - Docstrings para funciones y clases
-- Máximo 100 caracteres por línea
+- Maximo 100 caracteres por linea
 
 ### Ejemplo:
 
@@ -176,38 +187,38 @@ def install_modpack(
     callback: Optional[Callable[[str], None]] = None
 ) -> bool:
     """
-    Instala un modpack en la ubicación especificada.
+    Instala un modpack en la ubicacion especificada.
 
     Args:
         modpack_id: ID del modpack
-        version: Versión a instalar
+        version: Version a instalar
         destination: Ruta de destino
-        callback: Función para reportar progreso
+        callback: Funcion para reportar progreso
 
     Returns:
-        True si la instalación fue exitosa, False en caso contrario
+        True si la instalacion fue exitosa, False en caso contrario
     """
-    # Implementación...
+    # Implementacion...
 ```
 
 ### Nombres
 
 - **Clases**: `PascalCase`
-- **Funciones/Métodos**: `snake_case`
+- **Funciones/Metodos**: `snake_case`
 - **Constantes**: `UPPER_CASE`
 - **Privado**: `_prefijo_underscore`
 
 ### Imports
 
 ```python
-# Librería estándar
+# Libreria estandar
 import os
 import json
 from typing import Optional, Dict
 
-# Librerías de terceros
+# Librerias de terceros
 import requests
-import customtkinter as ctk
+from PySide6.QtWidgets import QWidget, QPushButton
 
 # Imports locales
 from ..core.api import MinecraftAPIHandler
@@ -221,16 +232,16 @@ Usa formato Google docstrings:
 ```python
 def funcion_ejemplo(param1: str, param2: int) -> bool:
     """
-    Descripción breve de la función.
+    Descripcion breve de la funcion.
 
-    Descripción más detallada si es necesario.
+    Descripcion mas detallada si es necesario.
 
     Args:
-        param1: Descripción del primer parámetro
-        param2: Descripción del segundo parámetro
+        param1: Descripcion del primer parametro
+        param2: Descripcion del segundo parametro
 
     Returns:
-        Descripción del valor de retorno
+        Descripcion del valor de retorno
 
     Raises:
         ValueError: Si param2 es negativo
@@ -242,43 +253,43 @@ def funcion_ejemplo(param1: str, param2: int) -> bool:
 
 ### 1. Antes de Enviar
 
-- [ ] El código sigue los estándares
-- [ ] Has probado tu código
-- [ ] Actualizaste la documentación si es necesario
+- [ ] El codigo sigue los estandares
+- [ ] Has probado tu codigo
+- [ ] Actualizaste la documentacion si es necesario
 - [ ] No hay conflictos con `main`
 
 ### 2. Crear el PR
 
 1. Ve a GitHub y crea un Pull Request
-2. Usa un título descriptivo
-3. Describe qué cambios hiciste y por qué
+2. Usa un titulo descriptivo
+3. Describe que cambios hiciste y por que
 4. Referencia issues relacionados (`Closes #123`)
 
 ### 3. Template de PR
 
 ```markdown
-## Descripción
-Breve descripción de los cambios
+## Descripcion
+Breve descripcion de los cambios
 
 ## Tipo de Cambio
 - [ ] Bug fix
-- [ ] Nueva característica
+- [ ] Nueva caracteristica
 - [ ] Breaking change
-- [ ] Documentación
+- [ ] Documentacion
 
-## Cómo se probó
-Describe cómo probaste los cambios
+## Como se probo
+Describe como probaste los cambios
 
 ## Checklist
-- [ ] Mi código sigue los estándares del proyecto
-- [ ] He probado mi código
-- [ ] He actualizado la documentación
+- [ ] Mi codigo sigue los estandares del proyecto
+- [ ] He probado mi codigo
+- [ ] He actualizado la documentacion
 - [ ] Mis cambios no generan warnings
 ```
 
-### 4. Revisión
+### 4. Revision
 
-- Responde a los comentarios de revisión
+- Responde a los comentarios de revision
 - Haz los cambios solicitados
 - Agradece el feedback
 
@@ -296,53 +307,58 @@ Antes de enviar tu PR, prueba:
 
 2. **Modpacks**
    - Buscar modpacks
-   - Instalar modpack
+   - Instalar modpack (servidor y cliente)
    - Iniciar servidor con modpack
 
-3. **General**
+3. **Java**
+   - Deteccion de versiones instaladas
+   - Descarga de nuevas versiones
+   - Compatibilidad con diferentes versiones de Minecraft
+
+4. **General**
    - No debe haber errores en consola
    - La GUI debe ser responsiva
    - Los logs deben ser claros
+   - Verificar actualizaciones debe funcionar
 
 ### Tests Unitarios (Futuro)
 
-El proyecto planea agregar tests unitarios. Contribuciones en esta área son bienvenidas.
+El proyecto planea agregar tests unitarios. Contribuciones en esta area son bienvenidas.
 
-## Áreas de Contribución
+## Areas de Contribucion
 
 ### Prioritarias
 
 - Tests unitarios
-- Soporte para más loaders
-- Internacionalización (i18n)
-- Optimización de descargas
-- Detección de errores mejorada
+- Soporte para mas loaders (Quilt, NeoForge)
+- Internacionalizacion (i18n)
+- Optimizacion de descargas
+- Deteccion de errores mejorada
 
 ### Features Futuras
 
-- Auto-actualización de servidores
-- Respaldo automático de mundos
-- Gestión de plugins (Spigot/Paper)
-- Modo oscuro/claro
+- Respaldo automatico de mundos
+- Gestion de plugins (Spigot/Paper)
 - Exportar configuraciones
+- Soporte para Linux/macOS
 
 ## Necesitas Ayuda
 
 - **Issues**: [GitHub Issues](https://github.com/OOMrConrado/PyCraft/issues)
-- **Documentación**: Ver [STRUCTURE.md](STRUCTURE.md)
+- **Documentacion**: Ver [STRUCTURE.md](STRUCTURE.md)
 - **Preguntas**: Abre un issue con la etiqueta `question`
 
-## Recursos Útiles
+## Recursos Utiles
 
 - [Python PEP 8](https://www.python.org/dev/peps/pep-0008/)
-- [CustomTkinter Docs](https://customtkinter.tomschimansky.com/)
+- [PySide6 Docs](https://doc.qt.io/qtforpython-6/)
 - [Minecraft Server API](https://wiki.vg/Main_Page)
 - [Modrinth API](https://docs.modrinth.com/)
 
 ## Gracias
 
-¡Gracias por contribuir a PyCraft! Cada contribución, sin importar su tamaño, es valiosa y apreciada.
+Gracias por contribuir a PyCraft! Cada contribucion, sin importar su tamano, es valiosa y apreciada.
 
 ---
 
-**Última actualización**: Octubre 2025
+**Ultima actualizacion**: Diciembre 2025

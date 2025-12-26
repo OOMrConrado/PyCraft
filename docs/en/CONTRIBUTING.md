@@ -70,9 +70,12 @@ src/
 │   ├── server/       # Server management
 │   ├── modpack/      # Modpack management
 │   └── loader/       # Loader management (Forge/Fabric)
-└── gui/              # Graphical interface
-    ├── tabs/         # GUI tabs
-    └── utils/        # GUI utilities
+├── gui/              # Graphical interface (PySide6)
+│   ├── tabs/         # GUI tabs
+│   └── utils/        # GUI utilities
+└── utils/            # Common utilities
+    ├── system_utils.py  # System utilities
+    └── updater.py       # Update system
 ```
 
 For more details, see [STRUCTURE.md](STRUCTURE.md).
@@ -106,6 +109,14 @@ source .venv/bin/activate  # Linux/macOS
 ```bash
 pip install -r requirements.txt
 ```
+
+Main dependencies are:
+- **PySide6**: GUI framework (Qt for Python)
+- **qtawesome**: Font Awesome icons for Qt
+- **requests**: HTTP communication with APIs
+- **Pillow**: Image processing
+- **psutil**: System and process utilities
+- **packaging**: Version parsing
 
 ### 4. Create a Branch
 
@@ -207,7 +218,7 @@ from typing import Optional, Dict
 
 # Third-party libraries
 import requests
-import customtkinter as ctk
+from PySide6.QtWidgets import QWidget, QPushButton
 
 # Local imports
 from ..core.api import MinecraftAPIHandler
@@ -296,13 +307,19 @@ Before submitting your PR, test:
 
 2. **Modpacks**
    - Search modpacks
-   - Install modpack
+   - Install modpack (server and client)
    - Start server with modpack
 
-3. **General**
+3. **Java**
+   - Detection of installed versions
+   - Download new versions
+   - Compatibility with different Minecraft versions
+
+4. **General**
    - No errors in console
    - GUI should be responsive
    - Logs should be clear
+   - Update checking should work
 
 ### Unit Tests (Future)
 
@@ -313,18 +330,17 @@ The project plans to add unit tests. Contributions in this area are welcome.
 ### Priority
 
 - Unit tests
-- Support for more loaders
+- Support for more loaders (Quilt, NeoForge)
 - Internationalization (i18n)
 - Download optimization
 - Improved error detection
 
 ### Future Features
 
-- Server auto-update
 - Automatic world backup
 - Plugin management (Spigot/Paper)
-- Dark/light mode
 - Export configurations
+- Linux/macOS support
 
 ## Need Help
 
@@ -335,7 +351,7 @@ The project plans to add unit tests. Contributions in this area are welcome.
 ## Useful Resources
 
 - [Python PEP 8](https://www.python.org/dev/peps/pep-0008/)
-- [CustomTkinter Docs](https://customtkinter.tomschimansky.com/)
+- [PySide6 Docs](https://doc.qt.io/qtforpython-6/)
 - [Minecraft Server API](https://wiki.vg/Main_Page)
 - [Modrinth API](https://docs.modrinth.com/)
 
@@ -345,4 +361,4 @@ Thank you for contributing to PyCraft! Every contribution, regardless of size, i
 
 ---
 
-**Last updated**: October 2025
+**Last updated**: December 2025

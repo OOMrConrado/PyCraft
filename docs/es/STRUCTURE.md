@@ -1,44 +1,45 @@
 # Estructura del Proyecto PyCraft
 
-Este documento describe la organización modular del proyecto PyCraft, diseñada para mantener un código limpio, escalable y fácil de mantener.
+Este documento describe la organizacion modular del proyecto PyCraft, disenada para mantener un codigo limpio, escalable y facil de mantener.
 
 ## Estructura de Carpetas
 
 ```
 PyCraft/
-├── main.py                    # Punto de entrada de la aplicación
-├── docs/                      # Documentación del proyecto
-│   ├── en/                    # Documentación en inglés
-│   └── es/                    # Documentación en español
-├── src/                       # Código fuente principal
-│   ├── core/                  # Lógica de negocio principal
+├── main.py                    # Punto de entrada de la aplicacion
+├── docs/                      # Documentacion del proyecto
+│   ├── en/                    # Documentacion en ingles
+│   └── es/                    # Documentacion en espanol
+├── src/                       # Codigo fuente principal
+│   ├── __version__.py         # Informacion de version de la aplicacion
+│   ├── core/                  # Logica de negocio principal
 │   │   ├── api/              # Manejo de APIs externas
 │   │   │   ├── handlers.py   # MinecraftAPI, ModrinthAPI, CurseForgeAPI
 │   │   │   └── __init__.py
 │   │   ├── download/         # Sistema de descargas
 │   │   │   ├── downloader.py # ServerDownloader
 │   │   │   └── __init__.py
-│   │   └── config/           # Configuración de la aplicación
+│   │   └── config/           # Configuracion de la aplicacion
 │   │       └── __init__.py
 │   │
 │   ├── managers/             # Gestores de recursos
-│   │   ├── java/            # Gestión de Java
+│   │   ├── java/            # Gestion de Java
 │   │   │   ├── java_manager.py
 │   │   │   └── __init__.py
-│   │   ├── server/          # Gestión de servidores
+│   │   ├── server/          # Gestion de servidores
 │   │   │   ├── server_manager.py
 │   │   │   └── __init__.py
-│   │   ├── modpack/         # Gestión de modpacks
+│   │   ├── modpack/         # Gestion de modpacks
 │   │   │   ├── modpack_manager.py
 │   │   │   └── __init__.py
-│   │   └── loader/          # Gestión de loaders (Forge/Fabric)
+│   │   └── loader/          # Gestion de loaders (Forge/Fabric)
 │   │       ├── loader_manager.py
 │   │       └── __init__.py
 │   │
-│   ├── gui/                 # Interfaz gráfica
-│   │   ├── tabs/           # Pestañas de la GUI
+│   ├── gui/                 # Interfaz grafica (PySide6)
+│   │   ├── tabs/           # Pestanas de la GUI
 │   │   │   ├── base_tab.py       # Clase base con utilidades comunes
-│   │   │   ├── info_tab.py       # Pestaña de información
+│   │   │   ├── info_tab.py       # Pestana de informacion
 │   │   │   └── __init__.py
 │   │   ├── utils/          # Utilidades GUI
 │   │   │   ├── logger.py         # LoggerMixin para logs
@@ -48,24 +49,27 @@ PyCraft/
 │   │   └── __init__.py
 │   │
 │   └── utils/              # Utilidades comunes
+│       ├── system_utils.py # Utilidades del sistema (RAM, puertos, permisos)
+│       ├── updater.py      # Sistema de actualizaciones automaticas
 │       └── __init__.py
 ```
 
-## Principios de Diseño
+## Principios de Diseno
 
-### 1. Separación de Responsabilidades
-Cada carpeta tiene un propósito específico y claro:
+### 1. Separacion de Responsabilidades
+Cada carpeta tiene un proposito especifico y claro:
 
-- **core/**: Lógica de negocio independiente de la UI
-- **managers/**: Gestores especializados para recursos específicos
-- **gui/**: Todo lo relacionado con la interfaz gráfica
+- **core/**: Logica de negocio independiente de la UI
+- **managers/**: Gestores especializados para recursos especificos
+- **gui/**: Todo lo relacionado con la interfaz grafica
 - **utils/**: Funciones y clases utilitarias reutilizables
 
-### 2. Módulos Explícitos
+### 2. Modulos Explicitos
 Los nombres de carpetas y archivos son descriptivos:
-- `core/api/handlers.py` → Maneja APIs externas
-- `managers/server/server_manager.py` → Gestiona servidores
-- `gui/tabs/info_tab.py` → Pestaña de información
+- `core/api/handlers.py` -> Maneja APIs externas
+- `managers/server/server_manager.py` -> Gestiona servidores
+- `gui/tabs/info_tab.py` -> Pestana de informacion
+- `utils/updater.py` -> Sistema de actualizaciones
 
 ### 3. Imports Limpios
 Gracias a los archivos `__init__.py`, los imports son concisos:
@@ -78,10 +82,10 @@ from src.api_handler import MinecraftAPIHandler
 from src.core.api import MinecraftAPIHandler
 ```
 
-### 4. Reutilización de Código
-- `base_tab.py` contiene utilidades comunes para todas las pestañas
+### 4. Reutilizacion de Codigo
+- `base_tab.py` contiene utilidades comunes para todas las pestanas
 - `LoggerMixin` centraliza el manejo de logs
-- `WidgetFactory` estandariza la creación de widgets
+- `WidgetFactory` estandariza la creacion de widgets
 - Paleta de colores centralizada
 
 ## Componentes Principales
@@ -89,10 +93,13 @@ from src.core.api import MinecraftAPIHandler
 ### Core (src/core/)
 
 **API Handlers** (`core/api/handlers.py`)
-- `MinecraftAPIHandler`: Comunicación con APIs de Mojang
-- `ModrinthAPI`: Búsqueda e instalación de modpacks de Modrinth
-- `CurseForgeAPI`: Reservado para implementación futura
-- `APIConfig`: Gestión de configuración de API keys
+- `MinecraftAPIHandler`: Comunicacion con APIs de Mojang
+- `ModrinthAPI`: Busqueda e instalacion de modpacks de Modrinth
+  - Soporte para paginacion en busquedas
+  - Filtro por lado (servidor/cliente)
+  - Obtencion de metadatos de proyectos en lote
+- `CurseForgeAPI`: Reservado para implementacion futura
+- `APIConfig`: Gestion de configuracion de API keys
 
 **Downloader** (`core/download/downloader.py`)
 - `ServerDownloader`: Sistema de descarga de archivos con progreso
@@ -100,72 +107,125 @@ from src.core.api import MinecraftAPIHandler
 ### Managers (src/managers/)
 
 **JavaManager** (`managers/java/`)
-- Detección de instalaciones de Java
-- Descarga automática de versiones necesarias
-- Validación de versiones
-- Gestión del PATH de Windows (agregar/quitar Java)
+- Deteccion de instalaciones de Java
+- Descarga automatica de versiones necesarias
+- Validacion de versiones y compatibilidad
+- Gestion del PATH de Windows (agregar/quitar Java)
 - Listado de instalaciones gestionadas por PyCraft
-- Eliminación de instalaciones de Java
+- Eliminacion de instalaciones de Java
+- Soporte para elevacion UAC en Windows
 
 **ServerManager** (`managers/server/`)
-- Creación y configuración de servidores
-- Inicio y detención de procesos
-- Envío de comandos al servidor
+- Creacion y configuracion de servidores
+- Inicio y detencion de procesos
+- Envio de comandos al servidor
+- Deteccion automatica de version de Minecraft
+  - Soporta: modrinth.index.json, Fabric, Forge, logs
+- Inicializacion automatica de servidor
+  - Aceptacion de EULA automatica
+  - Generacion de server.properties
+- Sistema Auto-Healer para deteccion de crashes
+- Notificacion cuando el servidor esta listo
 
 **ModpackManager** (`managers/modpack/`)
-- Instalación de modpacks desde .mrpack
-- Configuración automática de loaders
+- Instalacion de modpacks desde archivos .mrpack
+- Configuracion automatica de loaders (Fabric/Forge)
 - Descarga de mods y dependencias
-- Guardado de manifests para detección de versión
-- Soporte para instalación de clientes de modpack
+- Guardado de manifests para deteccion de version
+- Soporte para instalacion de clientes de modpack
+- Deteccion y exclusion de mods solo-cliente
+- Sistema de known_issues para mods problematicos
 
 **LoaderManager** (`managers/loader/`)
-- Detección de tipo de loader (Forge/Fabric)
-- Instalación de loaders
-- Configuración específica por tipo
+- Deteccion de tipo de loader (Forge/Fabric/NeoForge/Quilt)
+- Instalacion de loaders
+- Configuracion especifica por tipo
 
 ### GUI (src/gui/)
 
 **MainWindow** (`gui/main_window.py`)
-- Ventana principal de la aplicación
-- Gestión de pestañas (Vanilla, Mods, Info, Configuración)
-- Orquestación de todos los componentes
+- Ventana principal de la aplicacion (PySide6)
+- Gestion de pestanas (Vanilla, Mods, Info, Configuracion)
+- Orquestacion de todos los componentes
 - Soporte para iconos de ventana personalizados
-- Diálogos personalizados con branding de PyCraft
+- Dialogos personalizados con branding de PyCraft
+- Verificacion de actualizaciones al inicio
+- Sistema de auto-healing integrado
 
 **Tabs** (`gui/tabs/`)
 - `BaseTab`: Clase base con utilidades comunes
-- `InfoTab`: Información y ayuda enfocada en jugar con amigos
+- `InfoTab`: Informacion y ayuda enfocada en jugar con amigos
 
 **Utils** (`gui/utils/`)
 - `LoggerMixin`: Manejo unificado de logs con colores
-- `WidgetFactory`: Creación estandarizada de widgets
+- `WidgetFactory`: Creacion estandarizada de widgets Qt
+
+### Utils (src/utils/)
+
+**System Utils** (`utils/system_utils.py`)
+- `validate_eula_file()`: Valida archivos EULA
+- `validate_properties_file()`: Valida server.properties
+- `check_write_permissions()`: Verifica permisos de escritura
+- `check_available_ram()`: Detecta RAM disponible del sistema
+- `get_total_ram()`: Obtiene RAM total del sistema
+- `can_allocate_ram()`: Verifica si hay RAM suficiente
+- `is_port_in_use()`: Verifica si un puerto esta ocupado
+- `check_minecraft_port()`: Verifica puerto 25565
+- `cleanup_zombie_processes()`: Limpia procesos Java zombie
+
+**Update Checker** (`utils/updater.py`)
+- `UpdateChecker`: Verifica actualizaciones desde GitHub Releases
+  - Compara versiones usando semver
+  - Descarga instaladores automaticamente
+  - Soporta instalacion silenciosa (Inno Setup)
+  - Limpieza de instaladores temporales
 
 ## Mejoras Implementadas
 
-### Modularización
-- **Antes**: 1 archivo de 2768 líneas (`gui.py`)
-- **Ahora**: Código distribuido en módulos especializados
+### Framework de UI
+- **Antes**: CustomTkinter
+- **Ahora**: PySide6 (Qt for Python)
+- Mayor rendimiento y apariencia nativa
+- Soporte para iconos con QtAwesome
+
+### Sistema de Actualizaciones
+- Verificacion automatica al iniciar
+- Descarga e instalacion de actualizaciones
+- Soporte para instaladores Inno Setup
+
+### Auto-Healer
+- Deteccion automatica de mods solo-cliente
+- Base de datos de mods problematicos
+- Exclusion automatica durante instalacion
+
+### Deteccion de Version
+- Multiples fuentes de deteccion
+- Cache de version detectada
+- Verificacion de compatibilidad con Java
+
+### Modularizacion
+- **Antes**: 1 archivo de 2768 lineas (`gui.py`)
+- **Ahora**: Codigo distribuido en modulos especializados
 - Archivo principal optimizado y mantenible
 
-### Organización Clara
+### Organizacion Clara
 - Carpetas con nombres explicativos
-- Fácil localizar funcionalidad específica
+- Facil localizar funcionalidad especifica
 - Estructura escalable para futuras features
 
 ### Mantenibilidad
-- Código más fácil de entender
-- Cambios aislados a módulos específicos
-- Reducción de acoplamiento
+- Codigo mas facil de entender
+- Cambios aislados a modulos especificos
+- Reduccion de acoplamiento
 
-### Estándares de Calidad
-- Documentación de módulos en cada `__init__.py`
+### Estandares de Calidad
+- Documentacion de modulos en cada `__init__.py`
 - Imports relativos consistentes
 - Estructura profesional tipo enterprise
 - Type hints y docstrings
 - Conformidad con PEP 8
 
-## Guía de Uso
+## Guia de Uso
 
 ### Agregar Nueva Funcionalidad
 
@@ -176,14 +236,14 @@ from src.core.api import MinecraftAPIHandler
 
 ```python
 # src/managers/nuevo_manager/__init__.py
-"""Nuevo Manager - Descripción breve."""
+"""Nuevo Manager - Descripcion breve."""
 
 from .nuevo_manager import NuevoManager
 
 __all__ = ["NuevoManager"]
 ```
 
-**Para agregar una nueva pestaña:**
+**Para agregar una nueva pestana:**
 1. Crear archivo en `src/gui/tabs/nueva_tab.py`
 2. Heredar de `BaseTab`
 3. Importar en `main_window.py`
@@ -192,14 +252,14 @@ __all__ = ["NuevoManager"]
 from .tabs.base_tab import BaseTab
 
 class NuevaTab(BaseTab):
-    """Nueva pestaña con funcionalidad específica."""
+    """Nueva pestana con funcionalidad especifica."""
 
     def __init__(self, parent):
         super().__init__(parent)
         self.create_widgets()
 ```
 
-### Importar Módulos
+### Importar Modulos
 
 ```python
 # API handlers
@@ -212,9 +272,13 @@ from src.managers.modpack import ModpackManager
 # GUI components
 from src.gui.tabs.info_tab import InfoTab
 from src.gui.utils import LoggerMixin, WidgetFactory
+
+# Utils
+from src.utils import system_utils
+from src.utils.updater import UpdateChecker
 ```
 
-## Patrones de Diseño Utilizados
+## Patrones de Diseno Utilizados
 
 ### Mixin Pattern
 `LoggerMixin` proporciona funcionalidad de logging reutilizable:
@@ -226,7 +290,7 @@ class MiClase(LoggerMixin):
 ```
 
 ### Factory Pattern
-`WidgetFactory` estandariza la creación de widgets:
+`WidgetFactory` estandariza la creacion de widgets:
 
 ```python
 button = WidgetFactory.create_button(
@@ -237,26 +301,28 @@ button = WidgetFactory.create_button(
 ```
 
 ### Manager Pattern
-Cada recurso tiene su manager dedicado que encapsula toda su lógica.
+Cada recurso tiene su manager dedicado que encapsula toda su logica.
+
+### Singleton Pattern
+`UpdateChecker` mantiene una unica instancia para verificaciones.
 
 ## Beneficios
 
-1. **Escalabilidad**: Fácil agregar nuevas features sin afectar código existente
-2. **Debugging**: Más sencillo localizar y corregir errores
-3. **Testing**: Posibilidad de hacer unit tests por módulo
-4. **Colaboración**: Múltiples desarrolladores pueden trabajar simultáneamente
-5. **Documentación**: La estructura misma documenta la arquitectura
+1. **Escalabilidad**: Facil agregar nuevas features sin afectar codigo existente
+2. **Debugging**: Mas sencillo localizar y corregir errores
+3. **Testing**: Posibilidad de hacer unit tests por modulo
+4. **Colaboracion**: Multiples desarrolladores pueden trabajar simultaneamente
+5. **Documentacion**: La estructura misma documenta la arquitectura
 
-## Próximos Pasos Sugeridos
+## Proximos Pasos Sugeridos
 
-- Extraer pestañas individuales de `main_window.py`
-- Crear módulo `utils/validators.py` para validaciones comunes
-- Agregar tests unitarios por módulo
-- Documentar API pública de cada manager
+- Agregar tests unitarios por modulo
+- Documentar API publica de cada manager
 - Implementar logging estructurado
-- Agregar internacionalización (i18n)
+- Agregar internacionalizacion (i18n)
+- Soporte para mas loaders (Quilt, NeoForge)
 
-## Documentación Adicional
+## Documentacion Adicional
 
 - **Contribuir**: Ver [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Licencia**: Ver [LICENSE](../../LICENSE)
@@ -264,6 +330,6 @@ Cada recurso tiene su manager dedicado que encapsula toda su lógica.
 
 ---
 
-**Versión**: 1.0.0
-**Fecha**: Octubre 2025
+**Version**: 1.0.0
+**Fecha**: Diciembre 2025
 **Estado**: Estructura modular implementada y funcional

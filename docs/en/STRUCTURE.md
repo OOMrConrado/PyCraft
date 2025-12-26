@@ -11,6 +11,7 @@ PyCraft/
 │   ├── en/                    # English documentation
 │   └── es/                    # Spanish documentation
 ├── src/                       # Main source code
+│   ├── __version__.py         # Application version information
 │   ├── core/                  # Core business logic
 │   │   ├── api/              # External API handling
 │   │   │   ├── handlers.py   # MinecraftAPI, ModrinthAPI, CurseForgeAPI
@@ -35,7 +36,7 @@ PyCraft/
 │   │       ├── loader_manager.py
 │   │       └── __init__.py
 │   │
-│   ├── gui/                 # Graphical interface
+│   ├── gui/                 # Graphical interface (PySide6)
 │   │   ├── tabs/           # GUI tabs
 │   │   │   ├── base_tab.py       # Base class with common utilities
 │   │   │   ├── info_tab.py       # Information tab
@@ -48,6 +49,8 @@ PyCraft/
 │   │   └── __init__.py
 │   │
 │   └── utils/              # Common utilities
+│       ├── system_utils.py # System utilities (RAM, ports, permissions)
+│       ├── updater.py      # Automatic update system
 │       └── __init__.py
 ```
 
@@ -63,9 +66,10 @@ Each folder has a specific and clear purpose:
 
 ### 2. Explicit Modules
 Folder and file names are descriptive:
-- `core/api/handlers.py` → Handles external APIs
-- `managers/server/server_manager.py` → Manages servers
-- `gui/tabs/info_tab.py` → Information tab
+- `core/api/handlers.py` -> Handles external APIs
+- `managers/server/server_manager.py` -> Manages servers
+- `gui/tabs/info_tab.py` -> Information tab
+- `utils/updater.py` -> Update system
 
 ### 3. Clean Imports
 Thanks to `__init__.py` files, imports are concise:
@@ -91,6 +95,9 @@ from src.core.api import MinecraftAPIHandler
 **API Handlers** (`core/api/handlers.py`)
 - `MinecraftAPIHandler`: Communication with Mojang APIs
 - `ModrinthAPI`: Search and install modpacks from Modrinth
+  - Search pagination support
+  - Side filter (server/client)
+  - Batch project metadata retrieval
 - `CurseForgeAPI`: Reserved for future implementation
 - `APIConfig`: API key configuration management
 
@@ -102,36 +109,48 @@ from src.core.api import MinecraftAPIHandler
 **JavaManager** (`managers/java/`)
 - Detection of Java installations
 - Automatic download of required versions
-- Version validation
+- Version validation and compatibility
 - Windows PATH management (add/remove Java)
 - List PyCraft-managed installations
 - Delete Java installations
+- UAC elevation support on Windows
 
 **ServerManager** (`managers/server/`)
 - Server creation and configuration
 - Process start and stop
 - Send commands to server
+- Automatic Minecraft version detection
+  - Supports: modrinth.index.json, Fabric, Forge, logs
+- Automatic server initialization
+  - Automatic EULA acceptance
+  - server.properties generation
+- Auto-Healer system for crash detection
+- Server ready notification
 
 **ModpackManager** (`managers/modpack/`)
 - Install modpacks from .mrpack files
-- Automatic loader configuration
+- Automatic loader configuration (Fabric/Forge)
 - Download mods and dependencies
 - Save manifests for version detection
 - Support for client modpack installation
+- Client-only mod detection and exclusion
+- Known issues system for problematic mods
 
 **LoaderManager** (`managers/loader/`)
-- Loader type detection (Forge/Fabric)
+- Loader type detection (Forge/Fabric/NeoForge/Quilt)
 - Loader installation
 - Type-specific configuration
 
 ### GUI (src/gui/)
 
 **MainWindow** (`gui/main_window.py`)
-- Main application window
+- Main application window (PySide6)
 - Tab management (Vanilla, Mods, Info, Settings)
 - Orchestration of all components
 - Custom window icon support
 - Custom dialogs with PyCraft branding
+- Update check on startup
+- Integrated auto-healing system
 
 **Tabs** (`gui/tabs/`)
 - `BaseTab`: Base class with common utilities
@@ -139,9 +158,50 @@ from src.core.api import MinecraftAPIHandler
 
 **Utils** (`gui/utils/`)
 - `LoggerMixin`: Unified log handling with colors
-- `WidgetFactory`: Standardized widget creation
+- `WidgetFactory`: Standardized Qt widget creation
+
+### Utils (src/utils/)
+
+**System Utils** (`utils/system_utils.py`)
+- `validate_eula_file()`: Validates EULA files
+- `validate_properties_file()`: Validates server.properties
+- `check_write_permissions()`: Checks write permissions
+- `check_available_ram()`: Detects available system RAM
+- `get_total_ram()`: Gets total system RAM
+- `can_allocate_ram()`: Checks if there's enough RAM
+- `is_port_in_use()`: Checks if a port is occupied
+- `check_minecraft_port()`: Checks port 25565
+- `cleanup_zombie_processes()`: Cleans up zombie Java processes
+
+**Update Checker** (`utils/updater.py`)
+- `UpdateChecker`: Checks for updates from GitHub Releases
+  - Compares versions using semver
+  - Automatically downloads installers
+  - Supports silent installation (Inno Setup)
+  - Temporary installer cleanup
 
 ## Implemented Improvements
+
+### UI Framework
+- **Before**: CustomTkinter
+- **Now**: PySide6 (Qt for Python)
+- Better performance and native appearance
+- Icon support with QtAwesome
+
+### Update System
+- Automatic check on startup
+- Download and install updates
+- Inno Setup installer support
+
+### Auto-Healer
+- Automatic client-only mod detection
+- Problematic mods database
+- Automatic exclusion during installation
+
+### Version Detection
+- Multiple detection sources
+- Detected version caching
+- Java compatibility verification
 
 ### Modularization
 - **Before**: 1 file with 2768 lines (`gui.py`)
@@ -212,6 +272,10 @@ from src.managers.modpack import ModpackManager
 # GUI components
 from src.gui.tabs.info_tab import InfoTab
 from src.gui.utils import LoggerMixin, WidgetFactory
+
+# Utils
+from src.utils import system_utils
+from src.utils.updater import UpdateChecker
 ```
 
 ## Design Patterns Used
@@ -239,6 +303,9 @@ button = WidgetFactory.create_button(
 ### Manager Pattern
 Each resource has its dedicated manager that encapsulates all its logic.
 
+### Singleton Pattern
+`UpdateChecker` maintains a single instance for verifications.
+
 ## Benefits
 
 1. **Scalability**: Easy to add new features without affecting existing code
@@ -249,12 +316,11 @@ Each resource has its dedicated manager that encapsulates all its logic.
 
 ## Suggested Next Steps
 
-- Extract individual tabs from `main_window.py`
-- Create `utils/validators.py` module for common validations
 - Add unit tests per module
 - Document public API of each manager
 - Implement structured logging
 - Add internationalization (i18n)
+- Support for more loaders (Quilt, NeoForge)
 
 ## Additional Documentation
 
@@ -265,5 +331,5 @@ Each resource has its dedicated manager that encapsulates all its logic.
 ---
 
 **Version**: 1.0.0
-**Date**: October 2025
+**Date**: December 2025
 **Status**: Modular structure implemented and functional
