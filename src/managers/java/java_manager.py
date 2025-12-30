@@ -25,14 +25,28 @@ class JavaManager:
     ADOPTIUM_API_BASE = "https://api.adoptium.net/v3"
 
     # Java versions required by Minecraft
+    # Format: "base_version": (min_version, max_version or None for no limit)
+    # Note: Forge for MC < 1.17 is NOT compatible with Java 17+ due to module system changes
     JAVA_REQUIREMENTS = {
-        # Minecraft < 1.17 requires Java 8 or higher
-        # Minecraft 1.17 - 1.17.1 requires Java 16
-        # Minecraft >= 1.18 requires Java 17
-        "1.18": 17,
-        "1.19": 17,
-        "1.20": 17,
-        "1.21": 21,
+        # Minecraft < 1.17 requires Java 8-16 (Forge breaks with Java 17+)
+        "1.7": (8, 16),
+        "1.8": (8, 16),
+        "1.9": (8, 16),
+        "1.10": (8, 16),
+        "1.11": (8, 16),
+        "1.12": (8, 16),
+        "1.13": (8, 16),
+        "1.14": (8, 16),
+        "1.15": (8, 16),
+        "1.16": (8, 16),
+        # Minecraft 1.17 requires Java 16+
+        "1.17": (16, None),
+        # Minecraft >= 1.18 requires Java 17+
+        "1.18": (17, None),
+        "1.19": (17, None),
+        "1.20": (17, None),
+        # Minecraft >= 1.21 requires Java 21+
+        "1.21": (21, None),
     }
 
     def __init__(self):
@@ -97,13 +111,26 @@ class JavaManager:
 
     def get_required_java_version(self, minecraft_version: str) -> int:
         """
-        Gets the required Java version for a Minecraft version
+        Gets the minimum required Java version for a Minecraft version
 
         Args:
             minecraft_version: Minecraft version (e.g., "1.20.1")
 
         Returns:
-            Required Java major version
+            Required Java major version (minimum)
+        """
+        min_ver, _ = self.get_java_version_range(minecraft_version)
+        return min_ver
+
+    def get_java_version_range(self, minecraft_version: str) -> tuple:
+        """
+        Gets the required Java version range for a Minecraft version
+
+        Args:
+            minecraft_version: Minecraft version (e.g., "1.20.1")
+
+        Returns:
+            Tuple of (min_version, max_version) where max_version can be None for no limit
         """
         # Get base version (1.20, 1.19, etc)
         try:
@@ -114,20 +141,24 @@ class JavaManager:
             if base_version in self.JAVA_REQUIREMENTS:
                 return self.JAVA_REQUIREMENTS[base_version]
 
-            # If >= 1.18, use Java 17
+            # If >= 1.21, use Java 21+
+            if float(base_version) >= 1.21:
+                return (21, None)
+
+            # If >= 1.18, use Java 17+
             if float(base_version) >= 1.18:
-                return 17
+                return (17, None)
 
-            # If >= 1.17, use Java 16
+            # If >= 1.17, use Java 16+
             if float(base_version) >= 1.17:
-                return 16
+                return (16, None)
 
-            # Older versions use Java 8
-            return 8
+            # Older versions use Java 8-16 (Forge compatibility)
+            return (8, 16)
 
         except Exception:
-            # Default to Java 17 (modern standard version)
-            return 17
+            # Default to Java 17+ (modern standard version)
+            return (17, None)
 
     def is_java_compatible(self, minecraft_version: str) -> bool:
         """
@@ -144,10 +175,17 @@ class JavaManager:
             return False
 
         _, installed_major = java_info
-        required_major = self.get_required_java_version(minecraft_version)
+        min_version, max_version = self.get_java_version_range(minecraft_version)
 
-        # Installed Java must be >= required version
-        return installed_major >= required_major
+        # Check minimum version
+        if installed_major < min_version:
+            return False
+
+        # Check maximum version (for old MC versions that don't work with new Java)
+        if max_version is not None and installed_major > max_version:
+            return False
+
+        return True
 
     def _download_with_retry(
         self,
@@ -189,7 +227,7 @@ class JavaManager:
                 last_reported_progress = -1
 
                 if log_callback and total_size > 0:
-                    log_callback(f"Descargando archivo ({total_size // (1024*1024)} MB)...\n")
+                    log_callback(f"Downloading file ({total_size // (1024*1024)} MB)...\n")
 
                 # Download in chunks
                 with open(dest_path, 'wb') as f:
@@ -271,7 +309,7 @@ class JavaManager:
         """
         try:
             if log_callback:
-                log_callback(f"Descargando Java {java_version} desde Adoptium...\n")
+                log_callback(f"Downloading Java {java_version} desde Adoptium...\n")
 
             # Determine OS and architecture for Adoptium API
             os_type = self._get_adoptium_os()
@@ -298,7 +336,7 @@ class JavaManager:
             # Download with automatic retries (longer timeout for large file)
             if not self._download_with_retry(api_url, download_path, log_callback, max_retries=3, timeout=300):
                 if log_callback:
-                    log_callback("\n✗ No se pudo completar la descarga de Java\n")
+                    log_callback("\n✗ Could not complete Java download\n")
                     log_callback("Verifica tu conexión a internet e intenta de nuevo.\n")
                 return None
 
@@ -499,19 +537,27 @@ class JavaManager:
 
             if java_info:
                 version_str, major_version = java_info
-                if log_callback:
-                    log_callback(f"Java detectado: {version_str} (Java {major_version})\n")
+                min_version, max_version = self.get_java_version_range(minecraft_version)
 
-                if major_version >= required_version:
+                if log_callback:
+                    log_callback(f"Java detected: {version_str} (Java {major_version})\n")
+
+                # Check if compatible
+                if self.is_java_compatible(minecraft_version):
                     if log_callback:
-                        log_callback(f"✓ Java {major_version} es compatible con Minecraft {minecraft_version}\n")
+                        log_callback(f"✓ Java {major_version} is compatible with Minecraft {minecraft_version}\n")
                     return "java"
-                else:
+                elif major_version < min_version:
                     if log_callback:
-                        log_callback(f"⚠ Java {major_version} no es suficiente. Se requiere Java {required_version}+\n")
+                        log_callback(f"⚠ Java {major_version} is too old. Requires Java {min_version}+\n")
+                elif max_version is not None and major_version > max_version:
+                    if log_callback:
+                        log_callback(f"⚠ Java {major_version} is too new for Minecraft {minecraft_version}\n")
+                        log_callback(f"  Forge/modded servers for MC < 1.17 require Java 8-{max_version}\n")
+                        log_callback(f"  Java 17+ breaks due to module system changes\n")
             else:
                 if log_callback:
-                    log_callback("⚠ Java no está instalado en el sistema\n")
+                    log_callback("⚠ Java is not installed on the system\n")
 
             # Check if we already have Java downloaded
             install_dir = self.java_installs_dir / f"java-{required_version}"
@@ -538,7 +584,7 @@ class JavaManager:
 
             # Download Java automatically
             if log_callback:
-                log_callback(f"\nDescargando Java {required_version} automáticamente...\n")
+                log_callback(f"\nDownloading Java {required_version} automatically...\n")
                 log_callback("Esto puede tomar varios minutos dependiendo de tu conexión.\n")
                 log_callback(f"Directorio de instalación: {self.java_installs_dir}\n")
 
@@ -548,11 +594,11 @@ class JavaManager:
                 java_exe = self._find_java_executable(Path(install_path))
                 if java_exe:
                     if log_callback:
-                        log_callback(f"\n✓ Java {required_version} instalado correctamente\n")
+                        log_callback(f"\n✓ Java {required_version} installed successfully\n")
                     return str(java_exe)
 
             if log_callback:
-                log_callback("\n✗ No se pudo instalar Java automáticamente\n")
+                log_callback("\n✗ Could not install Java automatically\n")
                 log_callback(f"Por favor, instala Java {required_version} manualmente desde:\n")
                 log_callback("  https://adoptium.net/temurin/releases/\n")
 
@@ -560,7 +606,7 @@ class JavaManager:
 
         except Exception as e:
             if log_callback:
-                log_callback(f"\nError al gestionar Java: {str(e)}\n")
+                log_callback(f"\nError managing Java: {str(e)}\n")
             return None
 
     # ==================== PATH MANAGEMENT ====================
@@ -1164,7 +1210,7 @@ exit /b 0
                         pass
 
                     if log_callback:
-                        log_callback("│ ⚠ No se pudo verificar config     │\n")
+                        log_callback("│ ⚠ Could not verify config     │\n")
                     return False
 
             finally:
