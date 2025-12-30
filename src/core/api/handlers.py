@@ -374,21 +374,17 @@ class CurseForgeAPI:
             server_pack_filter: If True, only return modpacks that have server packs
 
         Returns:
-            Tuple of (list of modpacks, total results count)
+            Tuple of (list of modpacks in normalized format, total results count)
         """
         try:
             url = f"{self.PROXY_URL}/v1/mods/search"
-
-            # Request more results when filtering to ensure we have enough after filtering
-            request_limit = limit * 3 if server_pack_filter else limit
-            request_offset = 0 if server_pack_filter else offset
 
             params = {
                 "gameId": self.MINECRAFT_GAME_ID,
                 "classId": self.MODPACK_CLASS_ID,
                 "searchFilter": query,
-                "pageSize": min(request_limit, 50),  # CurseForge max is 50
-                "index": request_offset,
+                "pageSize": min(limit, 50),  # CurseForge max is 50
+                "index": offset,
                 "sortField": 2,  # Popularity
                 "sortOrder": "desc"
             }
@@ -401,24 +397,63 @@ class CurseForgeAPI:
             pagination = data.get("pagination", {})
             total = pagination.get("totalCount", len(modpacks))
 
-            # Filter for modpacks with server packs if requested
-            if server_pack_filter and modpacks:
-                filtered = []
-                for modpack in modpacks:
-                    # Check if any file has a server pack
-                    has_server_pack = self._modpack_has_server_pack(modpack.get("id"))
-                    if has_server_pack:
-                        filtered.append(modpack)
+            # Normalize to Modrinth-like format for UI compatibility
+            # CurseForge modLoader IDs: 1=Forge, 4=Fabric, 5=Quilt, 6=NeoForge
+            LOADER_MAP = {1: "forge", 4: "fabric", 5: "quilt", 6: "neoforge"}
 
-                # Apply pagination after filtering
-                modpacks = filtered[offset:offset + limit]
+            normalized = []
+            for mp in modpacks:
+                # Check for server pack if filter is enabled
+                if server_pack_filter:
+                    # Check latestFiles for serverPackFileId
+                    latest_files_full = mp.get("latestFiles", [])
+                    has_server_pack = any(f.get("serverPackFileId") for f in latest_files_full)
+                    if not has_server_pack:
+                        continue  # Skip modpacks without server pack
 
-                # Estimate total filtered results
-                if request_limit > 0 and len(data.get("data", [])) > 0:
-                    filter_ratio = len(filtered) / len(data.get("data", []))
-                    total = max(int(total * filter_ratio), len(filtered))
+                # Extract categories as simple strings
+                categories = []
+                for cat in mp.get("categories", []):
+                    cat_name = cat.get("name", "").lower() if isinstance(cat, dict) else str(cat).lower()
+                    categories.append(cat_name)
 
-            return modpacks, total
+                # Extract game versions and loaders from latestFilesIndexes
+                versions = []
+                loaders = set()
+                latest_files = mp.get("latestFilesIndexes", [])
+                for f in latest_files:
+                    gv = f.get("gameVersion", "")
+                    if gv and gv not in versions:
+                        versions.append(gv)
+                    # Get loader from modLoader field
+                    mod_loader = f.get("modLoader")
+                    if mod_loader and mod_loader in LOADER_MAP:
+                        loaders.add(LOADER_MAP[mod_loader])
+
+                # Add loaders to categories for UI compatibility
+                categories.extend(list(loaders))
+
+                normalized.append({
+                    "project_id": str(mp.get("id", "")),
+                    "title": mp.get("name", "Unknown"),
+                    "description": mp.get("summary", ""),
+                    "icon_url": mp.get("logo", {}).get("thumbnailUrl", "") if mp.get("logo") else "",
+                    "downloads": mp.get("downloadCount", 0),
+                    "categories": categories,
+                    "versions": sorted(versions, reverse=True) if versions else [],
+                    "slug": mp.get("slug", ""),
+                    "author": mp.get("authors", [{}])[0].get("name", "Unknown") if mp.get("authors") else "Unknown",
+                    "source": "curseforge",
+                    # Keep original data for later use
+                    "_curseforge_id": mp.get("id"),
+                    "_curseforge_data": mp
+                })
+
+            # Adjust total count if we filtered
+            if server_pack_filter:
+                total = len(normalized)
+
+            return normalized, total
 
         except Exception as e:
             print(f"Error searching modpacks on CurseForge: {e}")
