@@ -287,7 +287,7 @@ max-world-size=29999984
 
         except Exception as e:
             if log_callback:
-                log_callback(f"[WARN] No se pudo crear server.properties: {e}\n")
+                log_callback(f"[WARN] Could not create server.properties: {e}\n")
             return False
 
     def ensure_eula_accepted(self, log_callback: Optional[Callable[[str], None]] = None) -> bool:
@@ -359,7 +359,7 @@ max-world-size=29999984
             return False
         except Exception as e:
             if log_callback:
-                log_callback(f"[ERROR] Error al verificar/aceptar EULA: {e}\n")
+                log_callback(f"[ERROR] Error verifying/accepting EULA: {e}\n")
             return False
 
     def configure_server_properties(self, difficulty: str = "normal", log_callback: Optional[Callable[[str], None]] = None) -> bool:
@@ -460,7 +460,7 @@ max-world-size=29999984
                 log_callback(error_msg + "\n")
             return False
         except Exception as e:
-            error_msg = f"Error al modificar server.properties: {e}"
+            error_msg = f"Error modifying server.properties: {e}"
             print(error_msg)
             if log_callback:
                 log_callback(error_msg + "\n")
@@ -489,7 +489,7 @@ max-world-size=29999984
             return None
 
         except Exception as e:
-            print(f"Error al leer propiedad: {e}")
+            print(f"Error reading property: {e}")
             return None
 
     def update_property(self, property_name: str, property_value: str) -> bool:
@@ -538,7 +538,7 @@ max-world-size=29999984
             return True
 
         except Exception as e:
-            print(f"Error al actualizar propiedad: {e}")
+            print(f"Error updating property: {e}")
             return False
 
     def run_server_first_time(
@@ -621,7 +621,7 @@ max-world-size=29999984
                     log_callback("Aceptando EULA automáticamente...\n")
                 if not self.accept_eula():
                     if log_callback:
-                        log_callback("[ERROR] Error al aceptar EULA\n")
+                        log_callback("[ERROR] Error accepting EULA\n")
                     return False
             else:
                 if log_callback:
@@ -655,7 +655,7 @@ max-world-size=29999984
                     log_callback("Configurando server.properties...\n")
                 if not self.configure_server_properties(log_callback=log_callback):
                     if log_callback:
-                        log_callback("[ERROR] Error al modificar server.properties\n")
+                        log_callback("[ERROR] Error modifying server.properties\n")
                     return False
             else:
                 if log_callback:
@@ -756,13 +756,13 @@ max-world-size=29999984
             if log_callback:
                 log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
                 log_callback(f"Ruta buscada: {self.java_executable}\n")
-                log_callback("Asegúrate de que Java esté instalado correctamente.\n")
+                log_callback("Make sure Java is installed correctly.\n")
         except PermissionError as e:
             if log_callback:
                 log_callback(f"\n✗ Error de permisos al ejecutar el servidor: {e}\n")
         except Exception as e:
             if log_callback:
-                log_callback(f"\n✗ Error al ejecutar servidor: {e}\n")
+                log_callback(f"\n✗ Error running server: {e}\n")
                 log_callback(f"Tipo de error: {type(e).__name__}\n")
 
     def start_server(
@@ -921,7 +921,7 @@ max-world-size=29999984
             if log_callback:
                 log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
                 log_callback(f"Ruta buscada: {self.java_executable}\n")
-                log_callback("Asegúrate de que Java esté instalado correctamente.\n")
+                log_callback("Make sure Java is installed correctly.\n")
             return False
         except PermissionError as e:
             if log_callback:
@@ -929,7 +929,7 @@ max-world-size=29999984
             return False
         except Exception as e:
             if log_callback:
-                log_callback(f"\n✗ Error al iniciar servidor: {e}\n")
+                log_callback(f"\n✗ Error starting server: {e}\n")
                 log_callback(f"Tipo de error: {type(e).__name__}\n")
             return False
 
@@ -987,7 +987,7 @@ max-world-size=29999984
                 self.server_process = None  # Clean up reference anyway
                 return False
         except Exception as e:
-            print(f"Error al detener servidor: {e}")
+            print(f"Error stopping server: {e}")
             self.server_process = None  # Clean up on error too
             return False
 
@@ -1019,7 +1019,7 @@ max-world-size=29999984
                 return False
 
         except Exception as e:
-            print(f"Error al enviar comando: {e}")
+            print(f"Error sending command: {e}")
             return False
 
     # ==================== SOPORTE PARA MODPACKS ====================
@@ -1118,7 +1118,7 @@ max-world-size=29999984
 
             if not self.ensure_eula_accepted(log_callback):
                 if log_callback:
-                    log_callback("\n[ERROR] Error: No se pudo aceptar el EULA\n")
+                    log_callback("\n[ERROR] Error: Could not accept the EULA\n")
                 return False
 
             if log_callback:
@@ -1275,7 +1275,7 @@ max-world-size=29999984
             if log_callback:
                 log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
                 log_callback(f"Ruta buscada: {java_executable}\n")
-                log_callback("Asegúrate de que Java esté instalado correctamente.\n")
+                log_callback("Make sure Java is installed correctly.\n")
             return False
         except PermissionError as e:
             if log_callback:
@@ -1283,7 +1283,7 @@ max-world-size=29999984
             return False
         except Exception as e:
             if log_callback:
-                log_callback(f"\n✗ Error al iniciar servidor: {e}\n")
+                log_callback(f"\n✗ Error starting server: {e}\n")
                 log_callback(f"Tipo de error: {type(e).__name__}\n")
             return False
 
@@ -1309,7 +1309,7 @@ max-world-size=29999984
                 f.write(content)
 
         except Exception as e:
-            print(f"Error al modificar script: {e}")
+            print(f"Error modifying script: {e}")
 
     def run_modded_server_first_time(
         self,
@@ -1337,7 +1337,7 @@ max-world-size=29999984
             # Pre-create EULA BEFORE running the server (no need for start -> stop -> start cycle)
             if not self.ensure_eula_accepted(log_callback):
                 if log_callback:
-                    log_callback("[ERROR] Error al aceptar EULA\n")
+                    log_callback("[ERROR] Error accepting EULA\n")
                 return False
 
             # Single execution to generate server files (EULA already accepted)
@@ -1356,7 +1356,7 @@ max-world-size=29999984
                     log_callback("Configurando server.properties...\n")
                 if not self.configure_server_properties():
                     if log_callback:
-                        log_callback("⚠ Error al modificar server.properties (continuando)\n")
+                        log_callback("⚠ Error modifying server.properties (continuando)\n")
             else:
                 if log_callback:
                     log_callback("⚠ server.properties no encontrado (se generará al iniciar)\n")
@@ -1525,13 +1525,13 @@ max-world-size=29999984
             if log_callback:
                 log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
                 log_callback(f"Ruta buscada: {java_executable}\n")
-                log_callback("Asegúrate de que Java esté instalado correctamente.\n")
+                log_callback("Make sure Java is installed correctly.\n")
         except PermissionError as e:
             if log_callback:
                 log_callback(f"\n✗ Error de permisos al ejecutar el servidor: {e}\n")
         except Exception as e:
             if log_callback:
-                log_callback(f"\n✗ Error al ejecutar servidor: {e}\n")
+                log_callback(f"\n✗ Error running server: {e}\n")
                 log_callback(f"Tipo de error: {type(e).__name__}\n")
 
     def get_recommended_ram_for_modpack(self, num_mods: int) -> int:
@@ -1630,5 +1630,5 @@ max-world-size=29999984
 
         except Exception as e:
             if log_callback:
-                log_callback(f"Error al limpiar mods solo-cliente: {str(e)}\n")
+                log_callback(f"Error cleaning client-only mods: {str(e)}\n")
             return []
