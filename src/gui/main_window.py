@@ -3054,6 +3054,9 @@ class PyCraftGUI(QMainWindow):
             self.server_manager.java_executable = pycraft_java
             self._log(self.vanilla_run_console, f"\nUsing Java: {pycraft_java}\n", "info")
 
+        # Configure online-mode=false automatically for LAN/Hamachi play
+        self.server_manager.set_online_mode(False)
+
         self._log(self.vanilla_run_console, "\n=== STARTING SERVER ===\n", "info")
         self.run_start.setEnabled(False)
         self.run_config.setEnabled(False)
@@ -3206,7 +3209,7 @@ class PyCraftGUI(QMainWindow):
         dialog = QDialog(self)
         dialog.setWindowTitle("Server Configuration")
         # Vanilla needs more height for pause-when-empty option
-        dialog_height = 660 if server_type == "vanilla" else 560
+        dialog_height = 720 if server_type == "vanilla" else 620
         dialog.setFixedSize(420, dialog_height)
         dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
 
@@ -3424,6 +3427,31 @@ class PyCraftGUI(QMainWindow):
 
         layout.addSpacing(4)
 
+        # === Online Mode Section ===
+        online_section = QLabel("Online Mode")
+        online_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
+        layout.addWidget(online_section)
+
+        online_hint = QLabel("Set to OFF to allow non-premium players (LAN/Hamachi)")
+        online_hint.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
+        online_hint.setWordWrap(True)
+        layout.addWidget(online_hint)
+
+        # Get current value (default to false for easier LAN play)
+        current_online_mode = "false"
+        if manager:
+            saved_online = manager.get_property("online-mode")
+            if saved_online:
+                current_online_mode = saved_online.lower()
+
+        online_container, online_combo = create_combo_with_arrow(
+            ["false", "true"],
+            current_online_mode
+        )
+        layout.addWidget(online_container)
+
+        layout.addSpacing(4)
+
         # === Pause When Empty Section (only for vanilla) ===
         pause_spinbox = None  # Will be set only for vanilla
         if server_type == "vanilla":
@@ -3561,6 +3589,7 @@ class PyCraftGUI(QMainWindow):
             diff_combo.currentText(),
             gamemode_combo.currentText(),
             players_slider.value(),
+            online_combo.currentText(),
             pause_spinbox.value() if pause_spinbox else None,
             dialog
         ))
@@ -3607,13 +3636,14 @@ class PyCraftGUI(QMainWindow):
 
         dialog.exec()
 
-    def _save_config(self, server_type: str, ram: int, difficulty: str, gamemode: str, max_players: int, pause_when_empty: Optional[int], dialog: QDialog):
+    def _save_config(self, server_type: str, ram: int, difficulty: str, gamemode: str, max_players: int, online_mode: str, pause_when_empty: Optional[int], dialog: QDialog):
         if server_type == "vanilla":
             self.vanilla_ram = ram
             if self.server_manager:
                 self.server_manager.configure_server_properties(difficulty=difficulty)
                 self.server_manager.update_property("gamemode", gamemode)
                 self.server_manager.update_property("max-players", str(max_players))
+                self.server_manager.update_property("online-mode", online_mode)
                 if pause_when_empty is not None:
                     self.server_manager.update_property("pause-when-empty-seconds", str(pause_when_empty))
         else:
@@ -3622,6 +3652,7 @@ class PyCraftGUI(QMainWindow):
                 self.modpack_server_manager.configure_server_properties(difficulty=difficulty)
                 self.modpack_server_manager.update_property("gamemode", gamemode)
                 self.modpack_server_manager.update_property("max-players", str(max_players))
+                self.modpack_server_manager.update_property("online-mode", online_mode)
         dialog.accept()
 
     # Modpack search with debounce
@@ -4830,6 +4861,19 @@ class PyCraftGUI(QMainWindow):
             except Exception:
                 pass
 
+        # Check variables.txt (ServerPackCreator format by Griefed)
+        variables_path = os.path.join(folder, "variables.txt")
+        if os.path.exists(variables_path):
+            try:
+                with open(variables_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    # Parse MINECRAFT_VERSION=1.20.1
+                    match = re.search(r'^MINECRAFT_VERSION=(.+)$', content, re.MULTILINE)
+                    if match:
+                        return match.group(1).strip()
+            except Exception:
+                pass
+
         # Check run.bat/run.sh for version info
         for script in ["run.bat", "run.sh"]:
             script_path = os.path.join(folder, script)
@@ -4853,6 +4897,23 @@ class PyCraftGUI(QMainWindow):
         """Detect modpack loader type and version from server folder"""
         import glob
         import re
+
+        # Check variables.txt (ServerPackCreator format by Griefed)
+        variables_path = os.path.join(folder, "variables.txt")
+        if os.path.exists(variables_path):
+            try:
+                with open(variables_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    loader_match = re.search(r'^MODLOADER=(.+)$', content, re.MULTILINE)
+                    version_match = re.search(r'^MODLOADER_VERSION=(.+)$', content, re.MULTILINE)
+                    if loader_match:
+                        loader = loader_match.group(1).strip()
+                        version = version_match.group(1).strip() if version_match else ""
+                        if version:
+                            return f"{loader} {version}"
+                        return loader
+            except Exception:
+                pass
 
         # Check for Forge
         forge_jars = glob.glob(os.path.join(folder, "forge-*.jar"))
@@ -5089,6 +5150,9 @@ class PyCraftGUI(QMainWindow):
                     self.modpack_server_manager.accept_eula()
             except Exception:
                 pass
+
+        # Configure online-mode=false automatically for LAN/Hamachi play
+        self.modpack_server_manager.set_online_mode(False)
 
         # Detect server type (forge/fabric) for proper startup
         server_type = self.modpack_server_manager.detect_server_type()

@@ -27,10 +27,11 @@ class ServerManager:
         Detects the Minecraft version from various sources.
 
         Checks multiple locations:
-        1. modrinth.index.json (modpack manifest)
-        2. Fabric's .fabric directory
-        3. server.jar version.json
-        4. Server logs
+        1. modpack_info.json (created by PyCraft during install)
+        2. modrinth.index.json (modpack manifest)
+        3. Fabric's .fabric directory
+        4. server.jar version.json
+        5. Server logs
 
         Returns:
             Minecraft version string (e.g., "1.20.4") or None if not detected
@@ -41,7 +42,34 @@ class ServerManager:
         if self._detected_version:
             return self._detected_version
 
-        # Method 1: Check modrinth.index.json (modpack manifest)
+        # Method 1: Check modpack_info.json (created by PyCraft during install)
+        info_file = os.path.join(self.server_folder, "modpack_info.json")
+        if os.path.exists(info_file):
+            try:
+                with open(info_file, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+                mc_ver = info.get("minecraft_version")
+                if mc_ver:
+                    self._detected_version = mc_ver
+                    return self._detected_version
+            except Exception:
+                pass
+
+        # Method 2: Check variables.txt (ServerPackCreator format by Griefed)
+        variables_file = os.path.join(self.server_folder, "variables.txt")
+        if os.path.exists(variables_file):
+            try:
+                with open(variables_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    # Parse MINECRAFT_VERSION=1.20.1
+                    match = re.search(r'^MINECRAFT_VERSION=(.+)$', content, re.MULTILINE)
+                    if match:
+                        self._detected_version = match.group(1).strip()
+                        return self._detected_version
+            except Exception:
+                pass
+
+        # Method 3: Check modrinth.index.json (modpack manifest)
         modrinth_manifest = os.path.join(self.server_folder, "modrinth.index.json")
         if os.path.exists(modrinth_manifest):
             try:
@@ -464,6 +492,53 @@ max-world-size=29999984
             print(error_msg)
             if log_callback:
                 log_callback(error_msg + "\n")
+            return False
+
+    def set_online_mode(self, online_mode: bool = False, log_callback: Optional[Callable[[str], None]] = None) -> bool:
+        """
+        Sets online-mode in server.properties.
+
+        Args:
+            online_mode: True for online mode (requires Mojang auth), False for offline mode
+            log_callback: Callback function to report status
+
+        Returns:
+            True if modified successfully, False otherwise
+        """
+        try:
+            if not os.path.exists(self.properties_path):
+                # server.properties doesn't exist yet, will be created on first server run
+                return True
+
+            with open(self.properties_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+            mode_value = 'true' if online_mode else 'false'
+            modified = False
+
+            for i, line in enumerate(lines):
+                if line.strip().startswith('online-mode='):
+                    current_value = line.strip().split('=')[1]
+                    if current_value != mode_value:
+                        lines[i] = f'online-mode={mode_value}\n'
+                        modified = True
+                    break
+            else:
+                # Property not found, add it
+                lines.append(f'online-mode={mode_value}\n')
+                modified = True
+
+            if modified:
+                with open(self.properties_path, 'w', encoding='utf-8', newline='\n') as f:
+                    f.writelines(lines)
+                if log_callback:
+                    log_callback(f"[OK] online-mode set to {mode_value}\n")
+
+            return True
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"Warning: Could not set online-mode: {e}\n")
             return False
 
     def get_property(self, property_name: str) -> Optional[str]:
@@ -1031,6 +1106,36 @@ max-world-size=29999984
         Returns:
             "vanilla", "forge", "fabric", "neoforge", "quilt", o "unknown"
         """
+        # First check modpack_info.json (created by PyCraft during install)
+        info_file = os.path.join(self.server_folder, "modpack_info.json")
+        if os.path.exists(info_file):
+            try:
+                with open(info_file, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+                loader = info.get("loader")
+                if loader:
+                    loader_lower = loader.lower()
+                    if loader_lower in ["forge", "fabric", "neoforge", "quilt"]:
+                        return loader_lower
+            except Exception:
+                pass
+
+        # Check variables.txt (ServerPackCreator format by Griefed)
+        variables_file = os.path.join(self.server_folder, "variables.txt")
+        if os.path.exists(variables_file):
+            try:
+                with open(variables_file, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                    # Parse MODLOADER=Forge
+                    import re
+                    match = re.search(r'^MODLOADER=(.+)$', content, re.MULTILINE)
+                    if match:
+                        loader = match.group(1).strip().lower()
+                        if loader in ["forge", "fabric", "neoforge", "quilt"]:
+                            return loader
+            except Exception:
+                pass
+
         # Verificar si es Quilt
         for file in os.listdir(self.server_folder):
             if file.startswith("quilt-server") and file.endswith(".jar"):
@@ -1050,6 +1155,11 @@ max-world-size=29999984
         for file in os.listdir(self.server_folder):
             if "neoforge" in file.lower() and file.endswith(".jar"):
                 return "neoforge"
+
+        # Check Forge libraries folder (used by modern Forge server packs)
+        forge_libs = os.path.join(self.server_folder, "libraries", "net", "minecraftforge", "forge")
+        if os.path.exists(forge_libs):
+            return "forge"
 
         # Verificar si es Forge (buscar archivos run.bat/run.sh o forge jar)
         run_bat = os.path.join(self.server_folder, "run.bat")
@@ -1179,7 +1289,7 @@ max-world-size=29999984
                                 break
 
                 if not args_file_path:
-                    # Fallback: try to find forge jar directly
+                    # Fallback 1: Try to find forge jar directly
                     if log_callback:
                         log_callback("Warning: Forge args file not found, trying fallback...\n")
                     import glob
@@ -1188,9 +1298,47 @@ max-world-size=29999984
                         forge_jar = os.path.basename(forge_jars[0])
                         command = [java_executable, f"-Xms{ram_mb}M", f"-Xmx{ram_mb}M", "-Djava.awt.headless=true", "-jar", forge_jar, "nogui"]
                     else:
-                        if log_callback:
-                            log_callback("Error: No Forge server files found\n")
-                        return False
+                        # Fallback 2: Check for ServerPackCreator format (start.bat/start.sh with variables.txt)
+                        variables_file = os.path.join(self.server_folder, "variables.txt")
+                        start_bat = os.path.join(self.server_folder, "start.bat")
+                        start_sh = os.path.join(self.server_folder, "start.sh")
+
+                        if os.path.exists(variables_file) and (os.path.exists(start_bat) or os.path.exists(start_sh)):
+                            if log_callback:
+                                log_callback("Detected ServerPackCreator format, using start script...\n")
+
+                            # Update RAM settings in variables.txt
+                            try:
+                                with open(variables_file, 'r', encoding='utf-8') as f:
+                                    content = f.read()
+
+                                import re
+                                # Update JAVA_ARGS to use our RAM settings
+                                new_java_args = f'JAVA_ARGS="-Xmx{ram_mb}M -Xms{ram_mb}M"'
+                                content = re.sub(r'^JAVA_ARGS=.*$', new_java_args, content, flags=re.MULTILINE)
+
+                                with open(variables_file, 'w', encoding='utf-8') as f:
+                                    f.write(content)
+                            except Exception:
+                                pass
+
+                            # Use PowerShell directly on Windows for better control
+                            if os.name == 'nt' and os.path.exists(start_bat):
+                                ps_script = os.path.join(self.server_folder, "start.ps1")
+                                if os.path.exists(ps_script):
+                                    command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps_script]
+                                else:
+                                    command = ["cmd", "/c", start_bat]
+                            elif os.path.exists(start_sh):
+                                command = ["bash", start_sh]
+                            else:
+                                if log_callback:
+                                    log_callback("Error: No Forge server files found\n")
+                                return False
+                        else:
+                            if log_callback:
+                                log_callback("Error: No Forge server files found\n")
+                            return False
                 else:
                     # Add nogui to the args file if not present
                     try:

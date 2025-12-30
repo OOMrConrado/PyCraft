@@ -551,8 +551,11 @@ class ModpackManager:
             # Try to detect Minecraft version from extracted files
             minecraft_version = None
             loader_type = None
+            loader_version = None
+            import re
+            import glob
 
-            # Check for version.json or similar files that might contain version info
+            # Method 1: Check for version.json or manifest.json files
             version_indicators = [
                 Path(server_folder) / "version.json",
                 Path(server_folder) / "manifest.json",
@@ -572,32 +575,133 @@ class ModpackManager:
                     except:
                         pass
 
-            # Try to detect from forge/fabric jar filenames
+            # Method 2: Check libraries folder for Forge (has MC version in folder name)
+            if not minecraft_version:
+                forge_libs = Path(server_folder) / "libraries" / "net" / "minecraftforge" / "forge"
+                if forge_libs.exists():
+                    try:
+                        versions = list(forge_libs.iterdir())
+                        if versions:
+                            # Folder name is like "1.20.1-47.2.0"
+                            version_folder = versions[0].name
+                            if '-' in version_folder:
+                                minecraft_version = version_folder.split('-')[0]
+                                loader_type = "forge"
+                                loader_version = version_folder.split('-')[1] if len(version_folder.split('-')) > 1 else None
+                    except Exception:
+                        pass
+
+            # Method 3: Check for NeoForge libraries
+            if not minecraft_version:
+                neoforge_libs = Path(server_folder) / "libraries" / "net" / "neoforged" / "neoforge"
+                if neoforge_libs.exists():
+                    try:
+                        versions = list(neoforge_libs.iterdir())
+                        if versions:
+                            # NeoForge version format: MAJOR.MINOR.PATCH maps to MC 1.MAJOR.MINOR
+                            version = versions[0].name
+                            match = re.match(r'(\d+)\.(\d+)\.', version)
+                            if match:
+                                major, minor = match.groups()
+                                minecraft_version = f"1.{major}.{minor}" if minor != "0" else f"1.{major}"
+                                loader_type = "neoforge"
+                                loader_version = version
+                    except Exception:
+                        pass
+
+            # Method 4: Check for forge/fabric jar filenames
             if not minecraft_version:
                 for f in os.listdir(server_folder):
                     f_lower = f.lower()
                     if "forge" in f_lower and f.endswith(".jar"):
                         # Try to extract version from forge jar name
-                        # Format: forge-1.16.5-36.2.39.jar or minecraft_server.1.16.5.jar
-                        import re
+                        # Format: forge-1.16.5-36.2.39.jar
+                        match = re.search(r'forge-([\d.]+)-([\d.]+)', f)
+                        if match:
+                            minecraft_version = match.group(1)
+                            loader_type = "forge"
+                            loader_version = match.group(2)
+                            break
+                        # Fallback: just get any version number
                         match = re.search(r'(\d+\.\d+(?:\.\d+)?)', f)
                         if match:
                             minecraft_version = match.group(1)
                             loader_type = "forge"
                             break
                     elif "fabric" in f_lower and f.endswith(".jar"):
-                        import re
                         match = re.search(r'(\d+\.\d+(?:\.\d+)?)', f)
                         if match:
                             minecraft_version = match.group(1)
                             loader_type = "fabric"
                             break
 
-            # Default to 1.16.5 if we can't detect (common for older modpacks)
+            # Method 5: Check run.bat/run.sh for version info
             if not minecraft_version:
-                minecraft_version = "1.16.5"
+                for script in ["run.bat", "run.sh", "start.bat", "start.sh", "LaunchServer.bat", "LaunchServer.sh"]:
+                    script_path = Path(server_folder) / script
+                    if script_path.exists():
+                        try:
+                            with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                                # Look for MC version pattern in Forge paths
+                                match = re.search(r'forge[/-]([\d.]+)-([\d.]+)', content, re.IGNORECASE)
+                                if match:
+                                    minecraft_version = match.group(1)
+                                    loader_type = "forge"
+                                    loader_version = match.group(2)
+                                    break
+                                # Look for minecraft_server version
+                                match = re.search(r'minecraft[_-]?server[_-]?([\d.]+)', content, re.IGNORECASE)
+                                if match:
+                                    minecraft_version = match.group(1)
+                                    break
+                        except Exception:
+                            pass
+
+            # Method 6: Check variables.txt (ServerPackCreator format by Griefed)
+            if not minecraft_version:
+                variables_path = Path(server_folder) / "variables.txt"
+                if variables_path.exists():
+                    try:
+                        with open(variables_path, 'r', encoding='utf-8', errors='ignore') as f:
+                            content = f.read()
+                            # Parse MINECRAFT_VERSION=1.20.1
+                            mc_match = re.search(r'^MINECRAFT_VERSION=(.+)$', content, re.MULTILINE)
+                            if mc_match:
+                                minecraft_version = mc_match.group(1).strip()
+                            # Parse MODLOADER=Forge
+                            loader_match = re.search(r'^MODLOADER=(.+)$', content, re.MULTILINE)
+                            if loader_match:
+                                loader_type = loader_match.group(1).strip().lower()
+                            # Parse MODLOADER_VERSION=47.4.10
+                            loader_ver_match = re.search(r'^MODLOADER_VERSION=(.+)$', content, re.MULTILINE)
+                            if loader_ver_match:
+                                loader_version = loader_ver_match.group(1).strip()
+                    except Exception:
+                        pass
+
+            # Method 7: Check user_jvm_args.txt or other config files
+            if not minecraft_version:
+                for config_file in ["user_jvm_args.txt", "server.properties"]:
+                    config_path = Path(server_folder) / config_file
+                    if config_path.exists():
+                        try:
+                            with open(config_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                content = f.read()
+                                # Some modpacks put version info in comments
+                                match = re.search(r'minecraft[:\s]*([\d.]+)', content, re.IGNORECASE)
+                                if match:
+                                    minecraft_version = match.group(1)
+                                    break
+                        except Exception:
+                            pass
+
+            # Default to unknown with warning if we can't detect
+            if not minecraft_version:
+                minecraft_version = None
                 if log_callback:
-                    log_callback(f"⚠ Could not detect Minecraft version, assuming {minecraft_version}\n")
+                    log_callback("⚠ Could not detect Minecraft version from server pack\n")
+                    log_callback("    Will attempt to detect when loading the server\n")
 
             # Ensure Java is available
             java_exe = self.java_manager.ensure_java_installed(minecraft_version, log_callback)
@@ -609,6 +713,39 @@ class ModpackManager:
 
             # Accept EULA
             self._create_eula_file(server_folder, log_callback)
+
+            # Save modpack info for later detection
+            try:
+                modpack_info = self.curseforge_api.get_modpack_info(modpack_id)
+                modpack_name = modpack_info.get("name", "Unknown") if modpack_info else "Unknown"
+                modpack_slug = modpack_info.get("slug", "") if modpack_info else ""
+
+                info_file = Path(server_folder) / "modpack_info.json"
+                info_data = {
+                    "name": modpack_name,
+                    "slug": modpack_slug,
+                    "source": "curseforge",
+                    "minecraft_version": minecraft_version,
+                    "loader": loader_type,
+                    "loader_version": loader_version,
+                    "curseforge_url": f"https://www.curseforge.com/minecraft/modpacks/{modpack_slug}" if modpack_slug else "",
+                    "curseforge_id": modpack_id,
+                    "install_type": "server_pack"
+                }
+
+                with open(info_file, 'w', encoding='utf-8') as f:
+                    json.dump(info_data, f, indent=2)
+
+                if minecraft_version and log_callback:
+                    log_callback(f"[OK] Detected Minecraft {minecraft_version}")
+                    if loader_type:
+                        log_callback(f" with {loader_type.capitalize()}")
+                        if loader_version:
+                            log_callback(f" {loader_version}")
+                    log_callback("\n")
+            except Exception as e:
+                # Non-critical error, continue anyway
+                pass
 
             # Clean up temporary files
             try:
