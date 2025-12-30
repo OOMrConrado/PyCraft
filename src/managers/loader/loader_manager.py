@@ -105,7 +105,7 @@ class LoaderManager:
         """
         try:
             if log_callback:
-                log_callback("\n=== Instalando Forge ===\n")
+                log_callback("\n=== Installing Forge ===\n")
 
             # Obtener versión de Forge
             if not forge_version:
@@ -113,7 +113,7 @@ class LoaderManager:
 
             if not forge_version:
                 if log_callback:
-                    log_callback("Error: No se pudo obtener la versión de Forge\n")
+                    log_callback("Error: Could not get Forge version\n")
                 return False
 
             full_version = f"{minecraft_version}-{forge_version}"
@@ -121,7 +121,7 @@ class LoaderManager:
             if log_callback:
                 log_callback(f"Minecraft: {minecraft_version}\n")
                 log_callback(f"Forge: {forge_version}\n\n")
-                log_callback("Descargando instalador de Forge...\n")
+                log_callback("Downloading Forge installer...\n")
 
             # Descargar instalador
             installer_url = f"{self.FORGE_MAVEN_URL}/{full_version}/forge-{full_version}-installer.jar"
@@ -136,9 +136,9 @@ class LoaderManager:
                         f.write(chunk)
 
             if log_callback:
-                log_callback("Descarga completada\n")
-                log_callback("\nEjecutando instalador de Forge...\n")
-                log_callback("Esto puede tomar varios minutos...\n")
+                log_callback("Download complete\n")
+                log_callback("\nRunning Forge installer...\n")
+                log_callback("This may take several minutes...\n")
 
             # Ejecutar instalador
             # Configurar flags para Windows
@@ -156,13 +156,24 @@ class LoaderManager:
             )
 
             # Verificar que se instaló correctamente
-            # Buscar el archivo run.bat o run.sh
+            # Check multiple indicators of successful installation:
+            # 1. run.bat/run.sh (older Forge)
+            # 2. libraries/ folder with forge jar (modern Forge 1.16.5+)
+            # 3. Output contains "The server installed successfully"
             run_bat = os.path.join(server_folder, "run.bat")
             run_sh = os.path.join(server_folder, "run.sh")
+            libraries_folder = os.path.join(server_folder, "libraries")
 
-            if os.path.exists(run_bat) or os.path.exists(run_sh):
+            install_success = (
+                os.path.exists(run_bat) or
+                os.path.exists(run_sh) or
+                os.path.isdir(libraries_folder) or
+                "installed successfully" in result.stdout.lower()
+            )
+
+            if install_success:
                 if log_callback:
-                    log_callback("\n✓ Forge instalado correctamente\n")
+                    log_callback("\n✓ Forge installed successfully\n")
 
                 # Limpiar instalador
                 try:
@@ -176,16 +187,16 @@ class LoaderManager:
                 return True
             else:
                 if log_callback:
-                    log_callback("\n✗ Error: La instalación de Forge no se completó correctamente\n")
+                    log_callback("\n✗ Error: Forge installation did not complete correctly\n")
                     if result.stdout:
-                        log_callback(f"Salida: {result.stdout}\n")
+                        log_callback(f"Output: {result.stdout}\n")
                     if result.stderr:
-                        log_callback(f"Errores: {result.stderr}\n")
+                        log_callback(f"Errors: {result.stderr}\n")
                 return False
 
         except Exception as e:
             if log_callback:
-                log_callback(f"\nError al instalar Forge: {str(e)}\n")
+                log_callback(f"\nError installing Forge: {str(e)}\n")
             return False
 
     # ==================== FABRIC ====================
@@ -260,7 +271,7 @@ class LoaderManager:
         """
         try:
             if log_callback:
-                log_callback("\n=== Instalando Fabric ===\n")
+                log_callback("\n=== Installing Fabric ===\n")
 
             # Obtener versión del loader
             if not loader_version:
@@ -268,13 +279,13 @@ class LoaderManager:
 
             if not loader_version:
                 if log_callback:
-                    log_callback("Error: No se pudo obtener la versión de Fabric Loader\n")
+                    log_callback("Error: Could not get Fabric Loader version\n")
                 return False
 
             if log_callback:
                 log_callback(f"Minecraft: {minecraft_version}\n")
                 log_callback(f"Fabric Loader: {loader_version}\n")
-                log_callback("\nDescargando servidor de Fabric...\n")
+                log_callback("\nDownloading Fabric server...\n")
 
             # Descargar Fabric Server Launcher
             launcher_url = (
@@ -293,15 +304,15 @@ class LoaderManager:
                         f.write(chunk)
 
             if log_callback:
-                log_callback("Descarga completada\n")
-                log_callback("\n✓ Fabric instalado correctamente\n")
-                log_callback("El launcher de Fabric descargará los archivos necesarios al iniciar por primera vez\n")
+                log_callback("Download complete\n")
+                log_callback("\n✓ Fabric installed successfully\n")
+                log_callback("The Fabric launcher will download necessary files on first start\n")
 
             return True
 
         except Exception as e:
             if log_callback:
-                log_callback(f"\nError al instalar Fabric: {str(e)}\n")
+                log_callback(f"\nError installing Fabric: {str(e)}\n")
             return False
 
     # ==================== UTILIDADES ====================
