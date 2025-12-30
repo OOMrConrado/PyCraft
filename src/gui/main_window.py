@@ -9,6 +9,7 @@ import time
 import threading
 import webbrowser
 import subprocess
+import json
 from typing import Optional, List, Dict
 from pathlib import Path
 
@@ -532,6 +533,10 @@ class PyCraftGUI(QMainWindow):
         self.selected_mp_version = None  # For server install
         self.client_selected_mp_version = None  # For client install
 
+        # Provider selection state
+        self.mp_selected_provider = "modrinth"  # For server modpack install
+        self.client_mp_selected_provider = "modrinth"  # For client modpack install
+
         self.modpack_server_manager: Optional[ServerManager] = None
         self.modpack_server_path = None
         self.is_modpack_configured = False
@@ -562,10 +567,10 @@ class PyCraftGUI(QMainWindow):
 
         try:
             base_path = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-            logo_path = os.path.join(base_path, "PyCraft-Files", "logo.png")
+            icon_path = os.path.join(base_path, "PyCraft-Files", "icon.ico")
 
-            if os.path.exists(logo_path):
-                self.setWindowIcon(QIcon(logo_path))
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
         except Exception:
             pass
 
@@ -929,15 +934,15 @@ class PyCraftGUI(QMainWindow):
         layout.setSpacing(15)
 
         github = FooterLink("GitHub", "Source Code", "fa5b.github")
-        github.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft"))
+        github.clicked.connect(lambda: self._open_url("https://github.com/OOMrConrado/PyCraft"))
         layout.addWidget(github)
 
         documentation = FooterLink("Documentation", "User Guide", "fa5s.book")
-        documentation.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft/wiki"))
+        documentation.clicked.connect(lambda: self._open_url("https://pycraft-web.vercel.app/guide/introduction"))
         layout.addWidget(documentation)
 
-        support = FooterLink("Support", "Get Help", "fa5s.question-circle")
-        support.clicked.connect(lambda: webbrowser.open("https://github.com/OOMrConrado/PyCraft/issues"))
+        support = FooterLink("Support", "Report Issue", "fa5s.bug")
+        support.clicked.connect(lambda: self._open_url("https://github.com/OOMrConrado/PyCraft/issues/new"))
         layout.addWidget(support)
 
         return footer
@@ -1646,28 +1651,108 @@ class PyCraftGUI(QMainWindow):
         return page
 
     def _build_modpack_install(self) -> QWidget:
-        """Build modpack installation page"""
+        """Build modpack installation page with provider selection"""
         page = QWidget()
         page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(self._scroll_style())
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
 
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(40, 25, 40, 25)
-        layout.setSpacing(18)
+        # Stacked widget for provider selection / search UI
+        self.mp_stack = QStackedWidget()
+        self.mp_stack.setStyleSheet("background: transparent;")
 
-        back = self._text_button("< Back")
-        back.clicked.connect(lambda: self._go_to("modded"))
-        layout.addWidget(back)
+        # === Page 0: Provider Selection (no scroll) ===
+        provider_page = QWidget()
+        provider_page.setStyleSheet(f"background-color: {self.colors['bg_content']};")
+        provider_page_layout = QVBoxLayout(provider_page)
+        provider_page_layout.setContentsMargins(40, 25, 40, 25)
+        provider_page_layout.setSpacing(18)
 
-        title = QLabel("Install Modpack")
-        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        layout.addWidget(title)
+        back_provider = self._text_button("< Back")
+        back_provider.clicked.connect(lambda: self._go_to("modded"))
+        provider_page_layout.addWidget(back_provider)
 
-        # Search
+        title_provider = QLabel("Install Modpack")
+        title_provider.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
+        provider_page_layout.addWidget(title_provider)
+
+        # Center content vertically (2:3 ratio to account for header)
+        provider_page_layout.addStretch(2)
+
+        provider_title = QLabel("Choose a modpack provider:")
+        provider_title.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 15px;")
+        provider_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        provider_page_layout.addWidget(provider_title)
+
+        # Provider buttons container
+        providers_container = QWidget()
+        providers_container.setStyleSheet("background: transparent;")
+        providers_h = QHBoxLayout(providers_container)
+        providers_h.setSpacing(24)
+        providers_h.setContentsMargins(0, 0, 0, 0)
+        providers_h.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        modrinth_btn = self._create_provider_button(
+            "Modrinth",
+            "Open-source modding platform",
+            "#1bd96a",
+            "fa5s.leaf"
+        )
+        modrinth_btn.clicked.connect(lambda: self._select_mp_provider("modrinth"))
+        providers_h.addWidget(modrinth_btn)
+
+        curseforge_btn = self._create_provider_button(
+            "CurseForge",
+            "Largest mod collection",
+            "#f16436",
+            "fa5s.fire"
+        )
+        curseforge_btn.clicked.connect(lambda: self._select_mp_provider("curseforge"))
+        providers_h.addWidget(curseforge_btn)
+
+        provider_page_layout.addWidget(providers_container)
+        provider_page_layout.addStretch(3)
+
+        self.mp_stack.addWidget(provider_page)
+
+        # === Page 1: Search UI (with scroll) ===
+        search_scroll = QScrollArea()
+        search_scroll.setWidgetResizable(True)
+        search_scroll.setStyleSheet(self._scroll_style())
+
+        search_content = QWidget()
+        search_content.setStyleSheet(f"background-color: {self.colors['bg_content']};")
+        search_page_layout = QVBoxLayout(search_content)
+        search_page_layout.setContentsMargins(40, 25, 40, 25)
+        search_page_layout.setSpacing(18)
+
+        back_search = self._text_button("< Back")
+        back_search.clicked.connect(lambda: self._go_to("modded"))
+        search_page_layout.addWidget(back_search)
+
+        title_search = QLabel("Install Modpack")
+        title_search.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
+        search_page_layout.addWidget(title_search)
+
+        # Provider indicator with change button
+        provider_row = QWidget()
+        provider_row.setStyleSheet("background: transparent;")
+        provider_row_layout = QHBoxLayout(provider_row)
+        provider_row_layout.setContentsMargins(0, 0, 0, 8)
+
+        self.mp_provider_label = QLabel("Searching on: Modrinth")
+        self.mp_provider_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px;")
+        provider_row_layout.addWidget(self.mp_provider_label)
+
+        change_provider_btn = self._text_button("Change")
+        change_provider_btn.clicked.connect(lambda: self.mp_stack.setCurrentIndex(0))
+        provider_row_layout.addWidget(change_provider_btn)
+        provider_row_layout.addStretch()
+
+        search_page_layout.addWidget(provider_row)
+
+        # Search frame
         search_frame = self._section_frame("Search Modpacks")
         search_layout = search_frame.layout()
 
@@ -1687,7 +1772,7 @@ class PyCraftGUI(QMainWindow):
         search_layout.addWidget(results_label)
 
         self.mp_results_scroll = NonPropagatingScrollArea()
-        self.mp_results_scroll.setFixedHeight(320)
+        self.mp_results_scroll.setFixedHeight(280)
         self.mp_results_scroll.setWidgetResizable(True)
         self.mp_results_scroll.setStyleSheet(self._scroll_style())
 
@@ -1747,7 +1832,7 @@ class PyCraftGUI(QMainWindow):
         self.mp_selected.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600; border: none;")
         search_layout.addWidget(self.mp_selected)
 
-        layout.addWidget(search_frame)
+        search_page_layout.addWidget(search_frame)
 
         # Folder
         folder_frame = self._section_frame("Destination Folder")
@@ -1761,30 +1846,85 @@ class PyCraftGUI(QMainWindow):
         self.mp_folder_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
         folder_layout.addWidget(self.mp_folder_label)
 
-        layout.addWidget(folder_frame)
+        search_page_layout.addWidget(folder_frame)
 
-        # Install
+        # Install button
         self.mp_install_btn = self._styled_button("Download and Install", self.colors['accent'], "#000000", 280)
         self.mp_install_btn.setEnabled(False)
         self.mp_install_btn.clicked.connect(self._install_modpack)
-        layout.addWidget(self.mp_install_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        search_page_layout.addWidget(self.mp_install_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         # Console
         console_frame = self._section_frame("Console")
         self.modpack_install_console = self._console()
         console_frame.layout().addWidget(self.modpack_install_console)
-        layout.addWidget(console_frame)
+        search_page_layout.addWidget(console_frame)
 
-        layout.addStretch()
-        scroll.setWidget(content)
+        search_page_layout.addStretch()
+        search_scroll.setWidget(search_content)
 
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
+        self.mp_stack.addWidget(search_scroll)
 
-        self._log(self.modpack_install_console, "Search for a modpack to begin.\n", "info")
+        page_layout.addWidget(self.mp_stack)
 
         return page
+
+    def _create_provider_button(self, name: str, description: str, color: str, icon: str) -> QPushButton:
+        """Create a styled provider selection button"""
+        btn = QPushButton()
+        btn.setFixedSize(220, 160)
+        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.colors['bg_card']};
+                border: 2px solid {self.colors['border']};
+                border-radius: 14px;
+            }}
+            QPushButton:hover {{
+                border-color: {color};
+                background-color: {self.colors['bg_input']};
+            }}
+        """)
+
+        btn_layout = QVBoxLayout(btn)
+        btn_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_layout.setSpacing(10)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(qta.icon(icon, color=color).pixmap(48, 48))
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_label.setStyleSheet("background: transparent; border: none;")
+        btn_layout.addWidget(icon_label)
+
+        name_label = QLabel(name)
+        name_label.setStyleSheet(f"color: {self.colors['text']}; font-size: 18px; font-weight: bold; background: transparent; border: none;")
+        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_layout.addWidget(name_label)
+
+        desc_label = QLabel(description)
+        desc_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px; background: transparent; border: none;")
+        desc_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        btn_layout.addWidget(desc_label)
+
+        return btn
+
+    def _select_mp_provider(self, provider: str):
+        """Handle provider selection for server modpack install"""
+        self.mp_selected_provider = provider
+        provider_display = "Modrinth" if provider == "modrinth" else "CurseForge"
+        self.mp_provider_label.setText(f"Searching on: {provider_display}")
+
+        # Clear previous results
+        self._clear_layout(self.mp_results_layout)
+        self.mp_search.clear()
+        self.mp_selected.setText("No modpack selected")
+        self.selected_modpack = None
+        self.mp_pagination_widget.setVisible(False)
+
+        # Switch to search UI
+        self.mp_stack.setCurrentIndex(1)
+        self._log(self.modpack_install_console, f"Provider: {provider_display}\n", "info")
+        self._log(self.modpack_install_console, "Search for a modpack to begin.\n", "info")
 
     def _build_modpack_run(self) -> QWidget:
         """Build modpack run page"""
@@ -1895,26 +2035,31 @@ class PyCraftGUI(QMainWindow):
         return page
 
     def _build_client_install(self) -> QWidget:
-        """Build client modpack installation page"""
+        """Build client modpack installation page with provider selection"""
         page = QWidget()
         page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(self._scroll_style())
+        page_layout = QVBoxLayout(page)
+        page_layout.setContentsMargins(0, 0, 0, 0)
 
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(40, 25, 40, 25)
-        layout.setSpacing(18)
+        # Stacked widget for provider selection / search UI
+        self.client_mp_stack = QStackedWidget()
+        self.client_mp_stack.setStyleSheet("background: transparent;")
 
-        back = self._text_button("< Back")
-        back.clicked.connect(lambda: self._go_to("modded"))
-        layout.addWidget(back)
+        # === Page 0: Provider Selection (no scroll) ===
+        provider_page = QWidget()
+        provider_page.setStyleSheet(f"background-color: {self.colors['bg_content']};")
+        provider_page_layout = QVBoxLayout(provider_page)
+        provider_page_layout.setContentsMargins(40, 25, 40, 25)
+        provider_page_layout.setSpacing(18)
 
-        title = QLabel("Install Modpack (Client)")
-        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        layout.addWidget(title)
+        back_provider = self._text_button("< Back")
+        back_provider.clicked.connect(lambda: self._go_to("modded"))
+        provider_page_layout.addWidget(back_provider)
+
+        title_provider = QLabel("Install Modpack (Client)")
+        title_provider.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
+        provider_page_layout.addWidget(title_provider)
 
         # Info box
         info_frame = QFrame()
@@ -1938,9 +2083,84 @@ class PyCraftGUI(QMainWindow):
         info_text.setWordWrap(True)
         info_layout.addWidget(info_text, 1)
 
-        layout.addWidget(info_frame)
+        provider_page_layout.addWidget(info_frame)
 
-        # Search
+        # Center content vertically (2:3 ratio to account for header)
+        provider_page_layout.addStretch(2)
+
+        provider_title = QLabel("Choose a modpack provider:")
+        provider_title.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 15px;")
+        provider_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        provider_page_layout.addWidget(provider_title)
+
+        # Provider buttons container
+        providers_container = QWidget()
+        providers_container.setStyleSheet("background: transparent;")
+        providers_h = QHBoxLayout(providers_container)
+        providers_h.setSpacing(24)
+        providers_h.setContentsMargins(0, 0, 0, 0)
+        providers_h.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        modrinth_btn = self._create_provider_button(
+            "Modrinth",
+            "Open-source modding platform",
+            "#1bd96a",
+            "fa5s.leaf"
+        )
+        modrinth_btn.clicked.connect(lambda: self._select_client_mp_provider("modrinth"))
+        providers_h.addWidget(modrinth_btn)
+
+        curseforge_btn = self._create_provider_button(
+            "CurseForge",
+            "Largest mod collection",
+            "#f16436",
+            "fa5s.fire"
+        )
+        curseforge_btn.clicked.connect(lambda: self._select_client_mp_provider("curseforge"))
+        providers_h.addWidget(curseforge_btn)
+
+        provider_page_layout.addWidget(providers_container)
+        provider_page_layout.addStretch(3)
+
+        self.client_mp_stack.addWidget(provider_page)
+
+        # === Page 1: Search UI (with scroll) ===
+        search_scroll = QScrollArea()
+        search_scroll.setWidgetResizable(True)
+        search_scroll.setStyleSheet(self._scroll_style())
+
+        search_content = QWidget()
+        search_content.setStyleSheet(f"background-color: {self.colors['bg_content']};")
+        search_page_layout = QVBoxLayout(search_content)
+        search_page_layout.setContentsMargins(40, 25, 40, 25)
+        search_page_layout.setSpacing(18)
+
+        back_search = self._text_button("< Back")
+        back_search.clicked.connect(lambda: self._go_to("modded"))
+        search_page_layout.addWidget(back_search)
+
+        title_search = QLabel("Install Modpack (Client)")
+        title_search.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
+        search_page_layout.addWidget(title_search)
+
+        # Provider indicator with change button
+        provider_row = QWidget()
+        provider_row.setStyleSheet("background: transparent;")
+        provider_row_layout = QHBoxLayout(provider_row)
+        provider_row_layout.setContentsMargins(0, 0, 0, 8)
+
+        self.client_mp_provider_label = QLabel("Searching on: Modrinth")
+        self.client_mp_provider_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px;")
+        provider_row_layout.addWidget(self.client_mp_provider_label)
+
+        change_provider_btn = self._text_button("Change")
+        change_provider_btn.clicked.connect(lambda: self.client_mp_stack.setCurrentIndex(0))
+        provider_row_layout.addWidget(change_provider_btn)
+        provider_row_layout.addStretch()
+
+        search_page_layout.addWidget(provider_row)
+
+        # Search frame
         search_frame = self._section_frame("Search Modpacks")
         search_layout = search_frame.layout()
 
@@ -1960,7 +2180,7 @@ class PyCraftGUI(QMainWindow):
         search_layout.addWidget(results_label)
 
         self.client_mp_results_scroll = NonPropagatingScrollArea()
-        self.client_mp_results_scroll.setFixedHeight(320)
+        self.client_mp_results_scroll.setFixedHeight(280)
         self.client_mp_results_scroll.setWidgetResizable(True)
         self.client_mp_results_scroll.setStyleSheet(self._scroll_style())
 
@@ -1972,7 +2192,7 @@ class PyCraftGUI(QMainWindow):
 
         search_layout.addWidget(self.client_mp_results_scroll)
 
-        # Pagination controls (client)
+        # Pagination controls
         self.client_mp_pagination_widget = QWidget()
         self.client_mp_pagination_widget.setStyleSheet("background: transparent;")
         self.client_mp_pagination_widget.setVisible(False)
@@ -2020,31 +2240,58 @@ class PyCraftGUI(QMainWindow):
         self.client_mp_selected.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600;")
         search_layout.addWidget(self.client_mp_selected)
 
-        layout.addWidget(search_frame)
+        search_page_layout.addWidget(search_frame)
 
         # Install button
         self.client_mp_install_btn = self._styled_button("Install to Client", self.colors['accent'], "#000000", 200)
         self.client_mp_install_btn.setEnabled(False)
         self.client_mp_install_btn.clicked.connect(self._install_client_modpack)
-        layout.addWidget(self.client_mp_install_btn, alignment=Qt.AlignmentFlag.AlignLeft)
+        search_page_layout.addWidget(self.client_mp_install_btn, alignment=Qt.AlignmentFlag.AlignLeft)
 
         # Console
         console_frame = self._section_frame("Console")
         self.client_install_console = self._console()
         console_frame.layout().addWidget(self.client_install_console)
-        layout.addWidget(console_frame)
+        search_page_layout.addWidget(console_frame)
 
-        layout.addStretch()
-        scroll.setWidget(content)
+        search_page_layout.addStretch()
+        search_scroll.setWidget(search_content)
 
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
+        self.client_mp_stack.addWidget(search_scroll)
 
-        self._log(self.client_install_console, "Search for a modpack to install for your launcher.\n", "info")
-        self._log(self.client_install_console, f"Install location: {Path.home() / '.pycraft' / 'modpacks'}\n", "info")
+        page_layout.addWidget(self.client_mp_stack)
 
         return page
+
+    def _select_client_mp_provider(self, provider: str):
+        """Handle provider selection for client modpack install"""
+        self.client_mp_selected_provider = provider
+        provider_display = "Modrinth" if provider == "modrinth" else "CurseForge"
+        self.client_mp_provider_label.setText(f"Searching on: {provider_display}")
+
+        # Clear previous results
+        self._clear_layout(self.client_mp_results_layout)
+        self.client_mp_search.clear()
+        self.client_mp_selected.setText("No modpack selected")
+        self.client_selected_modpack = None
+        self.client_mp_pagination_widget.setVisible(False)
+
+        # Switch to search UI
+        self.client_mp_stack.setCurrentIndex(1)
+        self._log(self.client_install_console, f"Provider: {provider_display}\n", "info")
+        self._log(self.client_install_console, f"Install location: {Path.home() / '.pycraft' / 'modpacks'}\n", "info")
+        self._log(self.client_install_console, "Search for a modpack to install.\n", "info")
+
+    def _open_url(self, url: str):
+        """Open URL in browser without blocking UI"""
+        threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
+
+    def _clear_layout(self, layout):
+        """Clear all widgets from a layout"""
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
 
     # UI Helpers
     def _section_frame(self, title: str) -> QFrame:
@@ -2463,6 +2710,7 @@ class PyCraftGUI(QMainWindow):
 
         # Check Java compatibility BEFORE downloading
         required_java = self.java_manager.get_required_java_version(self.selected_version)
+        min_java, max_java = self.java_manager.get_java_version_range(self.selected_version)
         java_info = self.java_manager.detect_java_version()
 
         # Check if we have a compatible Java already installed by PyCraft
@@ -2473,15 +2721,19 @@ class PyCraftGUI(QMainWindow):
             if java_exe:
                 pycraft_java = str(java_exe)
 
-        # Determine if we need Java
+        # Determine if we need Java (check both min and max)
         needs_java = False
+        java_too_new = False
         if pycraft_java:
             # We have PyCraft-installed Java, use it
             pass
         elif java_info:
             _, installed_major = java_info
-            if installed_major < required_java:
+            if installed_major < min_java:
                 needs_java = True
+            elif max_java is not None and installed_major > max_java:
+                needs_java = True
+                java_too_new = True
         else:
             needs_java = True
 
@@ -2490,14 +2742,26 @@ class PyCraftGUI(QMainWindow):
             msg = QMessageBox(self)
             msg.setWindowTitle("Java Required")
             msg.setIcon(QMessageBox.Icon.Warning)
-            msg.setText(f"Minecraft {self.selected_version} requires Java {required_java}+")
+
+            if max_java:
+                msg.setText(f"Minecraft {self.selected_version} requires Java {min_java}-{max_java}")
+            else:
+                msg.setText(f"Minecraft {self.selected_version} requires Java {required_java}+")
 
             if java_info:
                 _, installed_major = java_info
-                msg.setInformativeText(
-                    f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
-                    f"What would you like to do?"
-                )
+                if java_too_new:
+                    msg.setInformativeText(
+                        f"You have Java {installed_major} installed, but it's too new.\n"
+                        f"Forge/modded servers for MC < 1.17 require Java 8-{max_java}.\n"
+                        f"Java 17+ breaks due to module system changes.\n\n"
+                        f"What would you like to do?"
+                    )
+                else:
+                    msg.setInformativeText(
+                        f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
+                        f"What would you like to do?"
+                    )
             else:
                 msg.setInformativeText(
                     f"Java is not installed on your system.\n\n"
@@ -2706,9 +2970,11 @@ class PyCraftGUI(QMainWindow):
 
         # Check Java compatibility
         required_java = self.java_manager.get_required_java_version(mc_version)
+        min_java, max_java = self.java_manager.get_java_version_range(mc_version)
         java_info = self.java_manager.detect_java_version()
 
         needs_java = False
+        java_too_new = False
         pycraft_java = None
 
         # Check if we have a PyCraft-installed Java
@@ -2723,22 +2989,37 @@ class PyCraftGUI(QMainWindow):
                 needs_java = True
             else:
                 _, installed_major = java_info
-                if installed_major < required_java:
+                if installed_major < min_java:
                     needs_java = True
+                elif max_java is not None and installed_major > max_java:
+                    needs_java = True
+                    java_too_new = True
 
         if needs_java:
             # Show dialog with options (same as create server)
             msg = QMessageBox(self)
             msg.setWindowTitle("Java Required")
             msg.setIcon(QMessageBox.Icon.Warning)
-            msg.setText(f"Minecraft {mc_version} requires Java {required_java}+")
+
+            if max_java:
+                msg.setText(f"Minecraft {mc_version} requires Java {min_java}-{max_java}")
+            else:
+                msg.setText(f"Minecraft {mc_version} requires Java {required_java}+")
 
             if java_info:
                 _, installed_major = java_info
-                msg.setInformativeText(
-                    f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
-                    f"What would you like to do?"
-                )
+                if java_too_new:
+                    msg.setInformativeText(
+                        f"You have Java {installed_major} installed, but it's too new.\n"
+                        f"Forge/modded servers for MC < 1.17 require Java 8-{max_java}.\n"
+                        f"Java 17+ breaks due to module system changes.\n\n"
+                        f"What would you like to do?"
+                    )
+                else:
+                    msg.setInformativeText(
+                        f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
+                        f"What would you like to do?"
+                    )
             else:
                 msg.setInformativeText(
                     f"Java is not installed on your system.\n\n"
@@ -3379,7 +3660,13 @@ class PyCraftGUI(QMainWindow):
             try:
                 offset = (page - 1) * 10
                 # Filter for server-compatible modpacks only
-                results, total = self.modpack_manager.search_modpacks(query, platform="modrinth", limit=10, offset=offset, side_filter="server")
+                results, total = self.modpack_manager.search_modpacks(
+                    query,
+                    platform=self.mp_selected_provider,
+                    limit=10,
+                    offset=offset,
+                    side_filter="server"
+                )
                 self.modpack_results = results
 
                 if results:
@@ -3564,14 +3851,20 @@ class PyCraftGUI(QMainWindow):
 
         meta_layout.addStretch()
 
-        # Link to Modrinth
+        # Link to provider
         slug = mp.get("slug", "")
+        source = mp.get("source", "modrinth")
         if slug:
             link_btn = QPushButton()
             link_btn.setIcon(qta.icon("fa5s.external-link-alt", color=self.colors['text_muted']))
             link_btn.setFixedSize(24, 24)
             link_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            link_btn.setToolTip("Open in Modrinth")
+            if source == "curseforge":
+                link_btn.setToolTip("Open in CurseForge")
+                link_url = f"https://www.curseforge.com/minecraft/modpacks/{slug}"
+            else:
+                link_btn.setToolTip("Open in Modrinth")
+                link_url = f"https://modrinth.com/modpack/{slug}"
             link_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent;
@@ -3582,7 +3875,7 @@ class PyCraftGUI(QMainWindow):
                     border-radius: 4px;
                 }}
             """)
-            link_btn.clicked.connect(lambda _, s=slug: QDesktopServices.openUrl(QUrl(f"https://modrinth.com/modpack/{s}")))
+            link_btn.clicked.connect(lambda _, url=link_url: QDesktopServices.openUrl(QUrl(url)))
             meta_layout.addWidget(link_btn)
 
         info_layout.addWidget(meta_widget)
@@ -3717,11 +4010,78 @@ class PyCraftGUI(QMainWindow):
 
         def load_versions():
             try:
-                versions = self.modpack_manager.modrinth_api.get_modpack_versions(project_id)
-                if versions:
-                    self.version_loaded_signal.emit(versions, show_versions)
+                source = mp.get("source", "modrinth")
+                if source == "curseforge":
+                    # Use CurseForge API
+                    curseforge_id = mp.get("_curseforge_id")
+                    if not curseforge_id:
+                        curseforge_id = int(project_id)
+
+                    if self.modpack_manager.curseforge_api is None:
+                        from ..core.api import CurseForgeAPI
+                        self.modpack_manager.curseforge_api = CurseForgeAPI()
+
+                    files = self.modpack_manager.curseforge_api.get_modpack_files(curseforge_id)
+                    if files:
+                        # Normalize CurseForge files to Modrinth-like format
+                        # IMPORTANT: For server modpacks, only show versions that have a server pack
+                        versions = []
+                        for f in files:
+                            # Skip versions without server pack (for server installation)
+                            server_pack_file_id = f.get("serverPackFileId")
+                            if not server_pack_file_id:
+                                continue  # Skip this version - no server pack available
+
+                            # Get loader from file name or gameVersions
+                            loader = "unknown"
+                            file_name = f.get("fileName", "").lower()
+                            game_versions_raw = f.get("gameVersions", [])
+
+                            # Separate MC versions from loaders
+                            mc_versions = []
+                            for gv in game_versions_raw:
+                                gv_lower = gv.lower()
+                                if gv_lower in ("forge", "neoforge", "fabric", "quilt"):
+                                    loader = gv_lower
+                                elif gv and gv[0].isdigit():
+                                    mc_versions.append(gv)
+
+                            # Also check file name for loader
+                            if loader == "unknown":
+                                if "forge" in file_name and "neoforge" not in file_name:
+                                    loader = "forge"
+                                elif "neoforge" in file_name:
+                                    loader = "neoforge"
+                                elif "fabric" in file_name:
+                                    loader = "fabric"
+                                elif "quilt" in file_name:
+                                    loader = "quilt"
+
+                            versions.append({
+                                "id": str(f.get("id", "")),
+                                "name": f.get("displayName", f.get("fileName", "Unknown")),
+                                "version_number": f.get("displayName", ""),
+                                "loaders": [loader],
+                                "game_versions": mc_versions if mc_versions else game_versions_raw,
+                                "downloads": f.get("downloadCount", 0),
+                                "source": "curseforge",
+                                "_curseforge_file": f,
+                                "_server_pack_file_id": server_pack_file_id  # Store for later use
+                            })
+
+                        if not versions:
+                            self.version_loaded_signal.emit(None, lambda v: loading.setText("No server pack versions available"))
+                        else:
+                            self.version_loaded_signal.emit(versions, show_versions)
+                    else:
+                        self.version_loaded_signal.emit(None, lambda v: loading.setText("No versions found"))
                 else:
-                    self.version_loaded_signal.emit(None, lambda v: loading.setText("No versions found"))
+                    # Use Modrinth API
+                    versions = self.modpack_manager.modrinth_api.get_modpack_versions(project_id)
+                    if versions:
+                        self.version_loaded_signal.emit(versions, show_versions)
+                    else:
+                        self.version_loaded_signal.emit(None, lambda v: loading.setText("No versions found"))
             except Exception as e:
                 self.version_loaded_signal.emit(None, lambda v: loading.setText(f"Error: {e}"))
 
@@ -3841,10 +4201,14 @@ class PyCraftGUI(QMainWindow):
         project_id = self.selected_modpack.get("project_id", "")
         version_id = self.selected_mp_version.get("id", "") if self.selected_mp_version else None
         mp_name = self.selected_modpack.get("title", "Unknown")
+        source = self.selected_modpack.get("source", "modrinth")
 
         # Get version info for post-install message
         version_info = self.selected_mp_version or {}
-        mc_version = version_info.get("game_versions", ["Unknown"])[0] if version_info.get("game_versions") else "Unknown"
+        game_versions = version_info.get("game_versions", [])
+        # Filter to get only MC versions (start with digit), exclude loader names
+        mc_versions = [v for v in game_versions if v and v[0].isdigit()]
+        mc_version = mc_versions[0] if mc_versions else (game_versions[0] if game_versions else "Unknown")
         loaders = version_info.get("loaders", ["Unknown"])
         loader_type = loaders[0] if loaders else "Unknown"
 
@@ -3852,12 +4216,35 @@ class PyCraftGUI(QMainWindow):
             try:
                 self.log_signal.emit(f"\nInstalling {mp_name}...\n", "info", "m_install")
 
-                success = self.modpack_manager.install_modrinth_modpack(
-                    project_id,
-                    version_id,
-                    self.modpack_folder,
-                    log_callback=lambda m: self.log_signal.emit(m, "normal", "m_install")
-                )
+                if source == "curseforge":
+                    # CurseForge installation
+                    curseforge_id = self.selected_modpack.get("_curseforge_id")
+                    if not curseforge_id:
+                        curseforge_id = int(project_id)
+
+                    # Get file_id from the selected version
+                    curseforge_file = version_info.get("_curseforge_file", {})
+                    file_id = curseforge_file.get("id") if curseforge_file else int(version_id)
+
+                    # Initialize CurseForge API if needed
+                    if self.modpack_manager.curseforge_api is None:
+                        from ..core.api import CurseForgeAPI
+                        self.modpack_manager.curseforge_api = CurseForgeAPI()
+
+                    success = self.modpack_manager.install_curseforge_modpack(
+                        curseforge_id,
+                        file_id,
+                        self.modpack_folder,
+                        log_callback=lambda m: self.log_signal.emit(m, "normal", "m_install")
+                    )
+                else:
+                    # Modrinth installation
+                    success = self.modpack_manager.install_modrinth_modpack(
+                        project_id,
+                        version_id,
+                        self.modpack_folder,
+                        log_callback=lambda m: self.log_signal.emit(m, "normal", "m_install")
+                    )
 
                 if success:
                     self.log_signal.emit("\n" + "="*50 + "\n", "success", "m_install")
@@ -3960,8 +4347,14 @@ class PyCraftGUI(QMainWindow):
         def search():
             try:
                 offset = (page - 1) * 10
-                # Filter for client-compatible modpacks only
-                results, total = self.modpack_manager.search_modpacks(query, platform="modrinth", limit=10, offset=offset, side_filter="client")
+                # Filter for client-compatible modpacks
+                results, total = self.modpack_manager.search_modpacks(
+                    query,
+                    platform=self.client_mp_selected_provider,
+                    limit=10,
+                    offset=offset,
+                    side_filter="client"
+                )
                 self.client_mp_results = results
 
                 if results:
@@ -4135,13 +4528,20 @@ class PyCraftGUI(QMainWindow):
 
         meta_layout.addStretch()
 
+        # Link to provider
         slug = mp.get("slug", "")
+        source = mp.get("source", "modrinth")
         if slug:
             link_btn = QPushButton()
             link_btn.setIcon(qta.icon("fa5s.external-link-alt", color=self.colors['text_muted']))
             link_btn.setFixedSize(24, 24)
             link_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            link_btn.setToolTip("Open in Modrinth")
+            if source == "curseforge":
+                link_btn.setToolTip("Open in CurseForge")
+                link_url = f"https://www.curseforge.com/minecraft/modpacks/{slug}"
+            else:
+                link_btn.setToolTip("Open in Modrinth")
+                link_url = f"https://modrinth.com/modpack/{slug}"
             link_btn.setStyleSheet(f"""
                 QPushButton {{
                     background: transparent;
@@ -4152,7 +4552,7 @@ class PyCraftGUI(QMainWindow):
                     border-radius: 4px;
                 }}
             """)
-            link_btn.clicked.connect(lambda _, s=slug: QDesktopServices.openUrl(QUrl(f"https://modrinth.com/modpack/{s}")))
+            link_btn.clicked.connect(lambda _, url=link_url: QDesktopServices.openUrl(QUrl(url)))
             meta_layout.addWidget(link_btn)
 
         info_layout.addWidget(meta_widget)
@@ -4178,17 +4578,37 @@ class PyCraftGUI(QMainWindow):
         mp = self.client_selected_modpack
         project_id = mp.get("project_id", "")
         mp_name = mp.get("title", "Unknown")
-        version_id = self.client_selected_mp_version.get("id", "") if self.client_selected_mp_version else None
+        source = mp.get("source", "modrinth")
+        version_info = self.client_selected_mp_version or {}
+        version_id = version_info.get("id", "") if version_info else None
 
         def install():
             try:
                 self.log_signal.emit(f"\nInstalling '{mp_name}' for client...\n", "info", "c_install")
 
-                result = self.modpack_manager.install_client_modpack(
-                    project_id,
-                    version_id=version_id,
-                    log_callback=lambda m: self.log_signal.emit(m, "normal", "c_install")
-                )
+                if source == "curseforge":
+                    # CurseForge client installation
+                    curseforge_id = mp.get("_curseforge_id")
+                    if not curseforge_id:
+                        curseforge_id = int(project_id)
+
+                    # Get file_id from the selected version
+                    curseforge_file = version_info.get("_curseforge_file", {})
+                    file_id = curseforge_file.get("id") if curseforge_file else int(version_id)
+
+                    result = self.modpack_manager.install_client_curseforge_modpack(
+                        curseforge_id,
+                        file_id,
+                        modpack_name=mp_name,
+                        log_callback=lambda m: self.log_signal.emit(m, "normal", "c_install")
+                    )
+                else:
+                    # Modrinth client installation
+                    result = self.modpack_manager.install_client_modpack(
+                        project_id,
+                        version_id=version_id,
+                        log_callback=lambda m: self.log_signal.emit(m, "normal", "c_install")
+                    )
 
                 if result and result.get("success"):
                     install_path = result.get("install_path", "")
@@ -4358,6 +4778,18 @@ class PyCraftGUI(QMainWindow):
         """Detect Minecraft version from modded server folder"""
         import glob
         import re
+
+        # First check modpack_info.json (created by PyCraft during install)
+        info_file = os.path.join(folder, "modpack_info.json")
+        if os.path.exists(info_file):
+            try:
+                with open(info_file, 'r', encoding='utf-8') as f:
+                    info = json.load(f)
+                mc_ver = info.get("minecraft_version")
+                if mc_ver:
+                    return mc_ver
+            except Exception:
+                pass
 
         # Check libraries folder for forge (has MC version in folder name)
         forge_libs = os.path.join(folder, "libraries", "net", "minecraftforge", "forge")
@@ -4562,9 +4994,11 @@ class PyCraftGUI(QMainWindow):
 
         # Check Java compatibility
         required_java = self.java_manager.get_required_java_version(mc_version)
+        min_java, max_java = self.java_manager.get_java_version_range(mc_version)
         java_info = self.java_manager.detect_java_version()
 
         needs_java = False
+        java_too_new = False
         pycraft_java = None
 
         # Check if we have a PyCraft-installed Java
@@ -4579,22 +5013,37 @@ class PyCraftGUI(QMainWindow):
                 needs_java = True
             else:
                 _, installed_major = java_info
-                if installed_major < required_java:
+                if installed_major < min_java:
                     needs_java = True
+                elif max_java is not None and installed_major > max_java:
+                    needs_java = True
+                    java_too_new = True
 
         if needs_java:
             # Show dialog with options
             msg = QMessageBox(self)
             msg.setWindowTitle("Java Required")
             msg.setIcon(QMessageBox.Icon.Warning)
-            msg.setText(f"Minecraft {mc_version} requires Java {required_java}+")
+
+            if max_java:
+                msg.setText(f"Minecraft {mc_version} requires Java {min_java}-{max_java}")
+            else:
+                msg.setText(f"Minecraft {mc_version} requires Java {required_java}+")
 
             if java_info:
                 _, installed_major = java_info
-                msg.setInformativeText(
-                    f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
-                    f"What would you like to do?"
-                )
+                if java_too_new:
+                    msg.setInformativeText(
+                        f"You have Java {installed_major} installed, but it's too new.\n"
+                        f"Forge/modded servers for MC < 1.17 require Java 8-{max_java}.\n"
+                        f"Java 17+ breaks due to module system changes.\n\n"
+                        f"What would you like to do?"
+                    )
+                else:
+                    msg.setInformativeText(
+                        f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
+                        f"What would you like to do?"
+                    )
             else:
                 msg.setInformativeText(
                     f"Java is not installed on your system.\n\n"
@@ -5218,11 +5667,24 @@ class PyCraftGUI(QMainWindow):
                 frame_layout = QHBoxLayout(frame)
                 frame_layout.setContentsMargins(12, 10, 12, 10)
 
+                # Source icon (Modrinth/CurseForge)
+                source = mp.get("source", "modrinth")
+                source_icon = QLabel()
+                if source == "curseforge":
+                    source_icon.setPixmap(qta.icon("fa5s.fire", color="#f16436").pixmap(20, 20))
+                    source_icon.setToolTip("CurseForge")
+                else:
+                    source_icon.setPixmap(qta.icon("fa5s.leaf", color="#1bd96a").pixmap(20, 20))
+                    source_icon.setToolTip("Modrinth")
+                source_icon.setFixedSize(24, 24)
+                source_icon.setStyleSheet("background: transparent; border: none;")
+                frame_layout.addWidget(source_icon)
+
                 # Info column
                 info_widget = QWidget()
                 info_widget.setStyleSheet("background: transparent;")
                 info_layout = QVBoxLayout(info_widget)
-                info_layout.setContentsMargins(0, 0, 0, 0)
+                info_layout.setContentsMargins(8, 0, 0, 0)
                 info_layout.setSpacing(2)
 
                 name = QLabel(mp.get("name", mp.get("folder_name", "Unknown")))
@@ -5256,6 +5718,29 @@ class PyCraftGUI(QMainWindow):
                 info_layout.addWidget(path)
 
                 frame_layout.addWidget(info_widget, 1)
+
+                # Link button (open in browser)
+                link_url = mp.get("curseforge_url") or mp.get("modrinth_url")
+                if link_url:
+                    link_btn = QPushButton()
+                    link_btn.setFixedSize(36, 36)
+                    link_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+                    link_btn.setIcon(qta.icon("fa5s.external-link-alt", color=self.colors['text']))
+                    link_btn.setIconSize(QSize(16, 16))
+                    link_btn.setToolTip("Open in browser")
+                    link_btn.setStyleSheet(f"""
+                        QPushButton {{
+                            background-color: transparent;
+                            border: 1px solid {self.colors['border']};
+                            border-radius: 8px;
+                        }}
+                        QPushButton:hover {{
+                            background-color: {self.colors['bg_card']};
+                            border: 1px solid {self.colors['text_muted']};
+                        }}
+                    """)
+                    link_btn.clicked.connect(lambda _, url=link_url: QDesktopServices.openUrl(QUrl(url)))
+                    frame_layout.addWidget(link_btn)
 
                 # Open folder button
                 open_btn = QPushButton()
