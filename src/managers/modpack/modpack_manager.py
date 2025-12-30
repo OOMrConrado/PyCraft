@@ -766,11 +766,12 @@ max-world-size=29999984
         if platform == "modrinth":
             return self.modrinth_api.search_modpacks(query, limit, offset, side_filter)
         elif platform == "curseforge":
-            if self.curseforge_api and self.curseforge_api.is_configured():
-                results = self.curseforge_api.search_modpacks(query, limit)
-                return results, len(results) if results else 0
-            else:
-                return None, 0
+            # CurseForge API is always configured (uses proxy)
+            if self.curseforge_api is None:
+                self.curseforge_api = CurseForgeAPI()
+            # For server filter, use server_pack_filter
+            server_pack_filter = side_filter == "server"
+            return self.curseforge_api.search_modpacks(query, limit, offset, server_pack_filter)
         return None, 0
 
     def get_recommended_ram(self, modpack_manifest: Dict) -> int:

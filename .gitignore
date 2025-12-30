@@ -62,6 +62,12 @@ crash-reports/
 # API Keys
 api_config.json
 
+# Cloudflare Worker Proxy
+proxy/.dev.vars
+proxy/node_modules/
+proxy/.wrangler/
+proxy/package-lock.json
+
 # OS
 Thumbs.db
 create_release.bat

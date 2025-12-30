@@ -329,85 +329,134 @@ class ModrinthAPI:
             print(f"Error al descargar archivo: {e}")
             return None
 
-# Reservado para implementación futura
-# API completamente funcional pero no integrada en la GUI
-# Se mantiene el código para futura expansión del proyecto
 class CurseForgeAPI:
-    """Maneja las peticiones a la API de CurseForge para modpacks"""
+    """Handles requests to the CurseForge API for modpacks via proxy"""
 
-    BASE_URL = "https://api.curseforge.com/v1"
+    # Use proxy URL to keep API key secure
+    PROXY_URL = "https://pycraft-curseforge-proxy.conradogomez556.workers.dev"
     MINECRAFT_GAME_ID = 432
+    MODPACK_CLASS_ID = 4471
 
     def __init__(self, api_key: Optional[str] = None):
         """
-        Inicializa la API de CurseForge
+        Initialize CurseForge API
 
         Args:
-            api_key: API key de CurseForge (opcional - se puede configurar después)
+            api_key: Not used anymore - proxy handles the API key
         """
-        self.api_key = api_key
-        self.headers = {}
-        if api_key:
-            self.headers["x-api-key"] = api_key
+        # API key is no longer needed - proxy handles it
+        self.headers = {
+            "Accept": "application/json"
+        }
 
     def set_api_key(self, api_key: str):
-        """Establece la API key de CurseForge"""
-        self.api_key = api_key
-        self.headers["x-api-key"] = api_key
+        """Legacy method - API key is handled by proxy now"""
+        pass
 
     def is_configured(self) -> bool:
-        """Verifica si la API está configurada con una key"""
-        return self.api_key is not None and len(self.api_key) > 0
+        """Always returns True since proxy handles the API key"""
+        return True
 
-    def search_modpacks(self, query: str, limit: int = 20) -> Optional[List[Dict]]:
+    def search_modpacks(
+        self,
+        query: str,
+        limit: int = 20,
+        offset: int = 0,
+        server_pack_filter: bool = False
+    ) -> Tuple[Optional[List[Dict]], int]:
         """
-        Busca modpacks en CurseForge
+        Search modpacks on CurseForge
 
         Args:
-            query: Texto de búsqueda
-            limit: Número máximo de resultados
+            query: Search text
+            limit: Maximum number of results per page
+            offset: Number of results to skip (for pagination)
+            server_pack_filter: If True, only return modpacks that have server packs
 
         Returns:
-            Lista de modpacks encontrados
+            Tuple of (list of modpacks, total results count)
         """
-        if not self.is_configured():
-            print("Error: CurseForge API key no configurada")
-            return None
-
         try:
-            url = f"{self.BASE_URL}/mods/search"
+            url = f"{self.PROXY_URL}/v1/mods/search"
+
+            # Request more results when filtering to ensure we have enough after filtering
+            request_limit = limit * 3 if server_pack_filter else limit
+            request_offset = 0 if server_pack_filter else offset
+
             params = {
                 "gameId": self.MINECRAFT_GAME_ID,
-                "classId": 4471,  # Modpack class ID
+                "classId": self.MODPACK_CLASS_ID,
                 "searchFilter": query,
-                "pageSize": limit
+                "pageSize": min(request_limit, 50),  # CurseForge max is 50
+                "index": request_offset,
+                "sortField": 2,  # Popularity
+                "sortOrder": "desc"
             }
 
-            response = requests.get(url, headers=self.headers, params=params, timeout=10)
+            response = requests.get(url, headers=self.headers, params=params, timeout=15)
             response.raise_for_status()
             data = response.json()
 
-            return data.get("data", [])
+            modpacks = data.get("data", [])
+            pagination = data.get("pagination", {})
+            total = pagination.get("totalCount", len(modpacks))
+
+            # Filter for modpacks with server packs if requested
+            if server_pack_filter and modpacks:
+                filtered = []
+                for modpack in modpacks:
+                    # Check if any file has a server pack
+                    has_server_pack = self._modpack_has_server_pack(modpack.get("id"))
+                    if has_server_pack:
+                        filtered.append(modpack)
+
+                # Apply pagination after filtering
+                modpacks = filtered[offset:offset + limit]
+
+                # Estimate total filtered results
+                if request_limit > 0 and len(data.get("data", [])) > 0:
+                    filter_ratio = len(filtered) / len(data.get("data", []))
+                    total = max(int(total * filter_ratio), len(filtered))
+
+            return modpacks, total
 
         except Exception as e:
-            print(f"Error al buscar modpacks en CurseForge: {e}")
-            return None
+            print(f"Error searching modpacks on CurseForge: {e}")
+            return None, 0
+
+    def _modpack_has_server_pack(self, modpack_id: int) -> bool:
+        """
+        Check if a modpack has any file with a server pack available
+
+        Args:
+            modpack_id: Modpack ID
+
+        Returns:
+            True if modpack has at least one file with server pack
+        """
+        try:
+            files = self.get_modpack_files(modpack_id)
+            if files:
+                for file in files:
+                    # serverPackFileId indicates a server pack exists for this file
+                    if file.get("serverPackFileId"):
+                        return True
+            return False
+        except:
+            return False
 
     def get_modpack_info(self, modpack_id: int) -> Optional[Dict]:
         """
-        Obtiene información de un modpack
+        Get modpack information
 
         Args:
-            modpack_id: ID del modpack
+            modpack_id: Modpack ID
 
         Returns:
-            Información del modpack
+            Modpack information
         """
-        if not self.is_configured():
-            return None
-
         try:
-            url = f"{self.BASE_URL}/mods/{modpack_id}"
+            url = f"{self.PROXY_URL}/v1/mods/{modpack_id}"
 
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
@@ -416,24 +465,21 @@ class CurseForgeAPI:
             return data.get("data")
 
         except Exception as e:
-            print(f"Error al obtener información del modpack: {e}")
+            print(f"Error getting modpack info: {e}")
             return None
 
     def get_modpack_files(self, modpack_id: int) -> Optional[List[Dict]]:
         """
-        Obtiene los archivos/versiones de un modpack
+        Get modpack files/versions
 
         Args:
-            modpack_id: ID del modpack
+            modpack_id: Modpack ID
 
         Returns:
-            Lista de archivos disponibles
+            List of available files
         """
-        if not self.is_configured():
-            return None
-
         try:
-            url = f"{self.BASE_URL}/mods/{modpack_id}/files"
+            url = f"{self.PROXY_URL}/v1/mods/{modpack_id}/files"
 
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
@@ -442,27 +488,49 @@ class CurseForgeAPI:
             return data.get("data", [])
 
         except Exception as e:
-            print(f"Error al obtener archivos del modpack: {e}")
+            print(f"Error getting modpack files: {e}")
+            return None
+
+    def get_server_pack_file_id(self, modpack_id: int, file_id: int) -> Optional[int]:
+        """
+        Get the server pack file ID for a specific modpack file
+
+        Args:
+            modpack_id: Modpack ID
+            file_id: Client modpack file ID
+
+        Returns:
+            Server pack file ID if available, None otherwise
+        """
+        try:
+            url = f"{self.PROXY_URL}/v1/mods/{modpack_id}/files/{file_id}"
+
+            response = requests.get(url, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            file_data = data.get("data", {})
+            return file_data.get("serverPackFileId")
+
+        except Exception as e:
+            print(f"Error getting server pack file ID: {e}")
             return None
 
     def download_modpack_file(self, modpack_id: int, file_id: int, dest_folder: str) -> Optional[str]:
         """
-        Descarga un archivo de modpack
+        Download a modpack file
 
         Args:
-            modpack_id: ID del modpack
-            file_id: ID del archivo
-            dest_folder: Carpeta destino
+            modpack_id: Modpack ID
+            file_id: File ID
+            dest_folder: Destination folder
 
         Returns:
-            Ruta al archivo descargado
+            Path to downloaded file
         """
-        if not self.is_configured():
-            return None
-
         try:
-            # Obtener información del archivo
-            url = f"{self.BASE_URL}/mods/{modpack_id}/files/{file_id}"
+            # Get file information
+            url = f"{self.PROXY_URL}/v1/mods/{modpack_id}/files/{file_id}"
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
             file_data = response.json().get("data")
@@ -476,9 +544,9 @@ class CurseForgeAPI:
             if not download_url or not filename:
                 return None
 
-            # Descargar archivo
+            # Download file (direct to CurseForge CDN, no proxy needed)
             dest_path = os.path.join(dest_folder, filename)
-            response = requests.get(download_url, stream=True, timeout=30)
+            response = requests.get(download_url, stream=True, timeout=60)
             response.raise_for_status()
 
             with open(dest_path, 'wb') as f:
@@ -489,25 +557,22 @@ class CurseForgeAPI:
             return dest_path
 
         except Exception as e:
-            print(f"Error al descargar archivo: {e}")
+            print(f"Error downloading file: {e}")
             return None
 
     def get_mod_file_info(self, mod_id: int, file_id: int) -> Optional[Dict]:
         """
-        Obtiene información de un archivo específico de un mod
+        Get information about a specific mod file
 
         Args:
-            mod_id: ID del mod
-            file_id: ID del archivo
+            mod_id: Mod ID
+            file_id: File ID
 
         Returns:
-            Información del archivo
+            File information
         """
-        if not self.is_configured():
-            return None
-
         try:
-            url = f"{self.BASE_URL}/mods/{mod_id}/files/{file_id}"
+            url = f"{self.PROXY_URL}/v1/mods/{mod_id}/files/{file_id}"
 
             response = requests.get(url, headers=self.headers, timeout=10)
             response.raise_for_status()
@@ -516,7 +581,7 @@ class CurseForgeAPI:
             return data.get("data")
 
         except Exception as e:
-            print(f"Error al obtener información del archivo: {e}")
+            print(f"Error getting file info: {e}")
             return None
 
 
