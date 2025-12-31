@@ -1020,39 +1020,69 @@ max-world-size=29999984
         """
         try:
             if self.server_process and self.server_process.poll() is None:
-                # First try graceful shutdown with "stop" command
+                pid = self.server_process.pid
+
+                # First, send "stop" command for graceful Minecraft shutdown
                 if self.server_process.stdin:
                     try:
                         self.server_process.stdin.write("stop\n")
                         self.server_process.stdin.flush()
-                        # Wait for graceful shutdown
-                        self.server_process.wait(timeout=15)
-                        print("Servidor detenido (graceful)")
-                        self.server_process = None
-                        return True
-                    except (subprocess.TimeoutExpired, OSError, BrokenPipeError):
-                        # Graceful shutdown failed, proceed to terminate
+                    except (OSError, BrokenPipeError):
                         pass
 
-                # Forceful termination
-                self.server_process.terminate()
+                # Give Minecraft a moment to save and shutdown gracefully
+                import time
+                time.sleep(2)
+
+                # Now kill the ENTIRE process tree to prevent restart scripts
+                # This is necessary because some modpacks use scripts with auto-restart loops
                 try:
-                    self.server_process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    # Kill if terminate didn't work
-                    self.server_process.kill()
+                    import psutil
                     try:
-                        self.server_process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        # Last resort: use psutil to force kill
-                        try:
-                            import psutil
-                            parent = psutil.Process(self.server_process.pid)
-                            for child in parent.children(recursive=True):
+                        parent = psutil.Process(pid)
+                        # Get all children BEFORE killing anything
+                        children = parent.children(recursive=True)
+
+                        # Kill children first (Java process)
+                        for child in children:
+                            try:
                                 child.kill()
+                            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                                pass
+
+                        # Then kill parent (script/cmd)
+                        try:
                             parent.kill()
-                        except Exception:
+                        except (psutil.NoSuchProcess, psutil.AccessDenied):
                             pass
+
+                        # Wait for all to terminate
+                        psutil.wait_procs(children + [parent], timeout=5)
+
+                    except psutil.NoSuchProcess:
+                        # Process already dead
+                        pass
+
+                except ImportError:
+                    # psutil not available, use basic approach
+                    self.server_process.terminate()
+                    try:
+                        self.server_process.wait(timeout=10)
+                    except subprocess.TimeoutExpired:
+                        self.server_process.kill()
+                        try:
+                            self.server_process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            # On Windows, try taskkill for the whole tree
+                            if os.name == 'nt':
+                                try:
+                                    subprocess.run(
+                                        ['taskkill', '/F', '/T', '/PID', str(pid)],
+                                        capture_output=True,
+                                        timeout=10
+                                    )
+                                except Exception:
+                                    pass
 
                 print("Servidor detenido")
                 self.server_process = None
@@ -1240,12 +1270,85 @@ max-world-size=29999984
             if server_type == "fabric":
                 # Fabric usa fabric-server-launch.jar
                 fabric_jar = "fabric-server-launch.jar"
-                if not os.path.exists(os.path.join(self.server_folder, fabric_jar)):
-                    if log_callback:
-                        log_callback(f"Error: {fabric_jar} no encontrado\n")
-                    return False
+                fabric_jar_path = os.path.join(self.server_folder, fabric_jar)
 
-                command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
+                if os.path.exists(fabric_jar_path):
+                    # Standard case: fabric-server-launch.jar exists
+                    command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
+                else:
+                    # Fallback: Check for start scripts (some modpacks like Prominence use these)
+                    start_bat = os.path.join(self.server_folder, "start.bat")
+                    start_sh = os.path.join(self.server_folder, "start.sh")
+                    run_bat = os.path.join(self.server_folder, "run.bat")
+                    run_sh = os.path.join(self.server_folder, "run.sh")
+
+                    if os.name == 'nt':  # Windows
+                        if os.path.exists(start_bat):
+                            if log_callback:
+                                log_callback(f"{fabric_jar} not found, using start.bat...\n")
+                            command = ["cmd", "/c", start_bat]
+                        elif os.path.exists(run_bat):
+                            if log_callback:
+                                log_callback(f"{fabric_jar} not found, using run.bat...\n")
+                            command = ["cmd", "/c", run_bat]
+                        else:
+                            # Try to download fabric-server-launch.jar automatically
+                            if log_callback:
+                                log_callback(f"{fabric_jar} not found. Attempting automatic download...\n")
+
+                            # Get Minecraft version from modpack_info.json or detection
+                            mc_version = self.detect_minecraft_version()
+                            if mc_version:
+                                try:
+                                    from ..loader.loader_manager import LoaderManager
+                                    loader_mgr = LoaderManager()
+                                    if loader_mgr.install_fabric(mc_version, self.server_folder, java_executable, log_callback=log_callback):
+                                        command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
+                                    else:
+                                        if log_callback:
+                                            log_callback(f"Error: Could not install Fabric automatically\n")
+                                        return False
+                                except Exception as e:
+                                    if log_callback:
+                                        log_callback(f"Error installing Fabric: {e}\n")
+                                    return False
+                            else:
+                                if log_callback:
+                                    log_callback(f"Error: {fabric_jar} not found and could not detect Minecraft version for auto-install\n")
+                                return False
+                    else:  # Linux/Mac
+                        if os.path.exists(start_sh):
+                            if log_callback:
+                                log_callback(f"{fabric_jar} not found, using start.sh...\n")
+                            command = ["bash", start_sh]
+                        elif os.path.exists(run_sh):
+                            if log_callback:
+                                log_callback(f"{fabric_jar} not found, using run.sh...\n")
+                            command = ["bash", run_sh]
+                        else:
+                            # Try to download fabric-server-launch.jar automatically
+                            if log_callback:
+                                log_callback(f"{fabric_jar} not found. Attempting automatic download...\n")
+
+                            mc_version = self.detect_minecraft_version()
+                            if mc_version:
+                                try:
+                                    from ..loader.loader_manager import LoaderManager
+                                    loader_mgr = LoaderManager()
+                                    if loader_mgr.install_fabric(mc_version, self.server_folder, java_executable, log_callback=log_callback):
+                                        command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
+                                    else:
+                                        if log_callback:
+                                            log_callback(f"Error: Could not install Fabric automatically\n")
+                                        return False
+                                except Exception as e:
+                                    if log_callback:
+                                        log_callback(f"Error installing Fabric: {e}\n")
+                                    return False
+                            else:
+                                if log_callback:
+                                    log_callback(f"Error: {fabric_jar} not found and could not detect Minecraft version for auto-install\n")
+                                return False
 
             elif server_type == "forge":
                 # Forge uses argument files (@user_jvm_args.txt, @win_args.txt)
@@ -1357,9 +1460,131 @@ max-world-size=29999984
                         f"@{args_file_path}"
                     ]
 
+            elif server_type == "neoforge":
+                # NeoForge uses similar structure to modern Forge
+                # Check for libraries/net/neoforged/neoforge/ folder
+
+                user_jvm_args_path = os.path.join(self.server_folder, "user_jvm_args.txt")
+
+                # Create or update user_jvm_args.txt
+                if not os.path.exists(user_jvm_args_path):
+                    with open(user_jvm_args_path, 'w', encoding='utf-8') as f:
+                        f.write(f"-Djava.awt.headless=true\n-Xms{ram_mb}M\n-Xmx{ram_mb}M\n")
+                else:
+                    with open(user_jvm_args_path, 'r', encoding='utf-8') as f:
+                        jvm_args = f.read()
+
+                    import re
+                    jvm_args = re.sub(r'-Xmx\d+[MGmg]', f'-Xmx{ram_mb}M', jvm_args)
+                    jvm_args = re.sub(r'-Xms\d+[MGmg]', f'-Xms{ram_mb}M', jvm_args)
+
+                    if '-Djava.awt.headless=true' not in jvm_args:
+                        jvm_args = '-Djava.awt.headless=true\n' + jvm_args
+
+                    with open(user_jvm_args_path, 'w', encoding='utf-8') as f:
+                        f.write(jvm_args)
+
+                # Find NeoForge args file
+                neoforge_path = os.path.join(self.server_folder, "libraries", "net", "neoforged", "neoforge")
+                args_file_path = None
+
+                if os.path.exists(neoforge_path):
+                    for version_folder in os.listdir(neoforge_path):
+                        version_path = os.path.join(neoforge_path, version_folder)
+                        if os.path.isdir(version_path):
+                            args_file = "win_args.txt" if os.name == 'nt' else "unix_args.txt"
+                            potential_path = os.path.join(version_path, args_file)
+                            if os.path.exists(potential_path):
+                                args_file_path = potential_path
+                                break
+
+                if args_file_path:
+                    # Add nogui if not present
+                    try:
+                        with open(args_file_path, 'r', encoding='utf-8') as f:
+                            args_content = f.read()
+                        if 'nogui' not in args_content.lower():
+                            with open(args_file_path, 'a', encoding='utf-8') as f:
+                                f.write('\nnogui\n')
+                    except:
+                        pass
+
+                    command = [
+                        java_executable,
+                        f"@{user_jvm_args_path}",
+                        f"@{args_file_path}"
+                    ]
+                else:
+                    # Fallback: Check for run.bat/run.sh or start.bat/start.sh
+                    run_bat = os.path.join(self.server_folder, "run.bat")
+                    run_sh = os.path.join(self.server_folder, "run.sh")
+                    start_bat = os.path.join(self.server_folder, "start.bat")
+                    start_sh = os.path.join(self.server_folder, "start.sh")
+
+                    if os.name == 'nt':
+                        if os.path.exists(run_bat):
+                            if log_callback:
+                                log_callback("Using run.bat for NeoForge...\n")
+                            command = ["cmd", "/c", run_bat]
+                        elif os.path.exists(start_bat):
+                            if log_callback:
+                                log_callback("Using start.bat for NeoForge...\n")
+                            command = ["cmd", "/c", start_bat]
+                        else:
+                            if log_callback:
+                                log_callback("Error: No NeoForge server files found\n")
+                            return False
+                    else:
+                        if os.path.exists(run_sh):
+                            if log_callback:
+                                log_callback("Using run.sh for NeoForge...\n")
+                            command = ["bash", run_sh]
+                        elif os.path.exists(start_sh):
+                            if log_callback:
+                                log_callback("Using start.sh for NeoForge...\n")
+                            command = ["bash", start_sh]
+                        else:
+                            if log_callback:
+                                log_callback("Error: No NeoForge server files found\n")
+                            return False
+
+            elif server_type == "quilt":
+                # Quilt uses quilt-server-launch.jar (similar to Fabric)
+                quilt_jar = "quilt-server-launch.jar"
+                quilt_jar_path = os.path.join(self.server_folder, quilt_jar)
+
+                if os.path.exists(quilt_jar_path):
+                    command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", quilt_jar, "nogui"]
+                else:
+                    # Fallback: Check for start scripts or other quilt jars
+                    start_bat = os.path.join(self.server_folder, "start.bat")
+                    start_sh = os.path.join(self.server_folder, "start.sh")
+
+                    # Also check for quilt-server-*.jar pattern
+                    import glob
+                    quilt_jars = glob.glob(os.path.join(self.server_folder, "quilt-server-*.jar"))
+
+                    if quilt_jars:
+                        quilt_jar = os.path.basename(quilt_jars[0])
+                        if log_callback:
+                            log_callback(f"Using {quilt_jar}...\n")
+                        command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", quilt_jar, "nogui"]
+                    elif os.name == 'nt' and os.path.exists(start_bat):
+                        if log_callback:
+                            log_callback("Using start.bat for Quilt...\n")
+                        command = ["cmd", "/c", start_bat]
+                    elif os.path.exists(start_sh):
+                        if log_callback:
+                            log_callback("Using start.sh for Quilt...\n")
+                        command = ["bash", start_sh]
+                    else:
+                        if log_callback:
+                            log_callback(f"Error: {quilt_jar} not found\n")
+                        return False
+
             else:
                 if log_callback:
-                    log_callback(f"Error: Tipo de servidor '{server_type}' no soportado\n")
+                    log_callback(f"Error: Server type '{server_type}' not supported\n")
                 return False
 
             if detached:
@@ -1532,7 +1757,7 @@ max-world-size=29999984
         Ejecuta servidor con mods y espera
 
         Args:
-            server_type: "forge" o "fabric"
+            server_type: "forge", "fabric", "neoforge", or "quilt"
             ram_mb: RAM en MB
             java_executable: Ejecutable de Java
             log_callback: Callback para logs
@@ -1544,7 +1769,48 @@ max-world-size=29999984
             ram_max = f"-Xmx{ram_mb}M"
 
             if server_type == "fabric":
-                command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", "fabric-server-launch.jar", "nogui"]
+                fabric_jar = "fabric-server-launch.jar"
+                fabric_jar_path = os.path.join(self.server_folder, fabric_jar)
+
+                if os.path.exists(fabric_jar_path):
+                    command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
+                else:
+                    # Fallback: Check for start scripts
+                    start_bat = os.path.join(self.server_folder, "start.bat")
+                    start_sh = os.path.join(self.server_folder, "start.sh")
+
+                    if os.name == 'nt' and os.path.exists(start_bat):
+                        if log_callback:
+                            log_callback(f"{fabric_jar} not found, using start.bat...\n")
+                        command = ["cmd", "/c", start_bat]
+                    elif os.path.exists(start_sh):
+                        if log_callback:
+                            log_callback(f"{fabric_jar} not found, using start.sh...\n")
+                        command = ["bash", start_sh]
+                    else:
+                        # Try to download fabric-server-launch.jar automatically
+                        mc_version = self.detect_minecraft_version()
+                        if mc_version:
+                            try:
+                                from ..loader.loader_manager import LoaderManager
+                                loader_mgr = LoaderManager()
+                                if log_callback:
+                                    log_callback(f"{fabric_jar} not found. Downloading Fabric for MC {mc_version}...\n")
+                                if loader_mgr.install_fabric(mc_version, self.server_folder, java_executable, log_callback=log_callback):
+                                    command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
+                                else:
+                                    if log_callback:
+                                        log_callback(f"Error: Could not install Fabric\n")
+                                    return
+                            except Exception as e:
+                                if log_callback:
+                                    log_callback(f"Error installing Fabric: {e}\n")
+                                return
+                        else:
+                            if log_callback:
+                                log_callback(f"Error: {fabric_jar} not found\n")
+                            return
+
             elif server_type == "forge":
                 # Modify or create user_jvm_args.txt
                 user_jvm_args_path = os.path.join(self.server_folder, "user_jvm_args.txt")
@@ -1606,6 +1872,86 @@ max-world-size=29999984
                         if log_callback:
                             log_callback("Error: No Forge server files found\n")
                         return
+
+            elif server_type == "neoforge":
+                # NeoForge - similar to Forge
+                user_jvm_args_path = os.path.join(self.server_folder, "user_jvm_args.txt")
+
+                if not os.path.exists(user_jvm_args_path):
+                    with open(user_jvm_args_path, 'w', encoding='utf-8') as f:
+                        f.write(f"-Djava.awt.headless=true\n-Xms{ram_mb}M\n-Xmx{ram_mb}M\n")
+                else:
+                    with open(user_jvm_args_path, 'r', encoding='utf-8') as f:
+                        jvm_args = f.read()
+                    import re
+                    jvm_args = re.sub(r'-Xmx\d+[MGmg]', f'-Xmx{ram_mb}M', jvm_args)
+                    jvm_args = re.sub(r'-Xms\d+[MGmg]', f'-Xms{ram_mb}M', jvm_args)
+                    if '-Djava.awt.headless=true' not in jvm_args:
+                        jvm_args = '-Djava.awt.headless=true\n' + jvm_args
+                    with open(user_jvm_args_path, 'w', encoding='utf-8') as f:
+                        f.write(jvm_args)
+
+                neoforge_path = os.path.join(self.server_folder, "libraries", "net", "neoforged", "neoforge")
+                args_file_path = None
+
+                if os.path.exists(neoforge_path):
+                    for version_folder in os.listdir(neoforge_path):
+                        version_path = os.path.join(neoforge_path, version_folder)
+                        if os.path.isdir(version_path):
+                            args_file = "win_args.txt" if os.name == 'nt' else "unix_args.txt"
+                            potential_path = os.path.join(version_path, args_file)
+                            if os.path.exists(potential_path):
+                                args_file_path = potential_path
+                                break
+
+                if args_file_path:
+                    try:
+                        with open(args_file_path, 'r', encoding='utf-8') as f:
+                            args_content = f.read()
+                        if 'nogui' not in args_content.lower():
+                            with open(args_file_path, 'a', encoding='utf-8') as f:
+                                f.write('\nnogui\n')
+                    except:
+                        pass
+                    command = [java_executable, f"@{user_jvm_args_path}", f"@{args_file_path}"]
+                else:
+                    # Fallback to scripts
+                    run_bat = os.path.join(self.server_folder, "run.bat")
+                    run_sh = os.path.join(self.server_folder, "run.sh")
+                    if os.name == 'nt' and os.path.exists(run_bat):
+                        command = ["cmd", "/c", run_bat]
+                    elif os.path.exists(run_sh):
+                        command = ["bash", run_sh]
+                    else:
+                        if log_callback:
+                            log_callback("Error: No NeoForge server files found\n")
+                        return
+
+            elif server_type == "quilt":
+                # Quilt - similar to Fabric
+                quilt_jar = "quilt-server-launch.jar"
+                quilt_jar_path = os.path.join(self.server_folder, quilt_jar)
+
+                if os.path.exists(quilt_jar_path):
+                    command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", quilt_jar, "nogui"]
+                else:
+                    import glob
+                    quilt_jars = glob.glob(os.path.join(self.server_folder, "quilt-server-*.jar"))
+                    if quilt_jars:
+                        quilt_jar = os.path.basename(quilt_jars[0])
+                        command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", quilt_jar, "nogui"]
+                    else:
+                        start_bat = os.path.join(self.server_folder, "start.bat")
+                        start_sh = os.path.join(self.server_folder, "start.sh")
+                        if os.name == 'nt' and os.path.exists(start_bat):
+                            command = ["cmd", "/c", start_bat]
+                        elif os.path.exists(start_sh):
+                            command = ["bash", start_sh]
+                        else:
+                            if log_callback:
+                                log_callback(f"Error: {quilt_jar} not found\n")
+                            return
+
             else:
                 return
 
