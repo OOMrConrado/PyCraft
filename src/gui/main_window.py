@@ -4243,6 +4243,85 @@ class PyCraftGUI(QMainWindow):
         loaders = version_info.get("loaders", ["Unknown"])
         loader_type = loaders[0] if loaders else "Unknown"
 
+        # Check Java compatibility BEFORE installing (if we know the MC version)
+        if mc_version and mc_version != "Unknown":
+            required_java = self.java_manager.get_required_java_version(mc_version)
+            min_java, max_java = self.java_manager.get_java_version_range(mc_version)
+            java_info = self.java_manager.detect_java_version()
+
+            # Check if we have a compatible Java already installed by PyCraft
+            pycraft_java = None
+            install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
+            if install_dir.exists():
+                java_exe = self.java_manager._find_java_executable(install_dir)
+                if java_exe:
+                    pycraft_java = str(java_exe)
+
+            # Determine if we need Java
+            needs_java = False
+            java_too_new = False
+            if pycraft_java:
+                pass  # We have PyCraft-installed Java
+            elif java_info:
+                _, installed_major = java_info
+                if installed_major < min_java:
+                    needs_java = True
+                elif max_java is not None and installed_major > max_java:
+                    needs_java = True
+                    java_too_new = True
+            else:
+                needs_java = True
+
+            if needs_java:
+                # Show dialog with options
+                msg = QMessageBox(self)
+                msg.setWindowTitle("Java Required")
+                msg.setIcon(QMessageBox.Icon.Warning)
+
+                if max_java:
+                    msg.setText(f"This modpack (MC {mc_version}) requires Java {min_java}-{max_java}")
+                else:
+                    msg.setText(f"This modpack (MC {mc_version}) requires Java {required_java}+")
+
+                if java_info:
+                    _, installed_major = java_info
+                    if java_too_new:
+                        msg.setInformativeText(
+                            f"You have Java {installed_major} installed, but it's too new.\n"
+                            f"Forge/modded servers for MC < 1.17 require Java 8-{max_java}.\n\n"
+                            f"What would you like to do?"
+                        )
+                    else:
+                        msg.setInformativeText(
+                            f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
+                            f"What would you like to do?"
+                        )
+                else:
+                    msg.setInformativeText(
+                        f"Java is not installed on your system.\n\n"
+                        f"What would you like to do?"
+                    )
+
+                install_java_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
+                java_mgmt_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
+                cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+
+                msg.exec()
+
+                clicked = msg.clickedButton()
+                if clicked == java_mgmt_btn:
+                    self._go_to("java_management")
+                    self.mp_install_btn.setEnabled(True)
+                    return
+                elif clicked == cancel_btn or clicked is None:
+                    self.mp_install_btn.setEnabled(True)
+                    return
+                elif clicked == install_java_btn:
+                    if not self._show_java_install_modal(required_java):
+                        QMessageBox.critical(self, "Error", f"Failed to install Java {required_java}. Cannot install modpack.")
+                        self.mp_install_btn.setEnabled(True)
+                        return
+
         def install():
             try:
                 self.log_signal.emit(f"\nInstalling {mp_name}...\n", "info", "m_install")
