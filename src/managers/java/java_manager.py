@@ -515,7 +515,8 @@ class JavaManager:
     def ensure_java_installed(
         self,
         minecraft_version: str,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        auto_install: bool = False
     ) -> Optional[str]:
         """
         Ensures that Java is installed and compatible
@@ -523,58 +524,23 @@ class JavaManager:
         Args:
             minecraft_version: Minecraft version
             log_callback: Function to report progress
+            auto_install: If True, automatically download Java if missing (default: False)
 
         Returns:
             Path to Java executable or "java" if using system Java
         """
         try:
-            if log_callback:
-                log_callback("\n=== Verificando Java ===\n")
-
-            # Detect installed Java
-            java_info = self.detect_java_version()
             required_version = self.get_required_java_version(minecraft_version)
 
-            if java_info:
-                version_str, major_version = java_info
-                min_version, max_version = self.get_java_version_range(minecraft_version)
-
-                if log_callback:
-                    log_callback(f"Java detected: {version_str} (Java {major_version})\n")
-
-                # Check if compatible
-                if self.is_java_compatible(minecraft_version):
-                    if log_callback:
-                        log_callback(f"✓ Java {major_version} is compatible with Minecraft {minecraft_version}\n")
-                    return "java"
-                elif major_version < min_version:
-                    if log_callback:
-                        log_callback(f"⚠ Java {major_version} is too old. Requires Java {min_version}+\n")
-                elif max_version is not None and major_version > max_version:
-                    if log_callback:
-                        log_callback(f"⚠ Java {major_version} is too new for Minecraft {minecraft_version}\n")
-                        log_callback(f"  Forge/modded servers for MC < 1.17 require Java 8-{max_version}\n")
-                        log_callback(f"  Java 17+ breaks due to module system changes\n")
-            else:
-                if log_callback:
-                    log_callback("⚠ Java is not installed on the system\n")
-
-            # Check if we already have Java downloaded
+            # First, check if PyCraft already has the required Java installed
             install_dir = self.java_installs_dir / f"java-{required_version}"
-            if log_callback:
-                log_callback(f"Buscando Java en: {install_dir}\n")
-
             if install_dir.exists():
                 java_exe = self._find_java_executable(install_dir)
                 if java_exe:
                     if log_callback:
-                        log_callback(f"✓ Usando Java {required_version} descargado previamente\n")
-                        log_callback(f"  Ruta: {java_exe}\n")
+                        log_callback(f"Using Java {required_version}: {java_exe}\n")
                     return str(java_exe)
                 else:
-                    if log_callback:
-                        log_callback(f"⚠ Directorio Java existe pero ejecutable no encontrado\n")
-                        log_callback(f"  Eliminando directorio corrupto...\n")
                     # Remove corrupted directory
                     import shutil
                     try:
@@ -582,11 +548,29 @@ class JavaManager:
                     except:
                         pass
 
-            # Download Java automatically
+            # Check system Java
+            java_info = self.detect_java_version()
+            if java_info:
+                version_str, major_version = java_info
+                if self.is_java_compatible(minecraft_version):
+                    if log_callback:
+                        log_callback(f"Using system Java {major_version}\n")
+                    return "java"
+
+            # No compatible Java found
+            if not auto_install:
+                # Just return None - UI should handle Java installation via modal
+                if log_callback:
+                    min_version, max_version = self.get_java_version_range(minecraft_version)
+                    if max_version:
+                        log_callback(f"⚠ Java {min_version}-{max_version} required for MC {minecraft_version}\n")
+                    else:
+                        log_callback(f"⚠ Java {required_version}+ required for MC {minecraft_version}\n")
+                return None
+
+            # Auto-install mode (legacy support)
             if log_callback:
-                log_callback(f"\nDownloading Java {required_version} automatically...\n")
-                log_callback("Esto puede tomar varios minutos dependiendo de tu conexión.\n")
-                log_callback(f"Directorio de instalación: {self.java_installs_dir}\n")
+                log_callback(f"Downloading Java {required_version}...\n")
 
             install_path = self.download_java(required_version, log_callback)
 
@@ -594,19 +578,17 @@ class JavaManager:
                 java_exe = self._find_java_executable(Path(install_path))
                 if java_exe:
                     if log_callback:
-                        log_callback(f"\n✓ Java {required_version} installed successfully\n")
+                        log_callback(f"✓ Java {required_version} installed\n")
                     return str(java_exe)
 
             if log_callback:
-                log_callback("\n✗ Could not install Java automatically\n")
-                log_callback(f"Por favor, instala Java {required_version} manualmente desde:\n")
-                log_callback("  https://adoptium.net/temurin/releases/\n")
+                log_callback(f"✗ Could not install Java {required_version}\n")
 
             return None
 
         except Exception as e:
             if log_callback:
-                log_callback(f"\nError managing Java: {str(e)}\n")
+                log_callback(f"Error: {str(e)}\n")
             return None
 
     # ==================== PATH MANAGEMENT ====================
