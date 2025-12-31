@@ -2,3 +2,6 @@ name = "pycraft-curseforge-proxy"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
+[[kv_namespaces]]
+binding = "RATE_LIMIT"
+id = "a6e9535c78f844f5bb1e9ded93c0c219"
