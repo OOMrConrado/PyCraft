@@ -863,6 +863,17 @@ class ModpackManager:
             if log_callback:
                 log_callback(f"Downloading {total_files} mods from CurseForge...\n")
 
+            def build_cdn_url(file_id: int, filename: str) -> str:
+                """Build alternative CDN URL when downloadUrl is null"""
+                file_id_str = str(file_id)
+                if len(file_id_str) > 4:
+                    first_part = file_id_str[:4]
+                    second_part = file_id_str[4:].lstrip('0') or '0'
+                else:
+                    first_part = file_id_str
+                    second_part = "0"
+                return f"https://edge.forgecdn.net/files/{first_part}/{second_part}/{filename}"
+
             for i, file_info in enumerate(files, 1):
                 project_id = file_info.get("projectID")
                 file_id_mod = file_info.get("fileID")
@@ -873,32 +884,36 @@ class ModpackManager:
                         file_data = self.curseforge_api.get_mod_file_info(project_id, file_id_mod)
 
                         if file_data:
-                            filename = file_data.get("fileName")
+                            filename = file_data.get("fileName", f"mod_{project_id}.jar")
                             download_url = file_data.get("downloadUrl")
+
+                            # If no download URL, use the CDN fallback
+                            if not download_url:
+                                download_url = build_cdn_url(file_id_mod, filename)
 
                             if log_callback:
                                 log_callback(f"  [{i}/{total_files}] {filename}...")
 
-                            if download_url:
-                                dest_file = mods_folder / filename
+                            dest_file = mods_folder / filename
 
-                                # Use streaming to avoid loading entire file into memory
-                                response = requests.get(download_url, timeout=30, stream=True)
-                                response.raise_for_status()
+                            # Use streaming with redirects support
+                            response = requests.get(
+                                download_url,
+                                timeout=60,
+                                stream=True,
+                                allow_redirects=True,
+                                headers={"User-Agent": "PyCraft/1.0"}
+                            )
+                            response.raise_for_status()
 
-                                # Write in chunks to reduce memory usage
-                                with open(dest_file, 'wb') as f:
-                                    for chunk in response.iter_content(chunk_size=8192):
-                                        if chunk:
-                                            f.write(chunk)
+                            # Write in chunks to reduce memory usage
+                            with open(dest_file, 'wb') as f:
+                                for chunk in response.iter_content(chunk_size=8192):
+                                    if chunk:
+                                        f.write(chunk)
 
-                                if log_callback:
-                                    log_callback(" [OK]\n")
-                            else:
-                                # Some mods don't allow third-party downloads
-                                if log_callback:
-                                    log_callback(f" ⚠ Requires manual download\n")
-                                    log_callback(f"      → https://www.curseforge.com/minecraft/mc-mods/{project_id}\n")
+                            if log_callback:
+                                log_callback(" [OK]\n")
 
                     except Exception as e:
                         if log_callback:
@@ -1602,55 +1617,153 @@ max-world-size=29999984
             mods_folder = install_path / "mods"
             mods_folder.mkdir(exist_ok=True)
 
-            # Download mods
+            # Download mods using parallel downloads for speed
             files = manifest.get("files", [])
             total_files = len(files)
 
             if log_callback:
-                log_callback(f"Downloading {total_files} mods...\n")
+                log_callback(f"Downloading {total_files} mods (parallel)...\n")
 
-            downloaded = 0
-            failed = 0
-            for i, mod_file in enumerate(files, 1):
+            # Get all project IDs to fetch mod info in batch (for slugs)
+            project_ids = [f.get("projectID") for f in files if f.get("projectID")]
+
+            # Fetch mod info in batch for proper URLs
+            mods_info_map = {}
+            if project_ids:
+                try:
+                    mods_batch = self.curseforge_api.get_mods_info_batch(project_ids)
+                    if mods_batch:
+                        for mod in mods_batch:
+                            mods_info_map[mod.get("id")] = mod
+                except Exception:
+                    pass  # Will fall back to individual lookups
+
+            # Counters for progress (thread-safe)
+            import threading
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
+            downloaded_count = [0]
+            failed_mods = []
+            lock = threading.Lock()
+
+            def build_cdn_url(file_id: int, filename: str) -> str:
+                """Build alternative CDN URL when downloadUrl is null"""
+                # CurseForge CDN pattern: https://edge.forgecdn.net/files/{first4}/{rest}/{filename}
+                file_id_str = str(file_id)
+                if len(file_id_str) > 4:
+                    first_part = file_id_str[:4]
+                    second_part = file_id_str[4:]
+                else:
+                    first_part = file_id_str
+                    second_part = ""
+                # Remove leading zeros from second part
+                second_part = second_part.lstrip('0') or '0'
+                return f"https://edge.forgecdn.net/files/{first_part}/{second_part}/{filename}"
+
+            def download_mod(mod_file):
+                """Download a single mod - runs in thread pool"""
                 project_id = mod_file.get("projectID")
                 mod_file_id = mod_file.get("fileID")
 
-                if project_id and mod_file_id:
-                    try:
-                        mod_info = self.curseforge_api.get_mod_file_info(project_id, mod_file_id)
-                        if mod_info:
-                            filename = mod_info.get("fileName", f"mod_{project_id}.jar")
-                            download_url = mod_info.get("downloadUrl")
+                if not project_id or not mod_file_id:
+                    return None
 
-                            if download_url:
-                                dest_file = mods_folder / filename
-                                response = requests.get(download_url, timeout=30, stream=True)
-                                response.raise_for_status()
+                try:
+                    # Get file info
+                    file_info = self.curseforge_api.get_mod_file_info(project_id, mod_file_id)
+                    if not file_info:
+                        return {"error": True, "project_id": project_id, "reason": "no_file_info"}
 
-                                with open(dest_file, 'wb') as f:
-                                    for chunk in response.iter_content(chunk_size=8192):
-                                        if chunk:
-                                            f.write(chunk)
+                    filename = file_info.get("fileName", f"mod_{project_id}.jar")
+                    download_url = file_info.get("downloadUrl")
 
-                                downloaded += 1
-                                if log_callback and downloaded % 10 == 0:
-                                    log_callback(f"  Progress: {downloaded}/{total_files}\n")
-                            else:
-                                # Some mods don't allow third-party downloads
-                                failed += 1
-                                if log_callback:
-                                    log_callback(f"  ⚠ {filename} - Requiere descarga manual\n")
-                                    log_callback(f"      → https://www.curseforge.com/minecraft/mc-mods/{project_id}\n")
-                    except Exception as e:
-                        failed += 1
-                        if log_callback:
-                            log_callback(f"  Warning: Failed to download mod {project_id}: {str(e)}\n")
+                    # If no download URL, use the CDN fallback
+                    if not download_url:
+                        download_url = build_cdn_url(mod_file_id, filename)
+
+                    # Download the mod
+                    dest_file = mods_folder / filename
+                    response = requests.get(
+                        download_url,
+                        timeout=60,
+                        stream=True,
+                        allow_redirects=True,
+                        headers={"User-Agent": "PyCraft/1.0"}
+                    )
+                    response.raise_for_status()
+
+                    with open(dest_file, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+
+                    with lock:
+                        downloaded_count[0] += 1
+                        if log_callback and downloaded_count[0] % 20 == 0:
+                            log_callback(f"  Progress: {downloaded_count[0]}/{total_files}\n")
+
+                    return {"success": True, "filename": filename}
+
+                except requests.exceptions.HTTPError as e:
+                    # If CDN also fails, provide manual download link
+                    mod_info = mods_info_map.get(project_id)
+                    if not mod_info:
+                        try:
+                            mod_info = self.curseforge_api.get_mod_info(project_id)
+                        except:
+                            mod_info = None
+
+                    if mod_info:
+                        slug = mod_info.get("slug", "")
+                        mod_name = mod_info.get("name", filename if 'filename' in dir() else f"mod_{project_id}")
+                        page_url = f"https://www.curseforge.com/minecraft/mc-mods/{slug}/files/{mod_file_id}"
+                    else:
+                        mod_name = f"mod_{project_id}"
+                        page_url = f"https://www.curseforge.com/minecraft/mc-mods/project/{project_id}/files/{mod_file_id}"
+
+                    return {
+                        "error": True,
+                        "project_id": project_id,
+                        "reason": "download_failed",
+                        "mod_name": mod_name,
+                        "filename": filename if 'filename' in dir() else f"mod_{project_id}.jar",
+                        "manual_url": page_url
+                    }
+
+                except Exception as e:
+                    return {"error": True, "project_id": project_id, "reason": str(e)}
+
+            # Use ThreadPoolExecutor for parallel downloads (8 concurrent)
+            with ThreadPoolExecutor(max_workers=8) as executor:
+                futures = {executor.submit(download_mod, mod_file): mod_file for mod_file in files}
+
+                for future in as_completed(futures):
+                    result = future.result()
+                    if result and result.get("error"):
+                        failed_mods.append(result)
+
+            # Report results
+            downloaded = downloaded_count[0]
+            failed = len(failed_mods)
 
             if log_callback:
                 log_callback(f"Downloaded {downloaded}/{total_files} mods")
                 if failed > 0:
-                    log_callback(f" ({failed} failed)")
-                log_callback("\n\n")
+                    log_callback(f" ({failed} require manual download)")
+                log_callback("\n")
+
+                # Show manual download links for failed mods
+                manual_downloads = [m for m in failed_mods if m.get("reason") == "no_download_url"]
+                if manual_downloads:
+                    log_callback("\n⚠ Some mods require manual download:\n")
+                    for mod in manual_downloads:
+                        mod_name = mod.get("mod_name", mod.get("filename", "Unknown"))
+                        url = mod.get("manual_url", "")
+                        log_callback(f"  • {mod_name}\n")
+                        log_callback(f"    → {url}\n")
+                    log_callback("\nDownload these and place in the 'mods' folder.\n")
+
+                log_callback("\n")
 
             # Copy overrides
             if log_callback:

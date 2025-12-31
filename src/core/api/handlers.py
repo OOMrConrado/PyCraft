@@ -619,6 +619,57 @@ class CurseForgeAPI:
             print(f"Error getting file info: {e}")
             return None
 
+    def get_mod_info(self, mod_id: int) -> Optional[Dict]:
+        """
+        Get information about a mod (name, slug, links, etc.)
+
+        Args:
+            mod_id: Mod ID
+
+        Returns:
+            Mod information including slug for URL construction
+        """
+        try:
+            url = f"{self.PROXY_URL}/v1/mods/{mod_id}"
+
+            response = requests.get(url, headers=self.headers, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+
+            return data.get("data")
+
+        except Exception as e:
+            print(f"Error getting mod info: {e}")
+            return None
+
+    def get_mods_info_batch(self, mod_ids: List[int]) -> Optional[List[Dict]]:
+        """
+        Get information about multiple mods in a single request
+
+        Args:
+            mod_ids: List of mod IDs
+
+        Returns:
+            List of mod information
+        """
+        try:
+            url = f"{self.PROXY_URL}/v1/mods"
+
+            response = requests.post(
+                url,
+                headers={**self.headers, "Content-Type": "application/json"},
+                json={"modIds": mod_ids},
+                timeout=30
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            return data.get("data", [])
+
+        except Exception as e:
+            print(f"Error getting mods batch info: {e}")
+            return None
+
 
 # Clase auxiliar para gestionar configuración de API keys
 class APIConfig:
