@@ -537,6 +537,10 @@ class PyCraftGUI(QMainWindow):
         self.mp_selected_provider = "modrinth"  # For server modpack install
         self.client_mp_selected_provider = "modrinth"  # For client modpack install
 
+        # Popular modpacks mode (shows popular modpacks when no search query)
+        self.mp_is_popular_search = False
+        self.client_mp_is_popular_search = False
+
         self.modpack_server_manager: Optional[ServerManager] = None
         self.modpack_server_path = None
         self.is_modpack_configured = False
@@ -1712,6 +1716,17 @@ class PyCraftGUI(QMainWindow):
         providers_h.addWidget(curseforge_btn)
 
         provider_page_layout.addWidget(providers_container)
+
+        # Recommendation message
+        recommendation_label = QLabel("We recommend CurseForge for better stability")
+        recommendation_label.setStyleSheet(f"""
+            color: #f0c040;
+            font-size: 13px;
+            font-style: italic;
+        """)
+        recommendation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        provider_page_layout.addWidget(recommendation_label)
+
         provider_page_layout.addStretch(3)
 
         self.mp_stack.addWidget(provider_page)
@@ -1761,7 +1776,7 @@ class PyCraftGUI(QMainWindow):
         search_h = QHBoxLayout(search_row)
         search_h.setContentsMargins(0, 0, 0, 0)
 
-        self.mp_search = self._input("Search modpacks (min. 3 characters)...", 560)
+        self.mp_search = self._input("Search modpacks...", 560)
         self.mp_search.textChanged.connect(self._on_mp_search_changed)
         search_h.addWidget(self.mp_search)
 
@@ -1924,7 +1939,10 @@ class PyCraftGUI(QMainWindow):
         # Switch to search UI
         self.mp_stack.setCurrentIndex(1)
         self._log(self.modpack_install_console, f"Provider: {provider_display}\n", "info")
-        self._log(self.modpack_install_console, "Search for a modpack to begin.\n", "info")
+        self._log(self.modpack_install_console, "Loading popular modpacks...\n", "info")
+
+        # Load popular modpacks automatically
+        self._search_modpacks(page=1, popular=True)
 
     def _build_modpack_run(self) -> QWidget:
         """Build modpack run page"""
@@ -2120,6 +2138,17 @@ class PyCraftGUI(QMainWindow):
         providers_h.addWidget(curseforge_btn)
 
         provider_page_layout.addWidget(providers_container)
+
+        # Recommendation message
+        recommendation_label = QLabel("We recommend CurseForge for better stability")
+        recommendation_label.setStyleSheet(f"""
+            color: #f0c040;
+            font-size: 13px;
+            font-style: italic;
+        """)
+        recommendation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        provider_page_layout.addWidget(recommendation_label)
+
         provider_page_layout.addStretch(3)
 
         self.client_mp_stack.addWidget(provider_page)
@@ -2169,7 +2198,7 @@ class PyCraftGUI(QMainWindow):
         search_h = QHBoxLayout(search_row)
         search_h.setContentsMargins(0, 0, 0, 0)
 
-        self.client_mp_search = self._input("Search modpacks (min. 3 characters)...", 560)
+        self.client_mp_search = self._input("Search modpacks...", 560)
         self.client_mp_search.textChanged.connect(self._on_client_mp_search_changed)
         search_h.addWidget(self.client_mp_search)
 
@@ -2280,7 +2309,10 @@ class PyCraftGUI(QMainWindow):
         self.client_mp_stack.setCurrentIndex(1)
         self._log(self.client_install_console, f"Provider: {provider_display}\n", "info")
         self._log(self.client_install_console, f"Install location: {Path.home() / '.pycraft' / 'modpacks'}\n", "info")
-        self._log(self.client_install_console, "Search for a modpack to install.\n", "info")
+        self._log(self.client_install_console, "Loading popular modpacks...\n", "info")
+
+        # Load popular modpacks automatically
+        self._search_client_modpacks(page=1, popular=True)
 
     def _open_url(self, url: str):
         """Open URL in browser without blocking UI"""
@@ -3667,19 +3699,29 @@ class PyCraftGUI(QMainWindow):
                     child.widget().deleteLater()
             self.mp_pagination_widget.setVisible(False)
             self.mp_search_timer.stop()
+
+            # If search is empty, reload popular modpacks
+            if len(text.strip()) == 0:
+                self._search_modpacks(page=1, popular=True)
             return
+
+        # When user types, switch from popular to search mode
+        self.mp_is_popular_search = False
 
         # Restart debounce timer
         self.mp_search_timer.stop()
         self.mp_search_timer.start()
 
-    def _search_modpacks(self, page: int = 1):
+    def _search_modpacks(self, page: int = 1, popular: bool = False):
         query = self.mp_search.text().strip()
-        if len(query) < 3:
+
+        # Allow empty query for popular modpacks, otherwise require 3+ chars
+        if not popular and len(query) < 3:
             return
 
-        self.mp_search_query = query
+        self.mp_search_query = query if not popular else ""
         self.mp_current_page = page
+        self.mp_is_popular_search = popular
 
         # Clear previous results
         while self.mp_results_layout.count():
@@ -3690,9 +3732,10 @@ class PyCraftGUI(QMainWindow):
         def search():
             try:
                 offset = (page - 1) * 10
+                search_query = "" if popular else query
                 # Filter for server-compatible modpacks only
                 results, total = self.modpack_manager.search_modpacks(
-                    query,
+                    search_query,
                     platform=self.mp_selected_provider,
                     limit=10,
                     offset=offset,
@@ -3715,7 +3758,9 @@ class PyCraftGUI(QMainWindow):
         """Navigate to a specific page"""
         total_pages = (self.mp_total_results + 9) // 10
         if 1 <= page <= total_pages:
-            self._search_modpacks(page)
+            # Preserve popular search mode during pagination
+            is_popular = getattr(self, 'mp_is_popular_search', False)
+            self._search_modpacks(page, popular=is_popular)
 
     def _update_mp_pagination(self, total: int):
         """Update pagination UI"""
@@ -4434,19 +4479,29 @@ class PyCraftGUI(QMainWindow):
                     child.widget().deleteLater()
             self.client_mp_pagination_widget.setVisible(False)
             self.client_mp_search_timer.stop()
+
+            # If search is empty, reload popular modpacks
+            if len(text.strip()) == 0:
+                self._search_client_modpacks(page=1, popular=True)
             return
+
+        # When user types, switch from popular to search mode
+        self.client_mp_is_popular_search = False
 
         # Restart debounce timer
         self.client_mp_search_timer.stop()
         self.client_mp_search_timer.start()
 
-    def _search_client_modpacks(self, page: int = 1):
+    def _search_client_modpacks(self, page: int = 1, popular: bool = False):
         query = self.client_mp_search.text().strip()
-        if len(query) < 3:
+
+        # Allow empty query for popular modpacks, otherwise require 3+ chars
+        if not popular and len(query) < 3:
             return
 
-        self.client_mp_search_query = query
+        self.client_mp_search_query = query if not popular else ""
         self.client_mp_current_page = page
+        self.client_mp_is_popular_search = popular
 
         # Clear previous results
         while self.client_mp_results_layout.count():
@@ -4457,9 +4512,10 @@ class PyCraftGUI(QMainWindow):
         def search():
             try:
                 offset = (page - 1) * 10
+                search_query = "" if popular else query
                 # Filter for client-compatible modpacks
                 results, total = self.modpack_manager.search_modpacks(
-                    query,
+                    search_query,
                     platform=self.client_mp_selected_provider,
                     limit=10,
                     offset=offset,
@@ -4482,7 +4538,9 @@ class PyCraftGUI(QMainWindow):
         """Navigate to a specific page (client)"""
         total_pages = (self.client_mp_total_results + 9) // 10
         if 1 <= page <= total_pages:
-            self._search_client_modpacks(page)
+            # Preserve popular search mode during pagination
+            is_popular = getattr(self, 'client_mp_is_popular_search', False)
+            self._search_client_modpacks(page, popular=is_popular)
 
     def _update_client_mp_pagination(self, total: int):
         """Update pagination UI (client)"""
