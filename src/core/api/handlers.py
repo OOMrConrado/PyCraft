@@ -379,12 +379,24 @@ class CurseForgeAPI:
         try:
             url = f"{self.PROXY_URL}/v1/mods/search"
 
+            # When filtering by server pack, request more results since we filter after
+            # Always request max (50) to ensure we have enough after filtering
+            if server_pack_filter:
+                request_limit = 50  # CurseForge max
+                # Start from the beginning and filter locally
+                # For pages beyond what 50 results can cover, adjust the offset
+                api_page = offset // 15  # ~30% of 50 = 15 filtered results per API page
+                request_offset = api_page * 50
+            else:
+                request_limit = min(limit, 50)
+                request_offset = offset
+
             params = {
                 "gameId": self.MINECRAFT_GAME_ID,
                 "classId": self.MODPACK_CLASS_ID,
                 "searchFilter": query,
-                "pageSize": min(limit, 50),  # CurseForge max is 50
-                "index": offset,
+                "pageSize": request_limit,
+                "index": request_offset,
                 "sortField": 2,  # Popularity
                 "sortOrder": "desc"
             }
@@ -449,9 +461,25 @@ class CurseForgeAPI:
                     "_curseforge_data": mp
                 })
 
-            # Adjust total count if we filtered
+            # When filtering, apply pagination AFTER filtering and estimate total
             if server_pack_filter:
-                total = len(normalized)
+                # Calculate the local offset within the filtered results
+                # api_page * 15 is approximately how many filtered results we skipped
+                local_offset = offset - (api_page * 15)
+                local_offset = max(0, min(local_offset, len(normalized) - 1)) if normalized else 0
+
+                # Apply pagination after filtering
+                filtered_results = normalized[local_offset:local_offset + limit]
+
+                # Estimate total filtered results based on ratio
+                if len(modpacks) > 0:
+                    filter_ratio = len(normalized) / len(modpacks)
+                    # Estimate how many total results would pass the filter
+                    estimated_total = max(int(total * filter_ratio), len(normalized) + api_page * 15)
+                else:
+                    estimated_total = len(normalized)
+
+                return filtered_results, estimated_total
 
             return normalized, total
 
