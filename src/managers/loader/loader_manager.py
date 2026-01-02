@@ -181,7 +181,7 @@ class LoaderManager:
                     installer_log = os.path.join(server_folder, "forge-installer.jar.log")
                     if os.path.exists(installer_log):
                         os.remove(installer_log)
-                except:
+                except Exception:
                     pass
 
                 return True
@@ -325,7 +325,7 @@ class LoaderManager:
             modpack_manifest: Manifest del modpack (manifest.json o modrinth.index.json)
 
         Returns:
-            "forge", "fabric", o None si no se puede determinar
+            "forge", "neoforge", "fabric", "quilt", o None si no se puede determinar
         """
         try:
             # Para CurseForge (manifest.json)
@@ -333,16 +333,26 @@ class LoaderManager:
                 mod_loaders = modpack_manifest["minecraft"].get("modLoaders", [])
                 if mod_loaders and len(mod_loaders) > 0:
                     loader_id = mod_loaders[0].get("id", "").lower()
-                    if "forge" in loader_id:
+                    # Check neoforge BEFORE forge (since "forge" is substring of "neoforge")
+                    if "neoforge" in loader_id:
+                        return "neoforge"
+                    elif "forge" in loader_id:
                         return "forge"
+                    elif "quilt" in loader_id:
+                        return "quilt"
                     elif "fabric" in loader_id:
                         return "fabric"
 
             # Para Modrinth (modrinth.index.json)
             if "dependencies" in modpack_manifest:
                 dependencies = modpack_manifest["dependencies"]
-                if "forge" in dependencies:
+                # Check neoforge BEFORE forge
+                if "neoforge" in dependencies:
+                    return "neoforge"
+                elif "forge" in dependencies:
                     return "forge"
+                elif "quilt-loader" in dependencies:
+                    return "quilt"
                 elif "fabric-loader" in dependencies:
                     return "fabric"
 
