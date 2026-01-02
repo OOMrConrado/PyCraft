@@ -41,10 +41,12 @@ class JavaManager:
         "1.16": (8, 16),
         # Minecraft 1.17 requires Java 16+
         "1.17": (16, None),
-        # Minecraft >= 1.18 requires Java 17+
-        "1.18": (17, None),
-        "1.19": (17, None),
-        "1.20": (17, None),
+        # Minecraft 1.18-1.20 requires Java 17-20
+        # IMPORTANT: Java 21 has Security Manager changes that break many mods
+        # (e.g., Kiwi/Forge setContextClassLoader issues)
+        "1.18": (17, 20),
+        "1.19": (17, 20),
+        "1.20": (17, 20),
         # Minecraft >= 1.21 requires Java 21+
         "1.21": (21, None),
     }
@@ -145,9 +147,12 @@ class JavaManager:
             if float(base_version) >= 1.21:
                 return (21, None)
 
-            # If >= 1.18, use Java 17+
+            # If >= 1.18 and < 1.21, use Java 17-20
+            # IMPORTANT: Java 21 introduces Security Manager changes that break many mods
+            # (especially Forge/Kiwi with setContextClassLoader issues)
+            # So we cap at Java 20 for MC 1.18-1.20.x
             if float(base_version) >= 1.18:
-                return (17, None)
+                return (17, 20)
 
             # If >= 1.17, use Java 16+
             if float(base_version) >= 1.17:
@@ -157,8 +162,8 @@ class JavaManager:
             return (8, 16)
 
         except Exception:
-            # Default to Java 17+ (modern standard version)
-            return (17, None)
+            # Default to Java 17 (most compatible modern version)
+            return (17, 20)
 
     def is_java_compatible(self, minecraft_version: str) -> bool:
         """
@@ -417,7 +422,7 @@ class JavaManager:
                         for item in extract_dir.rglob("*"):
                             if item.is_dir():
                                 log_callback(f"    DIR: {item.relative_to(extract_dir)}\n")
-                    except:
+                    except Exception:
                         pass
                 return None
 
@@ -474,7 +479,7 @@ class JavaManager:
                         # If it runs without error, return it
                         if result.returncode == 0 or result.stderr:
                             return java_exe
-                    except:
+                    except Exception:
                         # If verification fails, keep searching
                         continue
         return None
@@ -545,7 +550,7 @@ class JavaManager:
                     import shutil
                     try:
                         shutil.rmtree(install_dir)
-                    except:
+                    except Exception:
                         pass
 
             # Check system Java
@@ -1188,7 +1193,7 @@ exit /b 0
                                 if log_callback:
                                     log_callback("│ ✓ Variables de SISTEMA configuradas│\n")
                                 return True
-                    except:
+                    except Exception:
                         pass
 
                     if log_callback:
@@ -1200,7 +1205,7 @@ exit /b 0
                 try:
                     time.sleep(0.5)
                     script_path.unlink()
-                except:
+                except Exception:
                     pass
 
         except Exception as e:
@@ -1378,7 +1383,7 @@ exit /b 0
                 try:
                     time.sleep(0.5)
                     script_path.unlink()
-                except:
+                except Exception:
                     pass
 
         except Exception as e:
@@ -1664,3 +1669,82 @@ exit /b 0
             if log_callback:
                 log_callback(f"✗ Error deleting Java: {str(e)}\n")
             return False
+
+    def get_best_java_for_version(self, minecraft_version: str) -> dict:
+        """
+        Finds the best available Java for a Minecraft version.
+
+        Priority order:
+        1. System Java (if compatible) - uses whatever is in PATH
+        2. PyCraft-installed Java (if compatible version exists)
+        3. None - needs installation
+
+        Args:
+            minecraft_version: Minecraft version (e.g., "1.20.1")
+
+        Returns:
+            dict with:
+                - java_executable: Path to java executable, or None if not found
+                - source: "system", "pycraft", or None
+                - system_java_version: int or None (version of system Java)
+                - required_java_version: int (minimum required)
+                - max_java_version: int or None (maximum allowed, for old MC)
+                - needs_install: bool
+                - recommended_install_version: int or None (version to install if needed)
+        """
+        min_java, max_java = self.get_java_version_range(minecraft_version)
+
+        result = {
+            "java_executable": None,
+            "source": None,
+            "system_java_version": None,
+            "required_java_version": min_java,
+            "max_java_version": max_java,
+            "needs_install": True,
+            "recommended_install_version": None
+        }
+
+        # Step 1: Check system Java
+        system_java = self.detect_java_version()
+        if system_java:
+            version_str, major_version = system_java
+            result["system_java_version"] = major_version
+
+            # Check if system Java is compatible
+            is_compatible = major_version >= min_java
+            if max_java is not None and major_version > max_java:
+                is_compatible = False
+
+            if is_compatible:
+                result["java_executable"] = "java"
+                result["source"] = "system"
+                result["needs_install"] = False
+                return result
+
+        # Step 2: Check PyCraft-installed Java versions
+        # Look for any compatible version we already have installed
+        installations = self.get_java_installations()
+
+        for version, path, is_in_path in installations:
+            # Check if this version is compatible
+            is_compatible = version >= min_java
+            if max_java is not None and version > max_java:
+                is_compatible = False
+
+            if is_compatible:
+                java_exe = self._find_java_executable(path)
+                if java_exe:
+                    result["java_executable"] = str(java_exe)
+                    result["source"] = "pycraft"
+                    result["needs_install"] = False
+                    return result
+
+        # Step 3: No compatible Java found - determine what to install
+        result["needs_install"] = True
+
+        # Determine the best version to install
+        # Always recommend the minimum required version for the range
+        # This ensures compatibility: Java 8 for old MC, Java 17 for 1.18-1.20, Java 21 for 1.21+
+        result["recommended_install_version"] = min_java
+
+        return result
