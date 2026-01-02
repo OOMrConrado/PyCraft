@@ -13,8 +13,8 @@ PyCraft simplifica la creación de servidores de Minecraft, permitiéndote desca
 ### Gestión de Servidores
 - **Servidores Vanilla**: Crea servidores Minecraft vanilla con un solo clic
 - **Servidores con Mods**: Instala y gestiona servidores con Forge, Fabric, NeoForge o Quilt
-- **Instalación de Modpacks**: Busca e instala modpacks de servidor directamente desde Modrinth
-- **Modpacks de Cliente**: Instala modpacks para tu launcher de Minecraft
+- **Instalación de Modpacks**: Busca e instala modpacks de servidor directamente desde Modrinth y CurseForge
+- **Modpacks de Cliente**: Navega y encuentra modpacks para tu launcher de Minecraft
 - **Configuración Automática**: EULA aceptado y server.properties configurado automáticamente
 - **Reinicio Rápido**: Estado del servidor mantenido tras detener/crash para reinicio instantáneo
 
@@ -107,13 +107,13 @@ python main.py
 5. Envía comandos a través de la consola
 6. Usa **"Config"** para editar las propiedades del servidor (tras primera ejecución)
 
-### Instalar Modpacks de Cliente
+### Navegar Modpacks de Cliente
 
 1. Ve a **"Modpacks de Cliente"** en el sidebar
-2. Busca un modpack
-3. Selecciona versión y destino
-4. Haz clic en **"Instalar"**
-5. Sigue las instrucciones para agregarlo a tu launcher
+2. Elige el proveedor (Modrinth o CurseForge)
+3. Busca un modpack
+4. Haz clic en **"Open"** para visitar la página del modpack
+5. Descarga e instala a través del launcher oficial (CurseForge App o Modrinth)
 
 ---
 
