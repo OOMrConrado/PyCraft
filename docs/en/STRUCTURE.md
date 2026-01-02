@@ -129,10 +129,10 @@ from src.core.api import MinecraftAPIHandler
 
 **ModpackManager** (`managers/modpack/`)
 - Install modpacks from .mrpack files
-- Automatic loader configuration (Fabric/Forge)
+- Automatic loader configuration (Fabric/Forge/NeoForge/Quilt)
 - Download mods and dependencies
 - Save manifests for version detection
-- Support for client modpack installation
+- Support for client modpack browsing (redirects to official sources)
 - Client-only mod detection and exclusion
 - Known issues system for problematic mods
 
