@@ -214,5 +214,6 @@ Este proyecto está bajo la Licencia MIT. Ver [LICENSE](LICENSE) para más detal
 
 - [Mojang](https://www.minecraft.net/) - Por Minecraft
 - [Modrinth](https://modrinth.com/) - Por su excelente API de modpacks
+- [CurseForge](https://www.curseforge.com/) - Por su plataforma y API de modpacks
 - [PySide6](https://www.qt.io/qt-for-python) - Por el framework Qt
 - [QtAwesome](https://github.com/spyder-ide/qtawesome) - Por la biblioteca de iconos
