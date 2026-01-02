@@ -22,6 +22,250 @@ class ServerManager:
         self.java_executable = java_executable
         self._detected_version = None  # Cache for detected version
 
+    def _patch_serverpack_script(
+        self,
+        script_path: str,
+        java_executable: str = None,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Patches ServerPackCreator's start.ps1 script to fix CMD /C compatibility issues
+        and inject the correct Java path.
+
+        The original script uses 'CMD /C' to execute Java commands, which fails on some
+        Windows configurations. This method replaces the problematic RunJavaCommand
+        function with a direct PowerShell execution.
+
+        Additionally, if java_executable is provided, it will override the script's
+        Java detection to use the correct version (e.g., Java 17 for MC 1.20+).
+
+        Args:
+            script_path: Path to the start.ps1 script
+            java_executable: Path to the Java executable to use (if None, uses script's default)
+            log_callback: Optional callback for logging
+
+        Returns:
+            True if patched successfully (or no patch needed), False on error
+        """
+        if not os.path.exists(script_path):
+            return False
+
+        try:
+            with open(script_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            modified = False
+            new_content = content
+
+            # === JAVA PATH INJECTION ===
+            # This is critical: the script's own Java detection may find the wrong version
+            # (e.g., Java 8 in PATH when MC 1.20+ needs Java 17+)
+            # We inject the correct Java path at the start of the script
+            if java_executable and java_executable != "java":
+                # Check if we already injected the Java path
+                if '# PyCraft Java Override' not in content:
+                    # Normalize path for PowerShell (use forward slashes or escaped backslashes)
+                    java_path = java_executable.replace('\\', '/')
+
+                    # Inject at the very beginning of the script, after any initial comments
+                    # This ensures $Java is set before SetJavaBinary runs
+                    java_override = f'''# PyCraft Java Override - Using correct Java version for this Minecraft version
+$global:Java = "{java_path}"
+$env:JAVA_HOME = Split-Path -Parent (Split-Path -Parent $global:Java)
+
+'''
+                    # Find a good insertion point (after initial comments/param blocks)
+                    import re
+                    # Insert after any initial param() block or at the start
+                    param_match = re.search(r'^param\s*\([^)]*\)\s*\n', new_content, re.MULTILINE | re.IGNORECASE)
+                    if param_match:
+                        insert_pos = param_match.end()
+                        new_content = new_content[:insert_pos] + java_override + new_content[insert_pos:]
+                    else:
+                        # Insert at start, but after any shebang or initial comments
+                        lines = new_content.split('\n')
+                        insert_line = 0
+                        for i, line in enumerate(lines):
+                            stripped = line.strip()
+                            if stripped and not stripped.startswith('#'):
+                                insert_line = i
+                                break
+                        lines.insert(insert_line, java_override.rstrip())
+                        new_content = '\n'.join(lines)
+
+                    modified = True
+                    if log_callback:
+                        log_callback(f"Injecting Java path: {java_executable}\n")
+
+            # === CMD /C FIX ===
+            # Check if the script has the problematic CMD /C pattern in RunJavaCommand
+            if 'Function global:RunJavaCommand' in new_content and 'CMD /C' in new_content:
+                # Check if already patched with our CMD /C fix
+                if '$ArgsArray = $CommandToRun -split' not in new_content:
+                    if log_callback:
+                        log_callback("Patching start.ps1 for CMD compatibility...\n")
+
+                    # Replace the problematic CMD /C line in RunJavaCommand with direct Java execution
+                    # The issue is that CMD /C doesn't work reliably inside PowerShell on some systems
+                    pattern = r'(Function global:RunJavaCommand\s*\{\s*param\s*\(\$CommandToRun\))\s*CMD /C ["`]+\$\{Java\}["`]+ \$\{CommandToRun\}["`]*'
+
+                    replacement = r'''\1
+    # Patched by PyCraft: Execute Java directly instead of via CMD /C
+    $ArgsArray = $CommandToRun -split ' '
+    & $Java @ArgsArray'''
+
+                    new_content, count = re.subn(pattern, replacement, new_content, flags=re.IGNORECASE)
+
+                    if count > 0:
+                        modified = True
+                        # Also fix the GetJavaVersion function that uses CMD /C
+                        new_content = new_content.replace(
+                            'CMD /C "`"${Java}`" -fullversion 2>&1"',
+                            '(& $Java -fullversion 2>&1) -join ""'
+                        )
+
+                        # Fix the 32-bit check
+                        new_content = new_content.replace(
+                            'CMD /C "`"${Java}`" -version 2>&1"',
+                            '(& $Java -version 2>&1) -join ""'
+                        )
+                    else:
+                        # Try simpler string replacement as fallback
+                        if 'CMD /C "`"${Java}`" ${CommandToRun}"' in new_content:
+                            new_content = new_content.replace(
+                                'CMD /C "`"${Java}`" ${CommandToRun}"',
+                                '''# Patched by PyCraft
+    $ArgsArray = $CommandToRun -split ' '
+    & $Java @ArgsArray'''
+                            )
+                            # Also fix other CMD /C usages
+                            new_content = new_content.replace(
+                                'CMD /C "`"${Java}`" -fullversion 2>&1"',
+                                '(& $Java -fullversion 2>&1) -join ""'
+                            )
+                            new_content = new_content.replace(
+                                'CMD /C "`"${Java}`" -version 2>&1"',
+                                '(& $Java -version 2>&1) -join ""'
+                            )
+                            modified = True
+
+            # Write changes if modified
+            if modified:
+                with open(script_path, 'w', encoding='utf-8') as f:
+                    f.write(new_content)
+
+                if log_callback:
+                    log_callback("Script patched successfully\n")
+
+            return True
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"Warning: Could not patch script: {e}\n")
+            return True  # Continue anyway
+
+    def _patch_serverpack_bat(
+        self,
+        script_path: str,
+        java_executable: str = None,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Patches ServerPackCreator's start.bat script to use the correct Java path.
+
+        The original script may find the wrong Java version in PATH.
+        This method injects the correct Java path at the start of the script.
+
+        Args:
+            script_path: Path to the start.bat script
+            java_executable: Path to the Java executable to use (if None, uses script's default)
+            log_callback: Optional callback for logging
+
+        Returns:
+            True if patched successfully (or no patch needed), False on error
+        """
+        if not os.path.exists(script_path):
+            return False
+
+        # Only patch if we have a specific Java path to use
+        if not java_executable or java_executable == "java":
+            return True
+
+        try:
+            with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read()
+
+            # Check if already patched
+            if 'REM PyCraft Java Override' in content:
+                return True
+
+            # Normalize path for batch (use backslashes)
+            java_path = java_executable.replace('/', '\\')
+            java_home = os.path.dirname(os.path.dirname(java_path))
+
+            # Create the override block
+            java_override = f'''@echo off
+REM PyCraft Java Override - Using correct Java version for this Minecraft version
+set "JAVA_HOME={java_home}"
+set "JAVA={java_path}"
+set "PATH=%JAVA_HOME%\\bin;%PATH%"
+
+'''
+            # If script starts with @echo off, replace it
+            if content.strip().lower().startswith('@echo off'):
+                # Find where @echo off ends
+                lines = content.split('\n')
+                first_line = lines[0]
+                rest = '\n'.join(lines[1:])
+                new_content = java_override + rest
+            else:
+                new_content = java_override + content
+
+            with open(script_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+
+            if log_callback:
+                log_callback(f"Injecting Java path into start.bat: {java_executable}\n")
+
+            return True
+
+        except Exception as e:
+            if log_callback:
+                log_callback(f"Warning: Could not patch batch script: {e}\n")
+            return True  # Continue anyway
+
+    def _find_start_script(self) -> Optional[Tuple[str, str]]:
+        """
+        Finds any start script in the server folder.
+
+        Returns:
+            Tuple of (script_path, script_type) where script_type is 'bat', 'ps1', or 'sh'
+            or None if no script found
+        """
+        # Common script names used by modpacks (in order of preference)
+        script_names = [
+            "run",           # Modern Forge/NeoForge
+            "start",         # ServerPackCreator
+            "startserver",   # ATM and similar modpacks
+            "launch",        # Some modpacks
+            "server",        # Generic
+        ]
+
+        if os.name == 'nt':  # Windows
+            # Check .bat and .ps1 files
+            for name in script_names:
+                for ext in [".bat", ".ps1"]:
+                    script_path = os.path.join(self.server_folder, f"{name}{ext}")
+                    if os.path.exists(script_path):
+                        return (script_path, ext[1:])  # Remove the dot from extension
+        else:  # Linux/Mac
+            for name in script_names:
+                script_path = os.path.join(self.server_folder, f"{name}.sh")
+                if os.path.exists(script_path):
+                    return (script_path, "sh")
+
+        return None
+
     def detect_minecraft_version(self) -> Optional[str]:
         """
         Detects the Minecraft version from various sources.
@@ -42,6 +286,49 @@ class ServerManager:
         if self._detected_version:
             return self._detected_version
 
+        # Helper function to convert NeoForge version to MC version
+        def neoforge_to_mc_version(neoforge_ver: str) -> Optional[str]:
+            """Convert NeoForge version (e.g., 21.1.215) to MC version (e.g., 1.21.1)"""
+            match = re.match(r'^(\d+)\.(\d+)\.', neoforge_ver)
+            if match:
+                major, minor = match.groups()
+                if minor == "0":
+                    return f"1.{major}"
+                return f"1.{major}.{minor}"
+            return None
+
+        # Helper to validate MC version format
+        def is_valid_mc_version(ver: str) -> bool:
+            return bool(re.match(r'^1\.\d+(\.\d+)?$', ver))
+
+        # Method 0: Check NeoForge installer/jar for version (most reliable for NeoForge packs)
+        for file in os.listdir(self.server_folder):
+            if "neoforge" in file.lower() and file.endswith(".jar"):
+                # Extract version from filename like neoforge-21.1.215-installer.jar
+                match = re.search(r'neoforge[_-]?(\d+\.\d+\.\d+)', file.lower())
+                if match:
+                    mc_ver = neoforge_to_mc_version(match.group(1))
+                    if mc_ver:
+                        self._detected_version = mc_ver
+                        return self._detected_version
+
+        # Method 0b: Check startserver.bat/sh for NEOFORGE_VERSION
+        for script_name in ["startserver.bat", "startserver.sh"]:
+            script_path = os.path.join(self.server_folder, script_name)
+            if os.path.exists(script_path):
+                try:
+                    with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read()
+                        # Look for NEOFORGE_VERSION=21.1.215
+                        match = re.search(r'NEOFORGE_VERSION[=\s]+(\d+\.\d+\.\d+)', content)
+                        if match:
+                            mc_ver = neoforge_to_mc_version(match.group(1))
+                            if mc_ver:
+                                self._detected_version = mc_ver
+                                return self._detected_version
+                except Exception:
+                    pass
+
         # Method 1: Check modpack_info.json (created by PyCraft during install)
         info_file = os.path.join(self.server_folder, "modpack_info.json")
         if os.path.exists(info_file):
@@ -49,7 +336,8 @@ class ServerManager:
                 with open(info_file, 'r', encoding='utf-8') as f:
                     info = json.load(f)
                 mc_ver = info.get("minecraft_version")
-                if mc_ver:
+                # Validate it's a real MC version (starts with "1.")
+                if mc_ver and is_valid_mc_version(mc_ver):
                     self._detected_version = mc_ver
                     return self._detected_version
             except Exception:
@@ -79,7 +367,7 @@ class ServerManager:
                     if "minecraft" in deps:
                         self._detected_version = deps["minecraft"]
                         return self._detected_version
-            except:
+            except Exception:
                 pass
 
         # Method 2: Check Fabric's install directory
@@ -91,7 +379,7 @@ class ServerManager:
                     if "id" in data:
                         self._detected_version = data["id"]
                         return self._detected_version
-            except:
+            except Exception:
                 pass
 
         # Method 3: Check fabric-server-launcher.properties
@@ -106,7 +394,7 @@ class ServerManager:
                             if match:
                                 self._detected_version = match.group(1)
                                 return self._detected_version
-            except:
+            except Exception:
                 pass
 
         # Method 4: Check server.jar if it exists
@@ -132,7 +420,7 @@ class ServerManager:
                                     if version:
                                         self._detected_version = version
                                         return self._detected_version
-            except:
+            except Exception:
                 pass
 
         # Method 5: Check server logs for version info
@@ -155,7 +443,7 @@ class ServerManager:
                             if match:
                                 self._detected_version = match.group(1)
                                 return self._detected_version
-            except:
+            except Exception:
                 pass
 
         # Method 6: Check versions directory created by Fabric
@@ -166,7 +454,7 @@ class ServerManager:
                     if re.match(r'^\d+\.\d+(?:\.\d+)?$', folder):
                         self._detected_version = folder
                         return self._detected_version
-            except:
+            except Exception:
                 pass
 
         return None
@@ -883,11 +1171,15 @@ max-world-size=29999984
 
             if os.name == 'nt':  # Windows
                 if os.path.exists(run_bat):
+                    # Patch the batch script to use correct Java
+                    self._patch_serverpack_bat(run_bat, self.java_executable, log_callback)
                     command = [run_bat]
                     use_shell = True
                     if log_callback:
                         log_callback("Using run.bat to start server...\n")
                 elif os.path.exists(start_bat):
+                    # Patch the batch script to use correct Java
+                    self._patch_serverpack_bat(start_bat, self.java_executable, log_callback)
                     command = [start_bat]
                     use_shell = True
                     if log_callback:
@@ -960,7 +1252,7 @@ max-world-size=29999984
                         if log_callback and self.server_process and self.server_process.stdout:
                             for line in self.server_process.stdout:
                                 log_callback(line)
-                    except:
+                    except Exception:
                         pass
                     finally:
                         # Server process has ended - call the on_stopped callback
@@ -1136,7 +1428,25 @@ max-world-size=29999984
         Returns:
             "vanilla", "forge", "fabric", "neoforge", "quilt", o "unknown"
         """
-        # First check modpack_info.json (created by PyCraft during install)
+        # First do a quick check for NeoForge files (takes precedence over modpack_info.json
+        # because some modpacks incorrectly report "forge" when they're actually NeoForge)
+        for file in os.listdir(self.server_folder):
+            if "neoforge" in file.lower() and file.endswith(".jar"):
+                return "neoforge"
+
+        # Also check startserver.bat/sh for NeoForge references
+        for script_name in ["startserver.bat", "startserver.sh"]:
+            script_path = os.path.join(self.server_folder, script_name)
+            if os.path.exists(script_path):
+                try:
+                    with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        content = f.read().lower()
+                        if 'neoforge' in content:
+                            return "neoforge"
+                except Exception:
+                    pass
+
+        # Check modpack_info.json (created by PyCraft during install)
         info_file = os.path.join(self.server_folder, "modpack_info.json")
         if os.path.exists(info_file):
             try:
@@ -1171,10 +1481,11 @@ max-world-size=29999984
             if file.startswith("quilt-server") and file.endswith(".jar"):
                 return "quilt"
 
-        # Verificar si es Fabric
-        fabric_launcher = os.path.join(self.server_folder, "fabric-server-launch.jar")
-        if os.path.exists(fabric_launcher):
-            return "fabric"
+        # Verificar si es Fabric (check both naming conventions)
+        for fabric_name in ["fabric-server-launcher.jar", "fabric-server-launch.jar"]:
+            fabric_launcher = os.path.join(self.server_folder, fabric_name)
+            if os.path.exists(fabric_launcher):
+                return "fabric"
 
         # Verificar NeoForge (check libraries folder for neoforge)
         neoforge_libs = os.path.join(self.server_folder, "libraries", "net", "neoforged")
@@ -1268,87 +1579,82 @@ max-world-size=29999984
             ram_max = f"-Xmx{ram_mb}M"
 
             if server_type == "fabric":
-                # Fabric usa fabric-server-launch.jar
-                fabric_jar = "fabric-server-launch.jar"
-                fabric_jar_path = os.path.join(self.server_folder, fabric_jar)
+                # Fabric uses fabric-server-launcher.jar (or fabric-server-launch.jar in older versions)
+                fabric_jar = None
+                fabric_jar_path = None
 
-                if os.path.exists(fabric_jar_path):
-                    # Standard case: fabric-server-launch.jar exists
+                # Check for common Fabric jar names
+                for jar_name in ["fabric-server-launcher.jar", "fabric-server-launch.jar"]:
+                    jar_path = os.path.join(self.server_folder, jar_name)
+                    if os.path.exists(jar_path):
+                        fabric_jar = jar_name
+                        fabric_jar_path = jar_path
+                        break
+
+                if fabric_jar_path:
+                    # Found Fabric jar - use it directly
                     command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
                 else:
-                    # Fallback: Check for start scripts (some modpacks like Prominence use these)
-                    start_bat = os.path.join(self.server_folder, "start.bat")
-                    start_sh = os.path.join(self.server_folder, "start.sh")
-                    run_bat = os.path.join(self.server_folder, "run.bat")
-                    run_sh = os.path.join(self.server_folder, "run.sh")
+                    # No Fabric jar found - try to install it automatically
+                    # This avoids using problematic .bat/.ps1 scripts from ServerPackCreator
+                    if log_callback:
+                        log_callback("Fabric server jar not found. Installing Fabric...\n")
 
-                    if os.name == 'nt':  # Windows
-                        if os.path.exists(start_bat):
-                            if log_callback:
-                                log_callback(f"{fabric_jar} not found, using start.bat...\n")
-                            command = ["cmd", "/c", start_bat]
-                        elif os.path.exists(run_bat):
-                            if log_callback:
-                                log_callback(f"{fabric_jar} not found, using run.bat...\n")
-                            command = ["cmd", "/c", run_bat]
-                        else:
-                            # Try to download fabric-server-launch.jar automatically
-                            if log_callback:
-                                log_callback(f"{fabric_jar} not found. Attempting automatic download...\n")
+                    # Try to get MC version and Fabric version from variables.txt first
+                    mc_version = None
+                    fabric_version = None
+                    variables_file = os.path.join(self.server_folder, "variables.txt")
 
-                            # Get Minecraft version from modpack_info.json or detection
-                            mc_version = self.detect_minecraft_version()
-                            if mc_version:
-                                try:
-                                    from ..loader.loader_manager import LoaderManager
-                                    loader_mgr = LoaderManager()
-                                    if loader_mgr.install_fabric(mc_version, self.server_folder, java_executable, log_callback=log_callback):
-                                        command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
-                                    else:
-                                        if log_callback:
-                                            log_callback(f"Error: Could not install Fabric automatically\n")
-                                        return False
-                                except Exception as e:
-                                    if log_callback:
-                                        log_callback(f"Error installing Fabric: {e}\n")
-                                    return False
+                    if os.path.exists(variables_file):
+                        try:
+                            with open(variables_file, 'r', encoding='utf-8') as f:
+                                for line in f:
+                                    line = line.strip()
+                                    if line.startswith('MINECRAFT_VERSION='):
+                                        mc_version = line.split('=', 1)[1].strip().strip('"')
+                                    elif line.startswith('MODLOADER_VERSION='):
+                                        fabric_version = line.split('=', 1)[1].strip().strip('"')
+                            if mc_version and log_callback:
+                                log_callback(f"Detected from variables.txt: MC {mc_version}, Fabric {fabric_version}\n")
+                        except Exception as e:
+                            if log_callback:
+                                log_callback(f"Warning: Could not read variables.txt: {e}\n")
+
+                    # Fallback to other detection methods
+                    if not mc_version:
+                        mc_version = self.detect_minecraft_version()
+
+                    if mc_version:
+                        try:
+                            from ..loader.loader_manager import LoaderManager
+                            loader_mgr = LoaderManager()
+
+                            # Install Fabric with specific version if we have it
+                            if loader_mgr.install_fabric(mc_version, self.server_folder, java_executable,
+                                                        loader_version=fabric_version, log_callback=log_callback):
+                                # Check which jar was created
+                                for jar_name in ["fabric-server-launcher.jar", "fabric-server-launch.jar"]:
+                                    if os.path.exists(os.path.join(self.server_folder, jar_name)):
+                                        fabric_jar = jar_name
+                                        break
+                                else:
+                                    fabric_jar = "fabric-server-launcher.jar"
+
+                                command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
+                                if log_callback:
+                                    log_callback(f"Fabric installed successfully. Using {fabric_jar}\n")
                             else:
                                 if log_callback:
-                                    log_callback(f"Error: {fabric_jar} not found and could not detect Minecraft version for auto-install\n")
+                                    log_callback("Error: Could not install Fabric automatically\n")
                                 return False
-                    else:  # Linux/Mac
-                        if os.path.exists(start_sh):
+                        except Exception as e:
                             if log_callback:
-                                log_callback(f"{fabric_jar} not found, using start.sh...\n")
-                            command = ["bash", start_sh]
-                        elif os.path.exists(run_sh):
-                            if log_callback:
-                                log_callback(f"{fabric_jar} not found, using run.sh...\n")
-                            command = ["bash", run_sh]
-                        else:
-                            # Try to download fabric-server-launch.jar automatically
-                            if log_callback:
-                                log_callback(f"{fabric_jar} not found. Attempting automatic download...\n")
-
-                            mc_version = self.detect_minecraft_version()
-                            if mc_version:
-                                try:
-                                    from ..loader.loader_manager import LoaderManager
-                                    loader_mgr = LoaderManager()
-                                    if loader_mgr.install_fabric(mc_version, self.server_folder, java_executable, log_callback=log_callback):
-                                        command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
-                                    else:
-                                        if log_callback:
-                                            log_callback(f"Error: Could not install Fabric automatically\n")
-                                        return False
-                                except Exception as e:
-                                    if log_callback:
-                                        log_callback(f"Error installing Fabric: {e}\n")
-                                    return False
-                            else:
-                                if log_callback:
-                                    log_callback(f"Error: {fabric_jar} not found and could not detect Minecraft version for auto-install\n")
-                                return False
+                                log_callback(f"Error installing Fabric: {e}\n")
+                            return False
+                    else:
+                        if log_callback:
+                            log_callback("Error: Could not detect Minecraft version for Fabric installation\n")
+                        return False
 
             elif server_type == "forge":
                 # Forge uses argument files (@user_jvm_args.txt, @win_args.txt)
@@ -1401,47 +1707,109 @@ max-world-size=29999984
                         forge_jar = os.path.basename(forge_jars[0])
                         command = [java_executable, f"-Xms{ram_mb}M", f"-Xmx{ram_mb}M", "-Djava.awt.headless=true", "-jar", forge_jar, "nogui"]
                     else:
-                        # Fallback 2: Check for ServerPackCreator format (start.bat/start.sh with variables.txt)
+                        # Fallback 2: Check for ServerPackCreator format or other modpack formats
+                        # Instead of running their buggy scripts, we run Java directly
                         variables_file = os.path.join(self.server_folder, "variables.txt")
-                        start_bat = os.path.join(self.server_folder, "start.bat")
-                        start_sh = os.path.join(self.server_folder, "start.sh")
+                        server_jar = os.path.join(self.server_folder, "server.jar")
+                        run_jar = os.path.join(self.server_folder, "run.jar")
 
-                        if os.path.exists(variables_file) and (os.path.exists(start_bat) or os.path.exists(start_sh)):
+                        # Try to find a runnable jar
+                        jar_to_run = None
+                        if os.path.exists(server_jar):
+                            jar_to_run = "server.jar"
+                        elif os.path.exists(run_jar):
+                            jar_to_run = "run.jar"
+
+                        if jar_to_run:
                             if log_callback:
-                                log_callback("Detected ServerPackCreator format, using start script...\n")
+                                log_callback(f"Using {jar_to_run} directly...\n")
 
-                            # Update RAM settings in variables.txt
-                            try:
-                                with open(variables_file, 'r', encoding='utf-8') as f:
-                                    content = f.read()
+                            # Read variables.txt to get modloader info if available
+                            modloader_version = None
+                            mc_version = None
+                            if os.path.exists(variables_file):
+                                try:
+                                    with open(variables_file, 'r', encoding='utf-8') as f:
+                                        for line in f:
+                                            if line.startswith('MODLOADER_VERSION='):
+                                                modloader_version = line.split('=', 1)[1].strip().strip('"')
+                                            elif line.startswith('MINECRAFT_VERSION='):
+                                                mc_version = line.split('=', 1)[1].strip().strip('"')
+                                except Exception:
+                                    pass
 
-                                import re
-                                # Update JAVA_ARGS to use our RAM settings
-                                new_java_args = f'JAVA_ARGS="-Xmx{ram_mb}M -Xms{ram_mb}M"'
-                                content = re.sub(r'^JAVA_ARGS=.*$', new_java_args, content, flags=re.MULTILINE)
+                            # Build command - server.jar from NeoForge/Forge handles everything
+                            command = [
+                                java_executable,
+                                f"-Xms{ram_mb}M",
+                                f"-Xmx{ram_mb}M",
+                                "-Djava.awt.headless=true",
+                            ]
 
-                                with open(variables_file, 'w', encoding='utf-8') as f:
-                                    f.write(content)
-                            except Exception:
-                                pass
+                            # Add user_jvm_args.txt if it exists
+                            user_jvm_args = os.path.join(self.server_folder, "user_jvm_args.txt")
+                            if os.path.exists(user_jvm_args):
+                                command.append(f"@user_jvm_args.txt")
 
-                            # Use PowerShell directly on Windows for better control
-                            if os.name == 'nt' and os.path.exists(start_bat):
-                                ps_script = os.path.join(self.server_folder, "start.ps1")
-                                if os.path.exists(ps_script):
-                                    command = ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ps_script]
-                                else:
+                            command.extend(["-jar", jar_to_run])
+
+                            # Add installer args if needed for first run
+                            if modloader_version and mc_version:
+                                installer_url = f"https://files.minecraftforge.net/maven/net/minecraftforge/forge/{mc_version}-{modloader_version}/forge-{mc_version}-{modloader_version}-installer.jar"
+                                command.extend(["--installer-force", "--installer", installer_url])
+
+                            command.append("nogui")
+
+                            if log_callback:
+                                log_callback(f"Java: {java_executable}\n")
+
+                        else:
+                            # No jar found, check for start scripts as last resort
+                            start_bat = os.path.join(self.server_folder, "start.bat")
+                            start_ps1 = os.path.join(self.server_folder, "start.ps1")
+                            start_sh = os.path.join(self.server_folder, "start.sh")
+
+                            if os.name == 'nt':
+                                # Run PowerShell script directly with full path (avoids PATH issues)
+                                if os.path.exists(start_ps1):
+                                    powershell_path = os.path.join(
+                                        os.environ.get('SystemRoot', 'C:\\Windows'),
+                                        'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'
+                                    )
+                                    if os.path.exists(powershell_path):
+                                        # Patch the script to fix CMD /C compatibility issues AND inject correct Java path
+                                        self._patch_serverpack_script(start_ps1, java_executable, log_callback)
+                                        if log_callback:
+                                            log_callback("Using start.ps1 with PowerShell...\n")
+                                        command = [powershell_path, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", start_ps1]
+                                    elif os.path.exists(start_bat):
+                                        # Patch the batch script to use correct Java
+                                        self._patch_serverpack_bat(start_bat, java_executable, log_callback)
+                                        if log_callback:
+                                            log_callback("Using start.bat...\n")
+                                        command = ["cmd", "/c", start_bat]
+                                    else:
+                                        if log_callback:
+                                            log_callback("Error: PowerShell not found\n")
+                                        return False
+                                elif os.path.exists(start_bat):
+                                    # Patch the batch script to use correct Java
+                                    self._patch_serverpack_bat(start_bat, java_executable, log_callback)
+                                    if log_callback:
+                                        log_callback("Using start.bat...\n")
                                     command = ["cmd", "/c", start_bat]
+                                else:
+                                    if log_callback:
+                                        log_callback("Error: No server files found. Try running the modpack installer first.\n")
+                                    return False
                             elif os.path.exists(start_sh):
+                                if log_callback:
+                                    log_callback("Using start.sh...\n")
                                 command = ["bash", start_sh]
                             else:
                                 if log_callback:
-                                    log_callback("Error: No Forge server files found\n")
+                                    log_callback("Error: No server files found. Try running the modpack installer first.\n")
                                 return False
-                        else:
-                            if log_callback:
-                                log_callback("Error: No Forge server files found\n")
-                            return False
                 else:
                     # Add nogui to the args file if not present
                     try:
@@ -1450,7 +1818,7 @@ max-world-size=29999984
                         if 'nogui' not in args_content.lower():
                             with open(args_file_path, 'a', encoding='utf-8') as f:
                                 f.write('\nnogui\n')
-                    except:
+                    except Exception:
                         pass
 
                     # Build command using @ for argument files
@@ -1506,7 +1874,7 @@ max-world-size=29999984
                         if 'nogui' not in args_content.lower():
                             with open(args_file_path, 'a', encoding='utf-8') as f:
                                 f.write('\nnogui\n')
-                    except:
+                    except Exception:
                         pass
 
                     command = [
@@ -1515,21 +1883,33 @@ max-world-size=29999984
                         f"@{args_file_path}"
                     ]
                 else:
-                    # Fallback: Check for run.bat/run.sh or start.bat/start.sh
+                    # Fallback: Check for run.bat/run.sh, start.bat/start.sh, or startserver.bat/startserver.sh
                     run_bat = os.path.join(self.server_folder, "run.bat")
                     run_sh = os.path.join(self.server_folder, "run.sh")
                     start_bat = os.path.join(self.server_folder, "start.bat")
                     start_sh = os.path.join(self.server_folder, "start.sh")
+                    startserver_bat = os.path.join(self.server_folder, "startserver.bat")
+                    startserver_sh = os.path.join(self.server_folder, "startserver.sh")
 
                     if os.name == 'nt':
                         if os.path.exists(run_bat):
+                            # Patch the batch script to use correct Java
+                            self._patch_serverpack_bat(run_bat, java_executable, log_callback)
                             if log_callback:
                                 log_callback("Using run.bat for NeoForge...\n")
                             command = ["cmd", "/c", run_bat]
                         elif os.path.exists(start_bat):
+                            # Patch the batch script to use correct Java
+                            self._patch_serverpack_bat(start_bat, java_executable, log_callback)
                             if log_callback:
                                 log_callback("Using start.bat for NeoForge...\n")
                             command = ["cmd", "/c", start_bat]
+                        elif os.path.exists(startserver_bat):
+                            # ATM and similar modpacks use startserver.bat
+                            self._patch_serverpack_bat(startserver_bat, java_executable, log_callback)
+                            if log_callback:
+                                log_callback("Using startserver.bat for NeoForge...\n")
+                            command = ["cmd", "/c", startserver_bat]
                         else:
                             if log_callback:
                                 log_callback("Error: No NeoForge server files found\n")
@@ -1543,6 +1923,10 @@ max-world-size=29999984
                             if log_callback:
                                 log_callback("Using start.sh for NeoForge...\n")
                             command = ["bash", start_sh]
+                        elif os.path.exists(startserver_sh):
+                            if log_callback:
+                                log_callback("Using startserver.sh for NeoForge...\n")
+                            command = ["bash", startserver_sh]
                         else:
                             if log_callback:
                                 log_callback("Error: No NeoForge server files found\n")
@@ -1570,6 +1954,8 @@ max-world-size=29999984
                             log_callback(f"Using {quilt_jar}...\n")
                         command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", quilt_jar, "nogui"]
                     elif os.name == 'nt' and os.path.exists(start_bat):
+                        # Patch the batch script to use correct Java
+                        self._patch_serverpack_bat(start_bat, java_executable, log_callback)
                         if log_callback:
                             log_callback("Using start.bat for Quilt...\n")
                         command = ["cmd", "/c", start_bat]
@@ -1594,8 +1980,23 @@ max-world-size=29999984
 
                 # Configurar flags para Windows (evitar ventana CMD extra)
                 creation_flags = 0
+                env = os.environ.copy()
                 if os.name == 'nt':  # Windows
                     creation_flags = subprocess.CREATE_NO_WINDOW
+                    # Ensure System32 is in PATH for PowerShell scripts that call CMD
+                    system32 = os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'System32')
+                    if system32 not in env.get('PATH', ''):
+                        env['PATH'] = system32 + ';' + env.get('PATH', '')
+
+                # Set JAVA_HOME and prepend Java to PATH to ensure correct version is used
+                # This is critical when scripts (start.ps1, start.bat) search for Java
+                if java_executable and java_executable != "java":
+                    java_bin_dir = os.path.dirname(java_executable)
+                    java_home = os.path.dirname(java_bin_dir)
+                    env['JAVA_HOME'] = java_home
+                    env['JAVA'] = java_executable
+                    # Prepend Java bin to PATH so it's found first
+                    env['PATH'] = java_bin_dir + os.pathsep + env.get('PATH', '')
 
                 self.server_process = subprocess.Popen(
                     command,
@@ -1605,7 +2006,8 @@ max-world-size=29999984
                     stdin=subprocess.PIPE,
                     text=True,
                     bufsize=1,
-                    creationflags=creation_flags
+                    creationflags=creation_flags,
+                    env=env
                 )
 
                 # Leer logs en un hilo separado
@@ -1614,7 +2016,7 @@ max-world-size=29999984
                         if log_callback and self.server_process and self.server_process.stdout:
                             for line in self.server_process.stdout:
                                 log_callback(line)
-                    except:
+                    except Exception:
                         pass
                     finally:
                         # Server process has ended - call the on_stopped callback
@@ -1633,22 +2035,38 @@ max-world-size=29999984
 
                 # Configurar flags para Windows
                 creation_flags = 0
+                env = os.environ.copy()
                 if os.name == 'nt':
                     creation_flags = subprocess.CREATE_NO_WINDOW
+                    # Ensure System32 is in PATH for PowerShell scripts that call CMD
+                    system32 = os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'System32')
+                    if system32 not in env.get('PATH', ''):
+                        env['PATH'] = system32 + ';' + env.get('PATH', '')
+
+                # Set JAVA_HOME and prepend Java to PATH to ensure correct version is used
+                if java_executable and java_executable != "java":
+                    java_bin_dir = os.path.dirname(java_executable)
+                    java_home = os.path.dirname(java_bin_dir)
+                    env['JAVA_HOME'] = java_home
+                    env['JAVA'] = java_executable
+                    env['PATH'] = java_bin_dir + os.pathsep + env.get('PATH', '')
 
                 self.server_process = subprocess.Popen(
                     command,
                     cwd=self.server_folder,
-                    creationflags=creation_flags
+                    creationflags=creation_flags,
+                    env=env
                 )
                 self.server_process.wait()
                 return True
 
         except FileNotFoundError as e:
             if log_callback:
-                log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
-                log_callback(f"Ruta buscada: {java_executable}\n")
-                log_callback("Make sure Java is installed correctly.\n")
+                log_callback(f"\n✗ Error: Executable not found.\n")
+                log_callback(f"Details: {e}\n")
+                if java_executable and java_executable != "java":
+                    log_callback(f"Java path: {java_executable}\n")
+                log_callback("Make sure Java and required tools are installed correctly.\n")
             return False
         except PermissionError as e:
             if log_callback:
@@ -1769,47 +2187,72 @@ max-world-size=29999984
             ram_max = f"-Xmx{ram_mb}M"
 
             if server_type == "fabric":
-                fabric_jar = "fabric-server-launch.jar"
-                fabric_jar_path = os.path.join(self.server_folder, fabric_jar)
+                # Check for common Fabric jar names
+                fabric_jar = None
+                fabric_jar_path = None
+                for jar_name in ["fabric-server-launcher.jar", "fabric-server-launch.jar"]:
+                    jar_path = os.path.join(self.server_folder, jar_name)
+                    if os.path.exists(jar_path):
+                        fabric_jar = jar_name
+                        fabric_jar_path = jar_path
+                        break
 
-                if os.path.exists(fabric_jar_path):
+                if fabric_jar_path:
                     command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
                 else:
-                    # Fallback: Check for start scripts
-                    start_bat = os.path.join(self.server_folder, "start.bat")
-                    start_sh = os.path.join(self.server_folder, "start.sh")
+                    # No Fabric jar found - install it automatically
+                    if log_callback:
+                        log_callback("Fabric server jar not found. Installing Fabric...\n")
 
-                    if os.name == 'nt' and os.path.exists(start_bat):
-                        if log_callback:
-                            log_callback(f"{fabric_jar} not found, using start.bat...\n")
-                        command = ["cmd", "/c", start_bat]
-                    elif os.path.exists(start_sh):
-                        if log_callback:
-                            log_callback(f"{fabric_jar} not found, using start.sh...\n")
-                        command = ["bash", start_sh]
-                    else:
-                        # Try to download fabric-server-launch.jar automatically
+                    # Try to get MC version and Fabric version from variables.txt
+                    mc_version = None
+                    fabric_version = None
+                    variables_file = os.path.join(self.server_folder, "variables.txt")
+
+                    if os.path.exists(variables_file):
+                        try:
+                            with open(variables_file, 'r', encoding='utf-8') as f:
+                                for line in f:
+                                    line = line.strip()
+                                    if line.startswith('MINECRAFT_VERSION='):
+                                        mc_version = line.split('=', 1)[1].strip().strip('"')
+                                    elif line.startswith('MODLOADER_VERSION='):
+                                        fabric_version = line.split('=', 1)[1].strip().strip('"')
+                            if mc_version and log_callback:
+                                log_callback(f"Detected from variables.txt: MC {mc_version}, Fabric {fabric_version}\n")
+                        except Exception:
+                            pass
+
+                    if not mc_version:
                         mc_version = self.detect_minecraft_version()
-                        if mc_version:
-                            try:
-                                from ..loader.loader_manager import LoaderManager
-                                loader_mgr = LoaderManager()
-                                if log_callback:
-                                    log_callback(f"{fabric_jar} not found. Downloading Fabric for MC {mc_version}...\n")
-                                if loader_mgr.install_fabric(mc_version, self.server_folder, java_executable, log_callback=log_callback):
-                                    command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
+
+                    if mc_version:
+                        try:
+                            from ..loader.loader_manager import LoaderManager
+                            loader_mgr = LoaderManager()
+                            if loader_mgr.install_fabric(mc_version, self.server_folder, java_executable,
+                                                        loader_version=fabric_version, log_callback=log_callback):
+                                for jar_name in ["fabric-server-launcher.jar", "fabric-server-launch.jar"]:
+                                    if os.path.exists(os.path.join(self.server_folder, jar_name)):
+                                        fabric_jar = jar_name
+                                        break
                                 else:
-                                    if log_callback:
-                                        log_callback(f"Error: Could not install Fabric\n")
-                                    return
-                            except Exception as e:
+                                    fabric_jar = "fabric-server-launcher.jar"
+                                command = [java_executable, ram_min, ram_max, "-Djava.awt.headless=true", "-jar", fabric_jar, "nogui"]
                                 if log_callback:
-                                    log_callback(f"Error installing Fabric: {e}\n")
+                                    log_callback(f"Fabric installed successfully. Using {fabric_jar}\n")
+                            else:
+                                if log_callback:
+                                    log_callback("Error: Could not install Fabric\n")
                                 return
-                        else:
+                        except Exception as e:
                             if log_callback:
-                                log_callback(f"Error: {fabric_jar} not found\n")
+                                log_callback(f"Error installing Fabric: {e}\n")
                             return
+                    else:
+                        if log_callback:
+                            log_callback("Error: Could not detect Minecraft version\n")
+                        return
 
             elif server_type == "forge":
                 # Modify or create user_jvm_args.txt
@@ -1855,7 +2298,7 @@ max-world-size=29999984
                         if 'nogui' not in args_content.lower():
                             with open(args_file_path, 'a', encoding='utf-8') as f:
                                 f.write('\nnogui\n')
-                    except:
+                    except Exception:
                         pass
 
                     command = [java_executable, f"@{user_jvm_args_path}", f"@{args_file_path}"]
@@ -1911,7 +2354,7 @@ max-world-size=29999984
                         if 'nogui' not in args_content.lower():
                             with open(args_file_path, 'a', encoding='utf-8') as f:
                                 f.write('\nnogui\n')
-                    except:
+                    except Exception:
                         pass
                     command = [java_executable, f"@{user_jvm_args_path}", f"@{args_file_path}"]
                 else:
@@ -1919,6 +2362,8 @@ max-world-size=29999984
                     run_bat = os.path.join(self.server_folder, "run.bat")
                     run_sh = os.path.join(self.server_folder, "run.sh")
                     if os.name == 'nt' and os.path.exists(run_bat):
+                        # Patch the batch script to use correct Java
+                        self._patch_serverpack_bat(run_bat, java_executable, log_callback)
                         command = ["cmd", "/c", run_bat]
                     elif os.path.exists(run_sh):
                         command = ["bash", run_sh]
@@ -1944,6 +2389,8 @@ max-world-size=29999984
                         start_bat = os.path.join(self.server_folder, "start.bat")
                         start_sh = os.path.join(self.server_folder, "start.sh")
                         if os.name == 'nt' and os.path.exists(start_bat):
+                            # Patch the batch script to use correct Java
+                            self._patch_serverpack_bat(start_bat, java_executable, log_callback)
                             command = ["cmd", "/c", start_bat]
                         elif os.path.exists(start_sh):
                             command = ["bash", start_sh]
@@ -1957,8 +2404,21 @@ max-world-size=29999984
 
             # Configurar flags para Windows
             creation_flags = 0
+            env = os.environ.copy()
             if os.name == 'nt':
                 creation_flags = subprocess.CREATE_NO_WINDOW
+                # Ensure System32 is in PATH
+                system32 = os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'System32')
+                if system32 not in env.get('PATH', ''):
+                    env['PATH'] = system32 + ';' + env.get('PATH', '')
+
+            # Set JAVA_HOME and prepend Java to PATH to ensure correct version is used
+            if java_executable and java_executable != "java":
+                java_bin_dir = os.path.dirname(java_executable)
+                java_home = os.path.dirname(java_bin_dir)
+                env['JAVA_HOME'] = java_home
+                env['JAVA'] = java_executable
+                env['PATH'] = java_bin_dir + os.pathsep + env.get('PATH', '')
 
             process = subprocess.Popen(
                 command,
@@ -1968,7 +2428,8 @@ max-world-size=29999984
                 text=True,
                 bufsize=1,
                 universal_newlines=True,
-                creationflags=creation_flags
+                creationflags=creation_flags,
+                env=env
             )
 
             start_time = time.time()
