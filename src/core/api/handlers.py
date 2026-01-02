@@ -269,7 +269,7 @@ class ModrinthAPI:
                 parts = url.split('cdn.modrinth.com/data/')[1].split('/')
                 if len(parts) >= 1:
                     return parts[0]
-        except:
+        except Exception:
             pass
         return None
 
@@ -313,8 +313,9 @@ class ModrinthAPI:
             if not download_url or not filename:
                 return None
 
-            # Descargar archivo
-            dest_path = os.path.join(dest_folder, filename)
+            # Descargar archivo (sanitize filename to prevent path traversal)
+            safe_filename = os.path.basename(filename)
+            dest_path = os.path.join(dest_folder, safe_filename)
             response = requests.get(download_url, headers=self.headers, stream=True, timeout=30)
             response.raise_for_status()
 
@@ -505,7 +506,7 @@ class CurseForgeAPI:
                     if file.get("serverPackFileId"):
                         return True
             return False
-        except:
+        except Exception:
             return False
 
     def get_modpack_info(self, modpack_id: int) -> Optional[Dict]:
@@ -608,7 +609,9 @@ class CurseForgeAPI:
                 return None
 
             # Download file (direct to CurseForge CDN, no proxy needed)
-            dest_path = os.path.join(dest_folder, filename)
+            # Sanitize filename to prevent path traversal
+            safe_filename = os.path.basename(filename)
+            dest_path = os.path.join(dest_folder, safe_filename)
             response = requests.get(download_url, stream=True, timeout=60)
             response.raise_for_status()
 
@@ -727,7 +730,7 @@ class APIConfig:
         try:
             config = self.load_config()
             return config.get("curseforge_api_key")
-        except:
+        except Exception:
             return None
 
     def load_config(self) -> Dict:
@@ -736,7 +739,7 @@ class APIConfig:
             try:
                 with open(self.config_file, 'r') as f:
                     return json.load(f)
-            except:
+            except Exception:
                 return {}
         return {}
 
