@@ -358,7 +358,7 @@ class ModpackManager:
             # Clean up temporary files
             try:
                 shutil.rmtree(temp_dir)
-            except:
+            except Exception:
                 pass
 
             if success and log_callback:
@@ -572,7 +572,7 @@ class ModpackManager:
                             elif "dependencies" in data:
                                 deps = data.get("dependencies", {})
                                 minecraft_version = deps.get("minecraft")
-                    except:
+                    except Exception:
                         pass
 
             # Method 2: Check libraries folder for Forge (has MC version in folder name)
@@ -703,13 +703,25 @@ class ModpackManager:
                     log_callback("⚠ Could not detect Minecraft version from server pack\n")
                     log_callback("    Will attempt to detect when loading the server\n")
 
-            # Ensure Java is available
-            java_exe = self.java_manager.ensure_java_installed(minecraft_version, log_callback)
-
-            if not java_exe:
-                if log_callback:
-                    log_callback("⚠ Warning: Could not verify Java installation\n")
-                    log_callback("    Make sure you have Java installed to run the server\n")
+            # Check Java compatibility (informational only - actual Java selection happens at server start)
+            if minecraft_version:
+                java_check = self.java_manager.get_best_java_for_version(minecraft_version)
+                if java_check["needs_install"]:
+                    required = java_check["required_java_version"]
+                    max_ver = java_check.get("max_java_version")
+                    system_ver = java_check.get("system_java_version")
+                    if log_callback:
+                        if max_ver:
+                            log_callback(f"⚠ MC {minecraft_version} requires Java {required}-{max_ver}\n")
+                        else:
+                            log_callback(f"⚠ MC {minecraft_version} requires Java {required}+\n")
+                        if system_ver:
+                            log_callback(f"    Your system has Java {system_ver}\n")
+                        log_callback(f"    PyCraft will prompt to install the correct Java when you start the server\n")
+                else:
+                    if log_callback:
+                        source = java_check.get("source", "system")
+                        log_callback(f"[OK] Compatible Java found ({source})\n")
 
             # Accept EULA
             self._create_eula_file(server_folder, log_callback)
@@ -750,7 +762,7 @@ class ModpackManager:
             # Clean up temporary files
             try:
                 shutil.rmtree(temp_dir)
-            except:
+            except Exception:
                 pass
 
             if log_callback:
@@ -985,7 +997,7 @@ class ModpackManager:
             # Clean up temporary files
             try:
                 shutil.rmtree(temp_dir)
-            except:
+            except Exception:
                 pass
 
             if success and log_callback:
@@ -1225,648 +1237,8 @@ max-world-size=29999984
             else:
                 return 10240  # 10 GB para modpacks muy grandes
 
-        except:
-            return 6144  # Default 6 GB
-
-    def install_client_modpack(
-        self,
-        project_id: str,
-        version_id: str = None,
-        log_callback: Optional[Callable[[str], None]] = None
-    ) -> Dict:
-        """
-        Installs a modpack for client use in ~/.pycraft/modpacks/
-
-        Args:
-            project_id: Project ID on Modrinth
-            version_id: Version ID to install (if None, uses latest)
-            log_callback: Function to report progress
-
-        Returns:
-            Dict with:
-            - success: bool
-            - install_path: str
-            - minecraft_version: str
-            - loader_type: str
-            - loader_version: str
-        """
-        try:
-            if log_callback:
-                log_callback("\n" + "="*50 + "\n")
-                log_callback("   CLIENT MODPACK INSTALLATION\n")
-                log_callback("="*50 + "\n\n")
-
-            # Get project info
-            if log_callback:
-                log_callback("Step 1/5: Getting modpack info...\n")
-
-            project_info = self.modrinth_api.get_project_info(project_id)
-            if not project_info:
-                if log_callback:
-                    log_callback("Error: Could not get project info\n")
-                return {"success": False}
-
-            modpack_name = project_info.get("title", "unknown_modpack")
-            modpack_slug = project_info.get("slug", modpack_name)
-            # Clean name for folder
-            safe_name = "".join(c for c in modpack_name if c.isalnum() or c in (' ', '-', '_')).strip()
-            safe_name = safe_name.replace(' ', '_')
-
-            if log_callback:
-                log_callback(f"Modpack: {modpack_name}\n\n")
-
-            # Get version info
-            if not version_id:
-                if log_callback:
-                    log_callback("Step 2/5: Getting latest version...\n")
-                versions = self.modrinth_api.get_modpack_versions(project_id)
-                if not versions:
-                    if log_callback:
-                        log_callback("Error: No versions found\n")
-                    return {"success": False}
-                # Get latest version
-                version_data = versions[0]
-                version_id = version_data.get("id")
-            else:
-                # Get specific version info
-                versions = self.modrinth_api.get_modpack_versions(project_id)
-                version_data = next((v for v in versions if v.get("id") == version_id), None)
-                if not version_data:
-                    if log_callback:
-                        log_callback("Error: Version not found\n")
-                    return {"success": False}
-
-            game_versions = version_data.get("game_versions", [])
-            loaders = version_data.get("loaders", [])
-            minecraft_version = game_versions[0] if game_versions else "unknown"
-            loader_type = loaders[0] if loaders else "unknown"
-
-            if log_callback:
-                log_callback(f"Version: {version_data.get('name', version_id)}\n")
-                log_callback(f"Minecraft: {minecraft_version}\n")
-                log_callback(f"Loader: {loader_type}\n\n")
-
-            # Create install directory
-            install_base = Path.home() / ".pycraft" / "modpacks"
-            install_base.mkdir(parents=True, exist_ok=True)
-            install_path = install_base / safe_name
-
-            if install_path.exists():
-                if log_callback:
-                    log_callback(f"Warning: Folder exists, will be updated\n")
-                # Don't delete, just overwrite
-            else:
-                install_path.mkdir(parents=True, exist_ok=True)
-
-            if log_callback:
-                log_callback(f"Install path: {install_path}\n\n")
-
-            # Download modpack
-            if log_callback:
-                log_callback("Step 3/5: Downloading modpack...\n")
-
-            temp_dir = install_path / ".temp_download"
-            temp_dir.mkdir(exist_ok=True)
-
-            modpack_file = self.modrinth_api.download_version_file(version_id, str(temp_dir))
-            if not modpack_file:
-                if log_callback:
-                    log_callback("Error: Failed to download modpack\n")
-                return {"success": False}
-
-            if log_callback:
-                log_callback(f"Downloaded: {os.path.basename(modpack_file)}\n\n")
-
-            # Extract modpack
-            if log_callback:
-                log_callback("Step 4/5: Extracting files...\n")
-
-            extract_dir = temp_dir / "extracted"
-            extract_dir.mkdir(exist_ok=True)
-
-            with zipfile.ZipFile(modpack_file, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-
-            # Read manifest
-            manifest_path = extract_dir / "modrinth.index.json"
-            if not manifest_path.exists():
-                if log_callback:
-                    log_callback("Error: modrinth.index.json not found\n")
-                return {"success": False}
-
-            with open(manifest_path, 'r', encoding='utf-8') as f:
-                manifest = json.load(f)
-
-            # Get loader version from manifest
-            dependencies = manifest.get("dependencies", {})
-            loader_version = ""
-            if loader_type == "forge":
-                loader_version = dependencies.get("forge", "")
-            elif loader_type == "fabric":
-                loader_version = dependencies.get("fabric-loader", "")
-            elif loader_type == "neoforge":
-                loader_version = dependencies.get("neoforge", "")
-            elif loader_type == "quilt":
-                loader_version = dependencies.get("quilt-loader", "")
-
-            # Create necessary directories
-            mods_folder = install_path / "mods"
-            mods_folder.mkdir(exist_ok=True)
-
-            # Download mods
-            files = manifest.get("files", [])
-            total_files = len([f for f in files if f.get("path", "").startswith("mods/")])
-
-            if log_callback:
-                log_callback(f"Downloading {total_files} mods...\n")
-
-            downloaded = 0
-            for file_info in files:
-                downloads = file_info.get("downloads", [])
-                file_path = file_info.get("path", "")
-
-                if downloads and file_path:
-                    download_url = downloads[0]
-
-                    # Determine destination
-                    dest_file = install_path / file_path
-                    dest_file.parent.mkdir(parents=True, exist_ok=True)
-
-                    try:
-                        response = requests.get(download_url, timeout=30, stream=True)
-                        response.raise_for_status()
-
-                        with open(dest_file, 'wb') as f:
-                            for chunk in response.iter_content(chunk_size=8192):
-                                if chunk:
-                                    f.write(chunk)
-
-                        if file_path.startswith("mods/"):
-                            downloaded += 1
-                            if log_callback and downloaded % 10 == 0:
-                                log_callback(f"  Progress: {downloaded}/{total_files}\n")
-
-                    except Exception as e:
-                        if log_callback:
-                            log_callback(f"  Warning: Failed to download {os.path.basename(file_path)}\n")
-
-            if log_callback:
-                log_callback(f"Downloaded {downloaded}/{total_files} mods\n\n")
-
-            # Copy overrides
-            if log_callback:
-                log_callback("Step 5/5: Copying configurations...\n")
-
-            overrides_dir = extract_dir / "overrides"
-            if overrides_dir.exists():
-                self._copy_overrides(overrides_dir, install_path, log_callback)
-                if log_callback:
-                    log_callback("Configurations copied\n\n")
-
-            # Save modpack info
-            info_file = install_path / "modpack_info.json"
-            info_data = {
-                "name": modpack_name,
-                "slug": modpack_slug,
-                "source": "modrinth",
-                "minecraft_version": minecraft_version,
-                "loader": loader_type,
-                "loader_version": loader_version,
-                "modrinth_url": f"https://modrinth.com/modpack/{modpack_slug}",
-                "modrinth_id": project_id,
-                "version_name": version_data.get("name", ""),
-                "installed_date": str(Path(install_path).stat().st_mtime) if install_path.exists() else ""
-            }
-
-            with open(info_file, 'w', encoding='utf-8') as f:
-                json.dump(info_data, f, indent=2)
-
-            # Cleanup temp
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
-
-            return {
-                "success": True,
-                "install_path": str(install_path),
-                "minecraft_version": minecraft_version,
-                "loader_type": loader_type,
-                "loader_version": loader_version
-            }
-
-        except Exception as e:
-            if log_callback:
-                log_callback(f"\nError during installation: {str(e)}\n")
-            return {"success": False, "error": str(e)}
-
-    def install_client_curseforge_modpack(
-        self,
-        modpack_id: int,
-        file_id: int,
-        modpack_name: str = None,
-        log_callback: Optional[Callable[[str], None]] = None
-    ) -> Dict:
-        """
-        Installs a CurseForge modpack for client use in ~/.pycraft/modpacks/
-
-        Args:
-            modpack_id: CurseForge modpack ID
-            file_id: CurseForge file ID to install
-            modpack_name: Name of the modpack (optional, will be fetched if not provided)
-            log_callback: Function to report progress
-
-        Returns:
-            Dict with:
-            - success: bool
-            - install_path: str
-            - minecraft_version: str
-            - loader_type: str
-            - loader_version: str
-        """
-        if not self.curseforge_api:
-            from ...core.api import CurseForgeAPI
-            self.curseforge_api = CurseForgeAPI()
-
-        try:
-            if log_callback:
-                log_callback("\n" + "="*50 + "\n")
-                log_callback("   CLIENT MODPACK INSTALLATION (CurseForge)\n")
-                log_callback("="*50 + "\n\n")
-
-            # Get modpack info if name not provided
-            if log_callback:
-                log_callback("Step 1/5: Getting modpack info...\n")
-
-            modpack_info = self.curseforge_api.get_modpack_info(modpack_id)
-            if not modpack_info:
-                if log_callback:
-                    log_callback("Error: Could not get modpack info\n")
-                return {"success": False}
-
-            modpack_name = modpack_info.get("name", modpack_name or "unknown_modpack")
-            modpack_slug = modpack_info.get("slug", modpack_name)
-
-            # Clean name for folder
-            safe_name = "".join(c for c in modpack_name if c.isalnum() or c in (' ', '-', '_')).strip()
-            safe_name = safe_name.replace(' ', '_')
-
-            if log_callback:
-                log_callback(f"Modpack: {modpack_name}\n\n")
-
-            # Get file info
-            if log_callback:
-                log_callback("Step 2/5: Getting version info...\n")
-
-            file_info = self.curseforge_api.get_mod_file_info(modpack_id, file_id)
-            if not file_info:
-                if log_callback:
-                    log_callback("Error: Could not get file info\n")
-                return {"success": False}
-
-            game_versions = file_info.get("gameVersions", [])
-            # Filter out loader names from game versions to get MC version
-            mc_versions = [v for v in game_versions if v[0].isdigit()]
-            minecraft_version = mc_versions[0] if mc_versions else "unknown"
-
-            # Detect loader from file name or game versions
-            file_name = file_info.get("fileName", "").lower()
-            loader_type = "unknown"
-            loader_version = ""
-
-            if "forge" in file_name or "Forge" in game_versions:
-                loader_type = "forge"
-            elif "neoforge" in file_name or "NeoForge" in game_versions:
-                loader_type = "neoforge"
-            elif "fabric" in file_name or "Fabric" in game_versions:
-                loader_type = "fabric"
-            elif "quilt" in file_name or "Quilt" in game_versions:
-                loader_type = "quilt"
-
-            version_name = file_info.get("displayName", file_info.get("fileName", ""))
-
-            if log_callback:
-                log_callback(f"Version: {version_name}\n")
-                log_callback(f"Minecraft: {minecraft_version}\n")
-                log_callback(f"Loader: {loader_type}\n\n")
-
-            # Create install directory
-            install_base = Path.home() / ".pycraft" / "modpacks"
-            install_base.mkdir(parents=True, exist_ok=True)
-            install_path = install_base / safe_name
-
-            if install_path.exists():
-                if log_callback:
-                    log_callback(f"Warning: Folder exists, will be updated\n")
-            else:
-                install_path.mkdir(parents=True, exist_ok=True)
-
-            if log_callback:
-                log_callback(f"Install path: {install_path}\n\n")
-
-            # Download modpack
-            if log_callback:
-                log_callback("Step 3/5: Downloading modpack...\n")
-
-            temp_dir = install_path / ".temp_download"
-            temp_dir.mkdir(exist_ok=True)
-
-            modpack_file = self.curseforge_api.download_modpack_file(modpack_id, file_id, str(temp_dir))
-            if not modpack_file:
-                if log_callback:
-                    log_callback("Error: Failed to download modpack\n")
-                return {"success": False}
-
-            if log_callback:
-                log_callback(f"Downloaded: {os.path.basename(modpack_file)}\n\n")
-
-            # Extract modpack
-            if log_callback:
-                log_callback("Step 4/5: Extracting and downloading mods...\n")
-
-            extract_dir = temp_dir / "extracted"
-            extract_dir.mkdir(exist_ok=True)
-
-            with zipfile.ZipFile(modpack_file, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-
-            # Read manifest
-            manifest_path = extract_dir / "manifest.json"
-            if not manifest_path.exists():
-                if log_callback:
-                    log_callback("Error: manifest.json not found\n")
-                return {"success": False}
-
-            with open(manifest_path, 'r', encoding='utf-8') as f:
-                manifest = json.load(f)
-
-            # Get loader version from manifest
-            minecraft_info = manifest.get("minecraft", {})
-            mod_loaders = minecraft_info.get("modLoaders", [])
-            if mod_loaders:
-                primary_loader = mod_loaders[0].get("id", "")
-                if "-" in primary_loader:
-                    loader_type, loader_version = primary_loader.split("-", 1)
-
-            # Update minecraft version from manifest if available
-            manifest_mc_version = minecraft_info.get("version", "")
-            if manifest_mc_version:
-                minecraft_version = manifest_mc_version
-
-            # Create necessary directories
-            mods_folder = install_path / "mods"
-            mods_folder.mkdir(exist_ok=True)
-
-            # Download mods using parallel downloads for speed
-            files = manifest.get("files", [])
-            total_files = len(files)
-
-            if log_callback:
-                log_callback(f"Downloading {total_files} mods (parallel)...\n")
-
-            # Get all project IDs to fetch mod info in batch (for slugs)
-            project_ids = [f.get("projectID") for f in files if f.get("projectID")]
-
-            # Fetch mod info in batch for proper URLs
-            mods_info_map = {}
-            if project_ids:
-                try:
-                    mods_batch = self.curseforge_api.get_mods_info_batch(project_ids)
-                    if mods_batch:
-                        for mod in mods_batch:
-                            mods_info_map[mod.get("id")] = mod
-                except Exception:
-                    pass  # Will fall back to individual lookups
-
-            # Counters for progress (thread-safe)
-            import threading
-            from concurrent.futures import ThreadPoolExecutor, as_completed
-
-            downloaded_count = [0]
-            failed_mods = []
-            lock = threading.Lock()
-
-            def build_cdn_url(file_id: int, filename: str) -> str:
-                """Build alternative CDN URL when downloadUrl is null"""
-                # CurseForge CDN pattern: https://edge.forgecdn.net/files/{first4}/{rest}/{filename}
-                file_id_str = str(file_id)
-                if len(file_id_str) > 4:
-                    first_part = file_id_str[:4]
-                    second_part = file_id_str[4:]
-                else:
-                    first_part = file_id_str
-                    second_part = ""
-                # Remove leading zeros from second part
-                second_part = second_part.lstrip('0') or '0'
-                return f"https://edge.forgecdn.net/files/{first_part}/{second_part}/{filename}"
-
-            def download_mod(mod_file):
-                """Download a single mod - runs in thread pool"""
-                project_id = mod_file.get("projectID")
-                mod_file_id = mod_file.get("fileID")
-
-                if not project_id or not mod_file_id:
-                    return None
-
-                try:
-                    # Get file info
-                    file_info = self.curseforge_api.get_mod_file_info(project_id, mod_file_id)
-                    if not file_info:
-                        return {"error": True, "project_id": project_id, "reason": "no_file_info"}
-
-                    filename = file_info.get("fileName", f"mod_{project_id}.jar")
-                    download_url = file_info.get("downloadUrl")
-
-                    # If no download URL, use the CDN fallback
-                    if not download_url:
-                        download_url = build_cdn_url(mod_file_id, filename)
-
-                    # Download the mod
-                    dest_file = mods_folder / filename
-                    response = requests.get(
-                        download_url,
-                        timeout=60,
-                        stream=True,
-                        allow_redirects=True,
-                        headers={"User-Agent": "PyCraft/1.0"}
-                    )
-                    response.raise_for_status()
-
-                    with open(dest_file, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-
-                    with lock:
-                        downloaded_count[0] += 1
-                        if log_callback and downloaded_count[0] % 20 == 0:
-                            log_callback(f"  Progress: {downloaded_count[0]}/{total_files}\n")
-
-                    return {"success": True, "filename": filename}
-
-                except requests.exceptions.HTTPError as e:
-                    # If CDN also fails, provide manual download link
-                    mod_info = mods_info_map.get(project_id)
-                    if not mod_info:
-                        try:
-                            mod_info = self.curseforge_api.get_mod_info(project_id)
-                        except:
-                            mod_info = None
-
-                    if mod_info:
-                        slug = mod_info.get("slug", "")
-                        mod_name = mod_info.get("name", filename if 'filename' in dir() else f"mod_{project_id}")
-                        page_url = f"https://www.curseforge.com/minecraft/mc-mods/{slug}/files/{mod_file_id}"
-                    else:
-                        mod_name = f"mod_{project_id}"
-                        page_url = f"https://www.curseforge.com/minecraft/mc-mods/project/{project_id}/files/{mod_file_id}"
-
-                    return {
-                        "error": True,
-                        "project_id": project_id,
-                        "reason": "download_failed",
-                        "mod_name": mod_name,
-                        "filename": filename if 'filename' in dir() else f"mod_{project_id}.jar",
-                        "manual_url": page_url
-                    }
-
-                except Exception as e:
-                    return {"error": True, "project_id": project_id, "reason": str(e)}
-
-            # Use ThreadPoolExecutor for parallel downloads (8 concurrent)
-            with ThreadPoolExecutor(max_workers=8) as executor:
-                futures = {executor.submit(download_mod, mod_file): mod_file for mod_file in files}
-
-                for future in as_completed(futures):
-                    result = future.result()
-                    if result and result.get("error"):
-                        failed_mods.append(result)
-
-            # Report results
-            downloaded = downloaded_count[0]
-            failed = len(failed_mods)
-
-            if log_callback:
-                log_callback(f"Downloaded {downloaded}/{total_files} mods")
-                if failed > 0:
-                    log_callback(f" ({failed} require manual download)")
-                log_callback("\n")
-
-                # Show manual download links for failed mods
-                manual_downloads = [m for m in failed_mods if m.get("reason") == "no_download_url"]
-                if manual_downloads:
-                    log_callback("\n⚠ Some mods require manual download:\n")
-                    for mod in manual_downloads:
-                        mod_name = mod.get("mod_name", mod.get("filename", "Unknown"))
-                        url = mod.get("manual_url", "")
-                        log_callback(f"  • {mod_name}\n")
-                        log_callback(f"    → {url}\n")
-                    log_callback("\nDownload these and place in the 'mods' folder.\n")
-
-                log_callback("\n")
-
-            # Copy overrides
-            if log_callback:
-                log_callback("Step 5/5: Copying configurations...\n")
-
-            overrides_name = manifest.get("overrides", "overrides")
-            overrides_dir = extract_dir / overrides_name
-            if overrides_dir.exists():
-                self._copy_overrides(overrides_dir, install_path, log_callback)
-                if log_callback:
-                    log_callback("Configurations copied\n\n")
-
-            # Save modpack info
-            info_file = install_path / "modpack_info.json"
-            info_data = {
-                "name": modpack_name,
-                "slug": modpack_slug,
-                "source": "curseforge",
-                "minecraft_version": minecraft_version,
-                "loader": loader_type,
-                "loader_version": loader_version,
-                "curseforge_url": f"https://www.curseforge.com/minecraft/modpacks/{modpack_slug}",
-                "curseforge_id": modpack_id,
-                "version_name": version_name,
-                "installed_date": str(Path(install_path).stat().st_mtime) if install_path.exists() else ""
-            }
-
-            with open(info_file, 'w', encoding='utf-8') as f:
-                json.dump(info_data, f, indent=2)
-
-            # Cleanup temp
-            try:
-                shutil.rmtree(temp_dir)
-            except:
-                pass
-
-            return {
-                "success": True,
-                "install_path": str(install_path),
-                "minecraft_version": minecraft_version,
-                "loader_type": loader_type,
-                "loader_version": loader_version
-            }
-
-        except Exception as e:
-            if log_callback:
-                log_callback(f"\nError during installation: {str(e)}\n")
-            return {"success": False, "error": str(e)}
-
-    def get_installed_client_modpacks(self) -> List[Dict]:
-        """
-        Get list of installed client modpacks from ~/.pycraft/modpacks/
-
-        Returns:
-            List of dicts with modpack info (name, minecraft_version, loader, loader_version, path)
-        """
-        modpacks = []
-        modpacks_dir = Path.home() / ".pycraft" / "modpacks"
-
-        if not modpacks_dir.exists():
-            return modpacks
-
-        for folder in modpacks_dir.iterdir():
-            if folder.is_dir():
-                info_file = folder / "modpack_info.json"
-                if info_file.exists():
-                    try:
-                        with open(info_file, 'r', encoding='utf-8') as f:
-                            info = json.load(f)
-                        info["path"] = str(folder)
-                        info["folder_name"] = folder.name
-                        modpacks.append(info)
-                    except:
-                        # If info file is corrupted, still list it with basic info
-                        modpacks.append({
-                            "name": folder.name,
-                            "folder_name": folder.name,
-                            "path": str(folder),
-                            "minecraft_version": "Unknown",
-                            "loader": "Unknown",
-                            "loader_version": ""
-                        })
-
-        return modpacks
-
-    def uninstall_client_modpack(self, folder_name: str) -> bool:
-        """
-        Uninstall a client modpack by deleting its folder
-
-        Args:
-            folder_name: Name of the modpack folder to delete
-
-        Returns:
-            True if successful, False otherwise
-        """
-        try:
-            modpack_path = Path.home() / ".pycraft" / "modpacks" / folder_name
-            if modpack_path.exists() and modpack_path.is_dir():
-                shutil.rmtree(modpack_path)
-                return True
-            return False
         except Exception:
-            return False
+            return 6144  # Default 6 GB
 
     def detect_client_only_mods(self, mods_folder: str, server_folder: str = None) -> List[Dict]:
         """
@@ -2087,7 +1459,7 @@ max-world-size=29999984
                                 dependencies.extend(depends.keys())
                             elif isinstance(depends, list):
                                 dependencies.extend(depends)
-                    except:
+                    except Exception:
                         pass
 
                 # Check Forge mod
@@ -2112,10 +1484,10 @@ max-world-size=29999984
                                 if dep not in dependencies and dep != mod_id:
                                     # Only add if it looks like a dependency section
                                     pass  # Avoid false positives
-                    except:
+                    except Exception:
                         pass
 
-        except:
+        except Exception:
             pass
 
         # Filter out minecraft and forge from dependencies
@@ -2196,7 +1568,7 @@ max-world-size=29999984
                                         )
                                         if not has_non_client and len(mixins) == 1:
                                             return {'name': mod_name, 'reason': 'Only client mixins'}
-                    except:
+                    except Exception:
                         pass
 
                 # ========== PRIORITY 3: Check Forge mod (META-INF/mods.toml) ==========
@@ -2243,7 +1615,7 @@ max-world-size=29999984
                                         # Check if it's in known list or has client-only indicators
                                         if mod_id.lower() in known_client_mods:
                                             return {'name': mod_name, 'reason': f'Client mod with displayTest={test_value}'}
-                    except:
+                    except Exception:
                         pass
 
                 # ========== PRIORITY 4: Check mixin configs ==========
@@ -2266,7 +1638,7 @@ max-world-size=29999984
                             if '.client.' in package or package.endswith('.client'):
                                 if not server_mixins and not common_mixins:
                                     return {'name': mod_name, 'reason': 'Client mixin package'}
-                    except:
+                    except Exception:
                         pass
 
                 # ========== PRIORITY 5: Deep class structure analysis ==========
@@ -2347,7 +1719,7 @@ max-world-size=29999984
                                     # Look for OnlyIn annotation signature
                                     if b'OnlyIn' in class_data and b'CLIENT' in class_data:
                                         return {'name': mod_name, 'reason': 'Contains @OnlyIn(Dist.CLIENT) annotations'}
-                            except:
+                            except Exception:
                                 pass
 
         except Exception as e:
@@ -2377,13 +1749,18 @@ max-world-size=29999984
 
         for filename in mod_files:
             try:
-                src_path = os.path.join(mods_folder, filename)
-                dst_path = os.path.join(backup_folder, filename)
+                # Sanitize filename to prevent path traversal
+                safe_filename = os.path.basename(filename)
+                if not safe_filename:
+                    failed += 1
+                    continue
+                src_path = os.path.join(mods_folder, safe_filename)
+                dst_path = os.path.join(backup_folder, safe_filename)
 
                 if os.path.exists(src_path):
                     # If file already exists in backup, add a number
                     if os.path.exists(dst_path):
-                        base, ext = os.path.splitext(filename)
+                        base, ext = os.path.splitext(safe_filename)
                         counter = 1
                         while os.path.exists(dst_path):
                             dst_path = os.path.join(backup_folder, f"{base}_{counter}{ext}")

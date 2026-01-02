@@ -454,7 +454,6 @@ class PyCraftGUI(QMainWindow):
     # Modal signals (thread-safe)
     vanilla_install_success_signal = Signal(str, str)  # version, folder
     server_modpack_install_success_signal = Signal(str, str, str)  # name, mc_version, loader
-    client_modpack_install_success_signal = Signal(str, str, str, str, str)  # name, mc_ver, loader, loader_ver, path
     update_check_complete_signal = Signal(object)  # update_info dict or None
     update_download_progress_signal = Signal(int, float, float)  # progress%, downloaded_mb, total_mb
     update_download_complete_signal = Signal(str)  # installer_path or empty string if failed
@@ -511,9 +510,8 @@ class PyCraftGUI(QMainWindow):
         self.mp_search_query = ""
         self.mp_icon_cache = {}  # Cache for modpack icons
 
-        # Client modpack install state
+        # Client modpack browsing state
         self.client_mp_results = []
-        self.client_selected_modpack = None
         self.client_mp_current_page = 1
         self.client_mp_total_results = 0
         self.client_mp_search_query = ""
@@ -531,7 +529,6 @@ class PyCraftGUI(QMainWindow):
 
         # Version selection state
         self.selected_mp_version = None  # For server install
-        self.client_selected_mp_version = None  # For client install
 
         # Provider selection state
         self.mp_selected_provider = "modrinth"  # For server modpack install
@@ -601,9 +598,6 @@ class PyCraftGUI(QMainWindow):
         self.server_modpack_install_success_signal.connect(
             lambda n, m, l: QTimer.singleShot(100, lambda: self._show_server_install_notice(n, m, l))
         )
-        self.client_modpack_install_success_signal.connect(
-            lambda n, m, l, v, p: QTimer.singleShot(100, lambda: self._show_client_install_success(n, m, l, v, p))
-        )
 
     def _on_log(self, msg: str, level: str, target: str):
         """Handle log signal"""
@@ -612,7 +606,6 @@ class PyCraftGUI(QMainWindow):
             "v_run": getattr(self, "vanilla_run_console", None),
             "m_install": getattr(self, "modpack_install_console", None),
             "m_run": getattr(self, "modpack_run_console", None),
-            "c_install": getattr(self, "client_install_console", None),
         }
         if target in targets and targets[target]:
             self._log(targets[target], msg, level)
@@ -714,7 +707,6 @@ class PyCraftGUI(QMainWindow):
         self.page_stack.addWidget(self._build_modpack_run())        # 8
         self.page_stack.addWidget(self._build_client_install())     # 9
         self.page_stack.addWidget(self._build_java_management())    # 10
-        self.page_stack.addWidget(self._build_modpack_management()) # 11
 
         # Footer (will be shown/hidden based on current page)
         self.footer = self._build_footer()
@@ -897,7 +889,6 @@ class PyCraftGUI(QMainWindow):
         # Management items
         mgmt_items = [
             ("java_management", "Java", "fa5s.coffee"),
-            ("modpack_management", "Modpacks", "fa5s.box-open"),
         ]
 
         for page_id, text, icon in mgmt_items:
@@ -972,9 +963,39 @@ class PyCraftGUI(QMainWindow):
         card_layout.setContentsMargins(32, 32, 32, 32)
         card_layout.setSpacing(8)
 
+        # Top row with welcome text and website icon
+        top_row = QWidget()
+        top_row.setStyleSheet("background: transparent;")
+        top_row_layout = QHBoxLayout(top_row)
+        top_row_layout.setContentsMargins(0, 0, 0, 0)
+        top_row_layout.setSpacing(0)
+
         welcome = QLabel("Welcome to")
         welcome.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 14px; background: transparent;")
-        card_layout.addWidget(welcome)
+        top_row_layout.addWidget(welcome)
+
+        top_row_layout.addStretch()
+
+        # Website icon button
+        website_btn = QPushButton()
+        website_btn.setIcon(qta.icon("fa5s.globe", color=self.colors['text_secondary']))
+        website_btn.setIconSize(QSize(24, 24))
+        website_btn.setFixedSize(28, 28)
+        website_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        website_btn.setToolTip("Visit PyCraft Website")
+        website_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: transparent;
+                border: none;
+            }}
+            QPushButton:hover {{
+                background-color: transparent;
+            }}
+        """)
+        website_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://pycraft-web.vercel.app")))
+        top_row_layout.addWidget(website_btn)
+
+        card_layout.addWidget(top_row)
 
         title = QLabel("PyCraft")
         title.setStyleSheet(f"color: {self.colors['text']}; font-size: 36px; font-weight: bold; background: transparent;")
@@ -1325,6 +1346,10 @@ class PyCraftGUI(QMainWindow):
         title.setStyleSheet(f"color: {self.colors['text']}; font-size: 26px; font-weight: bold;")
         layout.addWidget(title)
 
+        subtitle = QLabel("Java versions installed by PyCraft for running Minecraft servers")
+        subtitle.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px;")
+        layout.addWidget(subtitle)
+
         # Java section
         java_frame = self._section_frame("Installed Java Versions")
         java_layout = java_frame.layout()
@@ -1339,54 +1364,6 @@ class PyCraftGUI(QMainWindow):
         layout.addWidget(java_frame)
 
         QTimer.singleShot(100, self._check_java)
-
-        layout.addStretch()
-        scroll.setWidget(content)
-
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
-
-        return page
-
-    def _build_modpack_management(self) -> QWidget:
-        """Build modpack management page"""
-        page = QWidget()
-        page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(self._scroll_style())
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(40, 30, 40, 30)
-        layout.setSpacing(20)
-
-        title = QLabel("Client Modpacks")
-        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 26px; font-weight: bold;")
-        layout.addWidget(title)
-
-        subtitle = QLabel("Manage modpacks installed for your Minecraft launcher")
-        subtitle.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px;")
-        layout.addWidget(subtitle)
-
-        # Modpack Management section
-        modpack_frame = self._section_frame("Installed Modpacks")
-        modpack_layout = modpack_frame.layout()
-
-        # Modpack list container
-        self.modpack_list_widget = QWidget()
-        self.modpack_list_widget.setStyleSheet("background: transparent;")
-        self.modpack_list_layout = QVBoxLayout(self.modpack_list_widget)
-        self.modpack_list_layout.setContentsMargins(0, 0, 0, 0)
-        self.modpack_list_layout.setSpacing(8)
-        modpack_layout.addWidget(self.modpack_list_widget)
-
-        layout.addWidget(modpack_frame)
-
-        # Load modpacks after UI is ready
-        QTimer.singleShot(200, self._refresh_modpack_list)
 
         layout.addStretch()
         scroll.setWidget(content)
@@ -2075,33 +2052,9 @@ class PyCraftGUI(QMainWindow):
         back_provider.clicked.connect(lambda: self._go_to("modded"))
         provider_page_layout.addWidget(back_provider)
 
-        title_provider = QLabel("Install Modpack (Client)")
+        title_provider = QLabel("Browse Modpacks (Client)")
         title_provider.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
         provider_page_layout.addWidget(title_provider)
-
-        # Info box
-        info_frame = QFrame()
-        info_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.colors['bg_card']};
-                border-radius: 10px;
-                border: 1px solid {self.colors['accent']};
-            }}
-        """)
-        info_layout = QHBoxLayout(info_frame)
-        info_layout.setContentsMargins(16, 12, 16, 12)
-
-        info_icon = QLabel()
-        info_icon.setPixmap(qta.icon("fa5s.info-circle", color=self.colors['accent']).pixmap(24, 24))
-        info_icon.setFixedSize(24, 24)
-        info_layout.addWidget(info_icon)
-
-        info_text = QLabel("Client modpacks are installed to ~/.pycraft/modpacks/ for use with your launcher (SKLauncher, MultiMC, etc.)")
-        info_text.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 12px;")
-        info_text.setWordWrap(True)
-        info_layout.addWidget(info_text, 1)
-
-        provider_page_layout.addWidget(info_frame)
 
         # Center content vertically (2:3 ratio to account for header)
         provider_page_layout.addStretch(2)
@@ -2139,16 +2092,6 @@ class PyCraftGUI(QMainWindow):
 
         provider_page_layout.addWidget(providers_container)
 
-        # Recommendation message
-        recommendation_label = QLabel("We recommend CurseForge for better stability")
-        recommendation_label.setStyleSheet(f"""
-            color: #f0c040;
-            font-size: 13px;
-            font-style: italic;
-        """)
-        recommendation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        provider_page_layout.addWidget(recommendation_label)
-
         provider_page_layout.addStretch(3)
 
         self.client_mp_stack.addWidget(provider_page)
@@ -2165,10 +2108,10 @@ class PyCraftGUI(QMainWindow):
         search_page_layout.setSpacing(18)
 
         back_search = self._text_button("< Back")
-        back_search.clicked.connect(lambda: self._go_to("modded"))
+        back_search.clicked.connect(lambda: self.client_mp_stack.setCurrentIndex(0))
         search_page_layout.addWidget(back_search)
 
-        title_search = QLabel("Install Modpack (Client)")
+        title_search = QLabel("Browse Modpacks (Client)")
         title_search.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
         search_page_layout.addWidget(title_search)
 
@@ -2265,23 +2208,7 @@ class PyCraftGUI(QMainWindow):
 
         search_layout.addWidget(self.client_mp_pagination_widget)
 
-        self.client_mp_selected = QLabel("No modpack selected")
-        self.client_mp_selected.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600;")
-        search_layout.addWidget(self.client_mp_selected)
-
         search_page_layout.addWidget(search_frame)
-
-        # Install button
-        self.client_mp_install_btn = self._styled_button("Install to Client", self.colors['accent'], "#000000", 200)
-        self.client_mp_install_btn.setEnabled(False)
-        self.client_mp_install_btn.clicked.connect(self._install_client_modpack)
-        search_page_layout.addWidget(self.client_mp_install_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        # Console
-        console_frame = self._section_frame("Console")
-        self.client_install_console = self._console()
-        console_frame.layout().addWidget(self.client_install_console)
-        search_page_layout.addWidget(console_frame)
 
         search_page_layout.addStretch()
         search_scroll.setWidget(search_content)
@@ -2293,7 +2220,7 @@ class PyCraftGUI(QMainWindow):
         return page
 
     def _select_client_mp_provider(self, provider: str):
-        """Handle provider selection for client modpack install"""
+        """Handle provider selection for client modpack browsing"""
         self.client_mp_selected_provider = provider
         provider_display = "Modrinth" if provider == "modrinth" else "CurseForge"
         self.client_mp_provider_label.setText(f"Searching on: {provider_display}")
@@ -2301,15 +2228,10 @@ class PyCraftGUI(QMainWindow):
         # Clear previous results
         self._clear_layout(self.client_mp_results_layout)
         self.client_mp_search.clear()
-        self.client_mp_selected.setText("No modpack selected")
-        self.client_selected_modpack = None
         self.client_mp_pagination_widget.setVisible(False)
 
         # Switch to search UI
         self.client_mp_stack.setCurrentIndex(1)
-        self._log(self.client_install_console, f"Provider: {provider_display}\n", "info")
-        self._log(self.client_install_console, f"Install location: {Path.home() / '.pycraft' / 'modpacks'}\n", "info")
-        self._log(self.client_install_console, "Loading popular modpacks...\n", "info")
 
         # Load popular modpacks automatically
         self._search_client_modpacks(page=1, popular=True)
@@ -2513,7 +2435,7 @@ class PyCraftGUI(QMainWindow):
             "home": 0, "vanilla": 1, "modded": 2, "info": 3, "settings": 4,
             "vanilla_create": 5, "vanilla_run": 6, "modpack_install": 7, "modpack_run": 8,
             "client_install": 9, "client_modpacks": 9,
-            "java_management": 10, "modpack_management": 11
+            "java_management": 10
         }
         if page in pages:
             self.page_stack.setCurrentIndex(pages[page])
@@ -2534,7 +2456,7 @@ class PyCraftGUI(QMainWindow):
             "modded": "modded", "modpack_install": "modded", "modpack_run": "modded",
             "client_install": "client_modpacks", "client_modpacks": "client_modpacks",
             "settings": "settings",
-            "java_management": "java_management", "modpack_management": "modpack_management"
+            "java_management": "java_management"
         }
         for k, btn in self.sidebar_buttons.items():
             btn.setChecked(k == sidebar_map.get(page, ""))
@@ -2740,90 +2662,12 @@ class PyCraftGUI(QMainWindow):
         if not self.selected_version or not self.server_folder:
             return
 
-        # Check Java compatibility BEFORE downloading
-        required_java = self.java_manager.get_required_java_version(self.selected_version)
-        min_java, max_java = self.java_manager.get_java_version_range(self.selected_version)
-        java_info = self.java_manager.detect_java_version()
-
-        # Check if we have a compatible Java already installed by PyCraft
-        pycraft_java = None
-        install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
-        if install_dir.exists():
-            java_exe = self.java_manager._find_java_executable(install_dir)
-            if java_exe:
-                pycraft_java = str(java_exe)
-
-        # Determine if we need Java (check both min and max)
-        needs_java = False
-        java_too_new = False
-        if pycraft_java:
-            # We have PyCraft-installed Java, use it
-            pass
-        elif java_info:
-            _, installed_major = java_info
-            if installed_major < min_java:
-                needs_java = True
-            elif max_java is not None and installed_major > max_java:
-                needs_java = True
-                java_too_new = True
-        else:
-            needs_java = True
-
-        if needs_java:
-            # Show dialog with options
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Java Required")
-            msg.setIcon(QMessageBox.Icon.Warning)
-
-            if max_java:
-                msg.setText(f"Minecraft {self.selected_version} requires Java {min_java}-{max_java}")
-            else:
-                msg.setText(f"Minecraft {self.selected_version} requires Java {required_java}+")
-
-            if java_info:
-                _, installed_major = java_info
-                if java_too_new:
-                    msg.setInformativeText(
-                        f"You have Java {installed_major} installed, but it's too new.\n"
-                        f"Forge/modded servers for MC < 1.17 require Java 8-{max_java}.\n"
-                        f"Java 17+ breaks due to module system changes.\n\n"
-                        f"What would you like to do?"
-                    )
-                else:
-                    msg.setInformativeText(
-                        f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
-                        f"What would you like to do?"
-                    )
-            else:
-                msg.setInformativeText(
-                    f"Java is not installed on your system.\n\n"
-                    f"What would you like to do?"
-                )
-
-            install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
-            java_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
-            cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-
-            msg.exec()
-
-            clicked = msg.clickedButton()
-            if clicked == java_btn:
-                self._go_to("java_management")
-                return
-            elif clicked == cancel_btn or clicked is None:
-                return
-            # If install_btn clicked, show installation modal first
-            elif clicked == install_btn:
-                if not self._show_java_install_modal(required_java):
-                    # Installation failed, don't continue
-                    QMessageBox.critical(self, "Error", f"Failed to install Java {required_java}. Cannot create server.")
-                    return
-                # Update pycraft_java reference after successful install
-                install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
-                if install_dir.exists():
-                    java_exe = self.java_manager._find_java_executable(install_dir)
-                    if java_exe:
-                        pycraft_java = str(java_exe)
+        # Check Java compatibility using smart detection
+        # This will: 1) Use system Java if compatible, 2) Use PyCraft Java if available, 3) Prompt to install
+        java_executable = self._check_and_get_java(self.selected_version)
+        if not java_executable:
+            # User cancelled or installation failed
+            return
 
         # Proceed with download
         self.download_btn.setEnabled(False)
@@ -2832,7 +2676,7 @@ class PyCraftGUI(QMainWindow):
         self.active_status = self.create_status
 
         # Capture java path for the thread
-        java_to_use = pycraft_java
+        java_to_use = java_executable
 
         def process():
             nonlocal java_to_use
@@ -3000,91 +2844,17 @@ class PyCraftGUI(QMainWindow):
             mc_version = "1.20"  # Default assumption for unknown versions
             self._log(self.vanilla_run_console, "\nCould not detect version, assuming Java 17+ required\n", "warning")
 
-        # Check Java compatibility
-        required_java = self.java_manager.get_required_java_version(mc_version)
-        min_java, max_java = self.java_manager.get_java_version_range(mc_version)
-        java_info = self.java_manager.detect_java_version()
+        # Check Java compatibility using smart detection
+        # This will: 1) Use system Java if compatible, 2) Use PyCraft Java if available, 3) Prompt to install
+        java_executable = self._check_and_get_java(mc_version)
+        if not java_executable:
+            # User cancelled or installation failed
+            return
 
-        needs_java = False
-        java_too_new = False
-        pycraft_java = None
-
-        # Check if we have a PyCraft-installed Java
-        install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
-        if install_dir.exists():
-            java_exe = self.java_manager._find_java_executable(install_dir)
-            if java_exe:
-                pycraft_java = str(java_exe)
-
-        if not pycraft_java:
-            if not java_info:
-                needs_java = True
-            else:
-                _, installed_major = java_info
-                if installed_major < min_java:
-                    needs_java = True
-                elif max_java is not None and installed_major > max_java:
-                    needs_java = True
-                    java_too_new = True
-
-        if needs_java:
-            # Show dialog with options (same as create server)
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Java Required")
-            msg.setIcon(QMessageBox.Icon.Warning)
-
-            if max_java:
-                msg.setText(f"Minecraft {mc_version} requires Java {min_java}-{max_java}")
-            else:
-                msg.setText(f"Minecraft {mc_version} requires Java {required_java}+")
-
-            if java_info:
-                _, installed_major = java_info
-                if java_too_new:
-                    msg.setInformativeText(
-                        f"You have Java {installed_major} installed, but it's too new.\n"
-                        f"Forge/modded servers for MC < 1.17 require Java 8-{max_java}.\n"
-                        f"Java 17+ breaks due to module system changes.\n\n"
-                        f"What would you like to do?"
-                    )
-                else:
-                    msg.setInformativeText(
-                        f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
-                        f"What would you like to do?"
-                    )
-            else:
-                msg.setInformativeText(
-                    f"Java is not installed on your system.\n\n"
-                    f"What would you like to do?"
-                )
-
-            install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
-            java_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
-            cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-
-            msg.exec()
-
-            clicked = msg.clickedButton()
-            if clicked == java_btn:
-                self._go_to("java_management")
-                return
-            elif clicked == cancel_btn or clicked is None:
-                return
-            elif clicked == install_btn:
-                if not self._show_java_install_modal(required_java):
-                    QMessageBox.critical(self, "Error", f"Failed to install Java {required_java}. Cannot start server.")
-                    return
-                # Update java reference after successful install
-                install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
-                if install_dir.exists():
-                    java_exe = self.java_manager._find_java_executable(install_dir)
-                    if java_exe:
-                        pycraft_java = str(java_exe)
-
-        # Update server manager with correct Java executable
-        if pycraft_java:
-            self.server_manager.java_executable = pycraft_java
-            self._log(self.vanilla_run_console, f"\nUsing Java: {pycraft_java}\n", "info")
+        # Update server manager with the selected Java
+        self.server_manager.java_executable = java_executable
+        java_source = "system" if java_executable == "java" else "PyCraft"
+        self._log(self.vanilla_run_console, f"\nUsing {java_source} Java: {java_executable}\n", "info")
 
         # Configure online-mode=false automatically for LAN/Hamachi play
         self.server_manager.set_online_mode(False)
@@ -4000,10 +3770,10 @@ class PyCraftGUI(QMainWindow):
 
     def _pick_mp(self, mp: dict):
         """Show version selector dialog for server install"""
-        self._show_version_selector(mp, is_client=False)
+        self._show_version_selector(mp)
 
-    def _show_version_selector(self, mp: dict, is_client: bool = False):
-        """Show dialog to select modpack version"""
+    def _show_version_selector(self, mp: dict):
+        """Show dialog to select modpack version for server install"""
         project_id = mp.get("project_id", "")
         mp_name = mp.get("title", "Unknown")
 
@@ -4232,20 +4002,12 @@ class PyCraftGUI(QMainWindow):
 
         def on_confirm():
             if dialog.selected_version:
-                if is_client:
-                    self.client_selected_modpack = mp
-                    self.client_selected_mp_version = dialog.selected_version
-                    v_name = dialog.selected_version.get("name", "")
-                    self.client_mp_selected.setText(f"Selected: {mp_name} ({v_name})")
-                    self.client_mp_selected.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600;")
-                    self.client_mp_install_btn.setEnabled(True)
-                else:
-                    self.selected_modpack = mp
-                    self.selected_mp_version = dialog.selected_version
-                    v_name = dialog.selected_version.get("name", "")
-                    self.mp_selected.setText(f"Selected: {mp_name} ({v_name})")
-                    self.mp_selected.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600;")
-                    self._update_mp_btn()
+                self.selected_modpack = mp
+                self.selected_mp_version = dialog.selected_version
+                v_name = dialog.selected_version.get("name", "")
+                self.mp_selected.setText(f"Selected: {mp_name} ({v_name})")
+                self.mp_selected.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600;")
+                self._update_mp_btn()
                 dialog.accept()
 
         confirm_btn.clicked.connect(on_confirm)
@@ -4289,83 +4051,13 @@ class PyCraftGUI(QMainWindow):
         loader_type = loaders[0] if loaders else "Unknown"
 
         # Check Java compatibility BEFORE installing (if we know the MC version)
+        # This uses smart detection: system Java -> PyCraft Java -> prompt to install
         if mc_version and mc_version != "Unknown":
-            required_java = self.java_manager.get_required_java_version(mc_version)
-            min_java, max_java = self.java_manager.get_java_version_range(mc_version)
-            java_info = self.java_manager.detect_java_version()
-
-            # Check if we have a compatible Java already installed by PyCraft
-            pycraft_java = None
-            install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
-            if install_dir.exists():
-                java_exe = self.java_manager._find_java_executable(install_dir)
-                if java_exe:
-                    pycraft_java = str(java_exe)
-
-            # Determine if we need Java
-            needs_java = False
-            java_too_new = False
-            if pycraft_java:
-                pass  # We have PyCraft-installed Java
-            elif java_info:
-                _, installed_major = java_info
-                if installed_major < min_java:
-                    needs_java = True
-                elif max_java is not None and installed_major > max_java:
-                    needs_java = True
-                    java_too_new = True
-            else:
-                needs_java = True
-
-            if needs_java:
-                # Show dialog with options
-                msg = QMessageBox(self)
-                msg.setWindowTitle("Java Required")
-                msg.setIcon(QMessageBox.Icon.Warning)
-
-                if max_java:
-                    msg.setText(f"This modpack (MC {mc_version}) requires Java {min_java}-{max_java}")
-                else:
-                    msg.setText(f"This modpack (MC {mc_version}) requires Java {required_java}+")
-
-                if java_info:
-                    _, installed_major = java_info
-                    if java_too_new:
-                        msg.setInformativeText(
-                            f"You have Java {installed_major} installed, but it's too new.\n"
-                            f"Forge/modded servers for MC < 1.17 require Java 8-{max_java}.\n\n"
-                            f"What would you like to do?"
-                        )
-                    else:
-                        msg.setInformativeText(
-                            f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
-                            f"What would you like to do?"
-                        )
-                else:
-                    msg.setInformativeText(
-                        f"Java is not installed on your system.\n\n"
-                        f"What would you like to do?"
-                    )
-
-                install_java_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
-                java_mgmt_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
-                cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-
-                msg.exec()
-
-                clicked = msg.clickedButton()
-                if clicked == java_mgmt_btn:
-                    self._go_to("java_management")
-                    self.mp_install_btn.setEnabled(True)
-                    return
-                elif clicked == cancel_btn or clicked is None:
-                    self.mp_install_btn.setEnabled(True)
-                    return
-                elif clicked == install_java_btn:
-                    if not self._show_java_install_modal(required_java):
-                        QMessageBox.critical(self, "Error", f"Failed to install Java {required_java}. Cannot install modpack.")
-                        self.mp_install_btn.setEnabled(True)
-                        return
+            java_executable = self._check_and_get_java(mc_version)
+            if not java_executable:
+                # User cancelled or installation failed
+                self.mp_install_btn.setEnabled(True)
+                return
 
         def install():
             try:
@@ -4433,8 +4125,8 @@ class PyCraftGUI(QMainWindow):
             f"Loader: {loader_display}\n\n"
             f"IMPORTANT: To play on this server, you need to\n"
             f"install the same modpack on your client.\n\n"
-            f"Go to 'Client Modpacks' in the sidebar to download\n"
-            f"the modpack for your launcher."
+            f"Go to 'Client Modpacks' in the sidebar to find\n"
+            f"the modpack and install it via CurseForge or Modrinth."
         )
 
         msg.setStyleSheet(f"""
@@ -4696,152 +4388,23 @@ class PyCraftGUI(QMainWindow):
 
         meta_layout.addStretch()
 
-        # Link to provider
-        slug = mp.get("slug", "")
-        source = mp.get("source", "modrinth")
-        if slug:
-            link_btn = QPushButton()
-            link_btn.setIcon(qta.icon("fa5s.external-link-alt", color=self.colors['text_muted']))
-            link_btn.setFixedSize(24, 24)
-            link_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            if source == "curseforge":
-                link_btn.setToolTip("Open in CurseForge")
-                link_url = f"https://www.curseforge.com/minecraft/modpacks/{slug}"
-            else:
-                link_btn.setToolTip("Open in Modrinth")
-                link_url = f"https://modrinth.com/modpack/{slug}"
-            link_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    border: none;
-                }}
-                QPushButton:hover {{
-                    background-color: {self.colors['bg_card']};
-                    border-radius: 4px;
-                }}
-            """)
-            link_btn.clicked.connect(lambda _, url=link_url: QDesktopServices.openUrl(QUrl(url)))
-            meta_layout.addWidget(link_btn)
-
         info_layout.addWidget(meta_widget)
         layout.addWidget(info, 1)
 
-        # Select button
-        select = self._styled_button("Select", self.colors['accent'], "#000000", 80)
-        select.setFixedHeight(36)
-        select.clicked.connect(lambda: self._pick_client_mp(mp))
-        layout.addWidget(select)
+        # Open button - opens modpack page in browser
+        slug = mp.get("slug", "")
+        source = mp.get("source", "modrinth")
+        if source == "curseforge":
+            link_url = f"https://www.curseforge.com/minecraft/modpacks/{slug}"
+        else:
+            link_url = f"https://modrinth.com/modpack/{slug}"
+
+        open_btn = self._styled_button("Open", self.colors['accent'], "#000000", 80)
+        open_btn.setFixedHeight(36)
+        open_btn.clicked.connect(lambda _, url=link_url: QDesktopServices.openUrl(QUrl(url)))
+        layout.addWidget(open_btn)
 
         self.client_mp_results_layout.addWidget(frame)
-
-    def _pick_client_mp(self, mp: dict):
-        """Show version selector dialog for client install"""
-        self._show_version_selector(mp, is_client=True)
-
-    def _install_client_modpack(self):
-        if not self.client_selected_modpack:
-            return
-
-        self.client_mp_install_btn.setEnabled(False)
-        mp = self.client_selected_modpack
-        project_id = mp.get("project_id", "")
-        mp_name = mp.get("title", "Unknown")
-        source = mp.get("source", "modrinth")
-        version_info = self.client_selected_mp_version or {}
-        version_id = version_info.get("id", "") if version_info else None
-
-        def install():
-            try:
-                self.log_signal.emit(f"\nInstalling '{mp_name}' for client...\n", "info", "c_install")
-
-                if source == "curseforge":
-                    # CurseForge client installation
-                    curseforge_id = mp.get("_curseforge_id")
-                    if not curseforge_id:
-                        curseforge_id = int(project_id)
-
-                    # Get file_id from the selected version
-                    curseforge_file = version_info.get("_curseforge_file", {})
-                    file_id = curseforge_file.get("id") if curseforge_file else int(version_id)
-
-                    result = self.modpack_manager.install_client_curseforge_modpack(
-                        curseforge_id,
-                        file_id,
-                        modpack_name=mp_name,
-                        log_callback=lambda m: self.log_signal.emit(m, "normal", "c_install")
-                    )
-                else:
-                    # Modrinth client installation
-                    result = self.modpack_manager.install_client_modpack(
-                        project_id,
-                        version_id=version_id,
-                        log_callback=lambda m: self.log_signal.emit(m, "normal", "c_install")
-                    )
-
-                if result and result.get("success"):
-                    install_path = result.get("install_path", "")
-                    mc_ver = result.get("minecraft_version", "Unknown")
-                    loader = result.get("loader_type", "Unknown")
-                    loader_ver = result.get("loader_version", "")
-
-                    self.log_signal.emit("\n" + "="*50 + "\n", "success", "c_install")
-                    self.log_signal.emit("CLIENT MODPACK INSTALLED SUCCESSFULLY\n", "success", "c_install")
-                    self.log_signal.emit("="*50 + "\n\n", "success", "c_install")
-                    self.log_signal.emit(f"Location: {install_path}\n", "info", "c_install")
-                    self.log_signal.emit(f"Minecraft: {mc_ver}\n", "info", "c_install")
-                    self.log_signal.emit(f"Loader: {loader} {loader_ver}\n", "info", "c_install")
-                    self.log_signal.emit("\nTo use in your launcher:\n", "info", "c_install")
-                    self.log_signal.emit(f"1. Create a new profile with Minecraft {mc_ver} and {loader} {loader_ver}\n", "normal", "c_install")
-                    self.log_signal.emit(f"2. Set game directory to: {install_path}\n", "normal", "c_install")
-
-                    # Show success modal via signal (thread-safe)
-                    self.client_modpack_install_success_signal.emit(mp_name, mc_ver, loader, loader_ver, install_path)
-                else:
-                    self.log_signal.emit("\nInstallation failed\n", "error", "c_install")
-
-            except Exception as e:
-                self.log_signal.emit(f"Error: {e}\n", "error", "c_install")
-
-            finally:
-                QTimer.singleShot(0, lambda: self.client_mp_install_btn.setEnabled(True))
-
-        threading.Thread(target=install, daemon=True).start()
-
-    def _show_client_install_success(self, mp_name: str, mc_ver: str, loader: str, loader_ver: str, install_path: str):
-        """Show success modal after client modpack installation"""
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Modpack Installed Successfully")
-        msg.setIcon(QMessageBox.Icon.Information)
-        msg.setText(f"Client modpack '{mp_name}' has been installed!")
-        msg.setInformativeText(
-            f"Minecraft: {mc_ver}\n"
-            f"Loader: {loader} {loader_ver}\n\n"
-            f"To use in your launcher:\n"
-            f"1. Create a new profile with Minecraft {mc_ver} and {loader} {loader_ver}\n"
-            f"2. Set game directory to:\n{install_path}"
-        )
-        msg.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {self.colors['bg_card']};
-            }}
-            QMessageBox QLabel {{
-                color: {self.colors['text']};
-                font-size: 13px;
-            }}
-            QPushButton {{
-                background-color: {self.colors['accent']};
-                color: #000000;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 6px;
-                font-weight: 600;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {self.colors['accent_hover']};
-            }}
-        """)
-        msg.exec()
 
     def _select_mp_run_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Server Folder")
@@ -5190,91 +4753,17 @@ class PyCraftGUI(QMainWindow):
             mc_version = "1.20"  # Default assumption for unknown versions
             self._log(self.modpack_run_console, "\nCould not detect MC version, assuming Java 17+ required\n", "warning")
 
-        # Check Java compatibility
-        required_java = self.java_manager.get_required_java_version(mc_version)
-        min_java, max_java = self.java_manager.get_java_version_range(mc_version)
-        java_info = self.java_manager.detect_java_version()
+        # Check Java compatibility using smart detection
+        # This will: 1) Use system Java if compatible, 2) Use PyCraft Java if available, 3) Prompt to install
+        java_executable = self._check_and_get_java(mc_version)
+        if not java_executable:
+            # User cancelled or installation failed
+            return
 
-        needs_java = False
-        java_too_new = False
-        pycraft_java = None
-
-        # Check if we have a PyCraft-installed Java
-        install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
-        if install_dir.exists():
-            java_exe = self.java_manager._find_java_executable(install_dir)
-            if java_exe:
-                pycraft_java = str(java_exe)
-
-        if not pycraft_java:
-            if not java_info:
-                needs_java = True
-            else:
-                _, installed_major = java_info
-                if installed_major < min_java:
-                    needs_java = True
-                elif max_java is not None and installed_major > max_java:
-                    needs_java = True
-                    java_too_new = True
-
-        if needs_java:
-            # Show dialog with options
-            msg = QMessageBox(self)
-            msg.setWindowTitle("Java Required")
-            msg.setIcon(QMessageBox.Icon.Warning)
-
-            if max_java:
-                msg.setText(f"Minecraft {mc_version} requires Java {min_java}-{max_java}")
-            else:
-                msg.setText(f"Minecraft {mc_version} requires Java {required_java}+")
-
-            if java_info:
-                _, installed_major = java_info
-                if java_too_new:
-                    msg.setInformativeText(
-                        f"You have Java {installed_major} installed, but it's too new.\n"
-                        f"Forge/modded servers for MC < 1.17 require Java 8-{max_java}.\n"
-                        f"Java 17+ breaks due to module system changes.\n\n"
-                        f"What would you like to do?"
-                    )
-                else:
-                    msg.setInformativeText(
-                        f"You have Java {installed_major} installed, but Java {required_java} or higher is needed.\n\n"
-                        f"What would you like to do?"
-                    )
-            else:
-                msg.setInformativeText(
-                    f"Java is not installed on your system.\n\n"
-                    f"What would you like to do?"
-                )
-
-            install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
-            java_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
-            cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-
-            msg.exec()
-
-            clicked = msg.clickedButton()
-            if clicked == java_btn:
-                self._go_to("java_management")
-                return
-            elif clicked == cancel_btn or clicked is None:
-                return
-            elif clicked == install_btn:
-                if not self._show_java_install_modal(required_java):
-                    QMessageBox.critical(self, "Error", f"Failed to install Java {required_java}. Cannot start server.")
-                    return
-                # Update java reference after successful install
-                install_dir = self.java_manager.java_installs_dir / f"java-{required_java}"
-                if install_dir.exists():
-                    java_exe = self.java_manager._find_java_executable(install_dir)
-                    if java_exe:
-                        pycraft_java = str(java_exe)
-
-        # Update server manager with correct Java executable
-        if pycraft_java:
-            self.modpack_server_manager.java_executable = pycraft_java
-            self._log(self.modpack_run_console, f"\nUsing Java: {pycraft_java}\n", "info")
+        # Update server manager with the selected Java
+        self.modpack_server_manager.java_executable = java_executable
+        java_source = "system" if java_executable == "java" else "PyCraft"
+        self._log(self.modpack_run_console, f"\nUsing {java_source} Java: {java_executable}\n", "info")
 
         # Check and accept EULA if needed
         eula_path = os.path.join(self.modpack_server_path, "eula.txt")
@@ -5837,199 +5326,6 @@ class PyCraftGUI(QMainWindow):
             # Install update (this will close the application)
             self.update_checker.install_update(self.downloaded_installer_path, silent=True)
 
-    def _refresh_modpack_list(self):
-        """Refresh the list of installed client modpacks in Settings"""
-        # Clear existing items
-        while self.modpack_list_layout.count():
-            child = self.modpack_list_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        modpacks = self.modpack_manager.get_installed_client_modpacks()
-
-        if not modpacks:
-            label = QLabel("No modpacks installed")
-            label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 13px; border: none;")
-            self.modpack_list_layout.addWidget(label)
-
-            tip = QLabel("Install modpacks from Modded Server > Install Modpack (Client)")
-            tip.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px; border: none;")
-            self.modpack_list_layout.addWidget(tip)
-        else:
-            for mp in modpacks:
-                frame = QFrame()
-                frame.setStyleSheet(f"""
-                    QFrame {{
-                        background-color: {self.colors['bg_input']};
-                        border-radius: 10px;
-                        padding: 10px;
-                    }}
-                """)
-                frame_layout = QHBoxLayout(frame)
-                frame_layout.setContentsMargins(12, 10, 12, 10)
-
-                # Source icon (Modrinth/CurseForge)
-                source = mp.get("source", "modrinth")
-                source_icon = QLabel()
-                if source == "curseforge":
-                    source_icon.setPixmap(qta.icon("fa5s.fire", color="#f16436").pixmap(20, 20))
-                    source_icon.setToolTip("CurseForge")
-                else:
-                    source_icon.setPixmap(qta.icon("fa5s.leaf", color="#1bd96a").pixmap(20, 20))
-                    source_icon.setToolTip("Modrinth")
-                source_icon.setFixedSize(24, 24)
-                source_icon.setStyleSheet("background: transparent; border: none;")
-                frame_layout.addWidget(source_icon)
-
-                # Info column
-                info_widget = QWidget()
-                info_widget.setStyleSheet("background: transparent;")
-                info_layout = QVBoxLayout(info_widget)
-                info_layout.setContentsMargins(8, 0, 0, 0)
-                info_layout.setSpacing(2)
-
-                name = QLabel(mp.get("name", mp.get("folder_name", "Unknown")))
-                name.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
-                info_layout.addWidget(name)
-
-                # Version info
-                mc_ver = mp.get("minecraft_version", "Unknown")
-                loader = mp.get("loader", "Unknown")
-                loader_ver = mp.get("loader_version", "")
-
-                # Loader color
-                loader_color = self.colors['text_muted']
-                if loader.lower() == "forge":
-                    loader_color = "#FF6B35"
-                elif loader.lower() == "neoforge":
-                    loader_color = "#D64541"
-                elif loader.lower() == "fabric":
-                    loader_color = "#C6BCA7"
-                elif loader.lower() == "quilt":
-                    loader_color = "#8B5CF6"
-
-                loader_text = f"{loader.capitalize()} {loader_ver}" if loader_ver else loader.capitalize()
-                meta = QLabel(f"MC {mc_ver} | {loader_text}")
-                meta.setStyleSheet(f"color: {loader_color}; font-size: 12px;")
-                info_layout.addWidget(meta)
-
-                # Path info
-                path = QLabel(mp.get("path", ""))
-                path.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 10px;")
-                info_layout.addWidget(path)
-
-                frame_layout.addWidget(info_widget, 1)
-
-                # Link button (open in browser)
-                link_url = mp.get("curseforge_url") or mp.get("modrinth_url")
-                if link_url:
-                    link_btn = QPushButton()
-                    link_btn.setFixedSize(36, 36)
-                    link_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-                    link_btn.setIcon(qta.icon("fa5s.external-link-alt", color=self.colors['text']))
-                    link_btn.setIconSize(QSize(16, 16))
-                    link_btn.setToolTip("Open in browser")
-                    link_btn.setStyleSheet(f"""
-                        QPushButton {{
-                            background-color: transparent;
-                            border: 1px solid {self.colors['border']};
-                            border-radius: 8px;
-                        }}
-                        QPushButton:hover {{
-                            background-color: {self.colors['bg_card']};
-                            border: 1px solid {self.colors['text_muted']};
-                        }}
-                    """)
-                    link_btn.clicked.connect(lambda _, url=link_url: QDesktopServices.openUrl(QUrl(url)))
-                    frame_layout.addWidget(link_btn)
-
-                # Open folder button
-                open_btn = QPushButton()
-                open_btn.setFixedSize(36, 36)
-                open_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-                open_btn.setIcon(qta.icon("fa5s.folder-open", color=self.colors['text']))
-                open_btn.setIconSize(QSize(16, 16))
-                open_btn.setToolTip("Open folder")
-                open_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: transparent;
-                        border: 1px solid {self.colors['border']};
-                        border-radius: 8px;
-                    }}
-                    QPushButton:hover {{
-                        background-color: {self.colors['bg_card']};
-                        border: 1px solid {self.colors['text_muted']};
-                    }}
-                """)
-                open_btn.clicked.connect(lambda _, p=mp.get("path", ""): self._open_folder(p))
-                frame_layout.addWidget(open_btn)
-
-                # Delete button
-                delete_btn = QPushButton()
-                delete_btn.setFixedSize(36, 36)
-                delete_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-                delete_btn.setIcon(qta.icon("fa5s.trash-alt", color=self.colors['red']))
-                delete_btn.setIconSize(QSize(16, 16))
-                delete_btn.setToolTip("Uninstall modpack")
-                delete_btn.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: transparent;
-                        border: 1px solid {self.colors['border']};
-                        border-radius: 8px;
-                    }}
-                    QPushButton:hover {{
-                        background-color: rgba(248, 113, 113, 0.2);
-                        border: 1px solid {self.colors['red']};
-                    }}
-                """)
-                delete_btn.clicked.connect(lambda _, folder=mp.get("folder_name", ""), name=mp.get("name", ""): self._uninstall_modpack(folder, name))
-                frame_layout.addWidget(delete_btn)
-
-                self.modpack_list_layout.addWidget(frame)
-
-        # Buttons row at bottom (like Java Management)
-        self.modpack_list_layout.addSpacing(8)
-        btn_widget = QWidget()
-        btn_widget.setStyleSheet("background: transparent;")
-        btn_layout = QHBoxLayout(btn_widget)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.setSpacing(10)
-
-        refresh_btn = self._styled_button("Refresh", self.colors['bg_input'], self.colors['text'], 140)
-        refresh_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        refresh_btn.clicked.connect(self._refresh_modpack_list)
-        btn_layout.addWidget(refresh_btn)
-
-        btn_layout.addStretch()
-        self.modpack_list_layout.addWidget(btn_widget)
-
-    def _uninstall_modpack(self, folder_name: str, display_name: str):
-        """Uninstall a client modpack"""
-        reply = QMessageBox.question(
-            self,
-            "Uninstall Modpack",
-            f"Are you sure you want to uninstall '{display_name}'?\n\nThis will delete all modpack files including mods and configs.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
-        )
-
-        if reply == QMessageBox.StandardButton.Yes:
-            success = self.modpack_manager.uninstall_client_modpack(folder_name)
-
-            if success:
-                QMessageBox.information(
-                    self,
-                    "Success",
-                    f"'{display_name}' has been uninstalled."
-                )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "Error",
-                    f"Could not uninstall '{display_name}'.\n\nThe folder may be in use or you may not have permissions."
-                )
-            self._refresh_modpack_list()
-
     def _open_folder(self, path: str):
         """Open a folder in file explorer"""
         if path and os.path.exists(path):
@@ -6233,6 +5529,153 @@ class PyCraftGUI(QMainWindow):
             on_complete(install_result["success"], install_result.get("java_path"))
 
         return install_result["success"]
+
+    def _check_and_get_java(self, minecraft_version: str, show_modal: bool = True) -> Optional[str]:
+        """
+        Checks Java compatibility and returns the best Java executable to use.
+
+        This method uses intelligent detection:
+        1. First checks if system Java is compatible -> uses it
+        2. Then checks if any PyCraft-installed Java is compatible -> uses it
+        3. If no compatible Java found -> shows modal to install (if show_modal=True)
+
+        Args:
+            minecraft_version: Minecraft version (e.g., "1.20.1")
+            show_modal: If True, shows installation modal when Java is needed
+
+        Returns:
+            Path to Java executable, or None if cancelled/failed
+        """
+        java_check = self.java_manager.get_best_java_for_version(minecraft_version)
+
+        # If we already have compatible Java, return it
+        if not java_check["needs_install"]:
+            return java_check["java_executable"]
+
+        # No compatible Java found - show modal if allowed
+        if not show_modal:
+            return None
+
+        # Build informative message
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Java Required")
+        msg.setIcon(QMessageBox.Icon.Warning)
+
+        required = java_check["required_java_version"]
+        max_ver = java_check["max_java_version"]
+        system_ver = java_check["system_java_version"]
+        recommended = java_check["recommended_install_version"]
+
+        # Title
+        if max_ver:
+            msg.setText(f"Minecraft {minecraft_version} requires Java {required}-{max_ver}")
+        else:
+            msg.setText(f"Minecraft {minecraft_version} requires Java {required}+")
+
+        # Detailed explanation
+        if system_ver:
+            if max_ver and system_ver > max_ver:
+                # System Java is too NEW for the version range
+                if required >= 17:
+                    # MC 1.18-1.20 needs Java 17-20 (Java 21 has Security Manager issues)
+                    info_text = (
+                        f"Your system has Java {system_ver}, but it's too new for this version.\n"
+                        f"Minecraft {minecraft_version} requires Java {required}-{max_ver}.\n"
+                        f"Java {system_ver} has Security Manager changes that break some mods.\n\n"
+                        f"PyCraft can install Java {recommended} separately without affecting your system Java."
+                    )
+                else:
+                    # Old MC (1.7-1.16) needs Java 8-16
+                    info_text = (
+                        f"Your system has Java {system_ver}, but it's too new for this version.\n"
+                        f"Older Minecraft/Forge versions require Java {required}-{max_ver}.\n"
+                        f"Java 17+ causes compatibility issues with module system.\n\n"
+                        f"PyCraft can install Java {recommended} separately without affecting your system Java."
+                    )
+            else:
+                # System Java is too OLD
+                info_text = (
+                    f"Your system has Java {system_ver}, but Java {required}+ is needed.\n\n"
+                    f"PyCraft can install Java {recommended} separately without affecting your system Java."
+                )
+        else:
+            # No Java installed at all
+            info_text = (
+                f"Java is not installed on your system.\n\n"
+                f"PyCraft can install Java {recommended} automatically."
+            )
+
+        msg.setInformativeText(info_text)
+
+        # Style the message box
+        msg.setStyleSheet(f"""
+            QMessageBox {{
+                background-color: {self.colors['bg_card']};
+            }}
+            QMessageBox QLabel {{
+                color: {self.colors['text']};
+                font-size: 13px;
+            }}
+            QPushButton {{
+                background-color: {self.colors['bg_input']};
+                color: {self.colors['text']};
+                border: 1px solid {self.colors['border']};
+                padding: 8px 16px;
+                border-radius: 6px;
+                font-weight: 500;
+                min-width: 100px;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['bg_card']};
+                border-color: {self.colors['accent']};
+            }}
+        """)
+
+        # Buttons
+        install_btn = msg.addButton("Install Automatically", QMessageBox.ButtonRole.AcceptRole)
+        install_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.colors['accent']};
+                color: #000000;
+                border: none;
+                font-weight: 600;
+            }}
+            QPushButton:hover {{
+                background-color: {self.colors['accent_hover']};
+            }}
+        """)
+        java_btn = msg.addButton("Java Management", QMessageBox.ButtonRole.ActionRole)
+        cancel_btn = msg.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+
+        msg.exec()
+
+        clicked = msg.clickedButton()
+        if clicked == java_btn:
+            self._go_to("java_management")
+            return None
+        elif clicked == cancel_btn or clicked is None:
+            return None
+        elif clicked == install_btn:
+            # Install the recommended version
+            if not self._show_java_install_modal(recommended):
+                QMessageBox.critical(
+                    self,
+                    "Installation Failed",
+                    f"Failed to install Java {recommended}.\n\n"
+                    f"You can try again or install Java manually via Java Management."
+                )
+                return None
+
+            # After successful install, get the path to the new Java
+            install_dir = self.java_manager.java_installs_dir / f"java-{recommended}"
+            if install_dir.exists():
+                java_exe = self.java_manager._find_java_executable(install_dir)
+                if java_exe:
+                    return str(java_exe)
+
+            return None
+
+        return None
 
     def closeEvent(self, event):
         """Handle application close - stop all running servers"""
