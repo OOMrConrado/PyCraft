@@ -31,21 +31,21 @@ const ALLOWED_PATHS = [
 // Helper: Get current minute key (for per-minute rate limiting)
 function getMinuteKey(ip) {
   const now = new Date();
-  const minute = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}-${now.getUTCHours()}-${now.getUTCMinutes()}`;
+  const minute = `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}-${now.getUTCDate()}-${now.getUTCHours()}-${now.getUTCMinutes()}`;
   return `ip:${ip}:min:${minute}`;
 }
 
 // Helper: Get current day key (for per-day rate limiting)
 function getDayKey(ip) {
   const now = new Date();
-  const day = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}`;
+  const day = `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}-${now.getUTCDate()}`;
   return `ip:${ip}:day:${day}`;
 }
 
 // Helper: Get global day key
 function getGlobalDayKey() {
   const now = new Date();
-  const day = `${now.getUTCFullYear()}-${now.getUTCMonth()}-${now.getUTCDate()}`;
+  const day = `${now.getUTCFullYear()}-${now.getUTCMonth() + 1}-${now.getUTCDate()}`;
   return `global:day:${day}`;
 }
 
