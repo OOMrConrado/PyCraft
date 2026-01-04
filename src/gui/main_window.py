@@ -454,6 +454,7 @@ class PyCraftGUI(QMainWindow):
     # Modal signals (thread-safe)
     vanilla_install_success_signal = Signal(str, str)  # version, folder
     server_modpack_install_success_signal = Signal(str, str, str)  # name, mc_version, loader
+    mp_server_install_done_signal = Signal()  # triggered when missing server install completes
     update_check_complete_signal = Signal(object)  # update_info dict or None
     update_download_progress_signal = Signal(int, float, float)  # progress%, downloaded_mb, total_mb
     update_download_complete_signal = Signal(str)  # installer_path or empty string if failed
@@ -616,9 +617,9 @@ class PyCraftGUI(QMainWindow):
 
     def _on_progress(self, value: int):
         """Handle progress signal"""
-        if hasattr(self, "active_progress"):
+        if hasattr(self, "active_progress") and self.active_progress:
             self.active_progress.setValue(value)
-        if hasattr(self, "active_progress_label"):
+        if hasattr(self, "active_progress_label") and self.active_progress_label:
             self.active_progress_label.setText(f"{value}/100%")
 
     def _on_status(self, msg: str, color: str):
@@ -1485,27 +1486,9 @@ class PyCraftGUI(QMainWindow):
         console_frame.layout().addWidget(self.vanilla_create_console)
         layout.addWidget(console_frame)
 
-        # Progress bar with percentage label (below console)
-        progress_container = QWidget()
-        progress_container.setStyleSheet("background: transparent;")
-        progress_layout = QHBoxLayout(progress_container)
-        progress_layout.setContentsMargins(0, 0, 0, 0)
-        progress_layout.setSpacing(12)
-
-        self.create_progress = QProgressBar()
-        self.create_progress.setFixedWidth(350)
-        self.create_progress.setFixedHeight(12)
-        self.create_progress.setTextVisible(False)
-        self.create_progress.setStyleSheet(self._progress_style())
-        progress_layout.addWidget(self.create_progress)
-
-        self.create_progress_label = QLabel("0/100%")
-        self.create_progress_label.setStyleSheet(f"color: {self.colors['text']}; font-size: 13px; font-weight: 600; border: none;")
-        self.create_progress_label.setFixedWidth(60)
-        progress_layout.addWidget(self.create_progress_label)
-        progress_layout.addStretch()
-
-        layout.addWidget(progress_container)
+        # Progress tracking attributes (not displayed)
+        self.create_progress = None
+        self.create_progress_label = None
 
         self.create_status = QLabel("")
         self.create_status.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
@@ -2007,6 +1990,13 @@ class PyCraftGUI(QMainWindow):
         self.mp_config.setEnabled(False)
         self.mp_config.clicked.connect(self._config_mp)
         ctrl_layout.addWidget(self.mp_config)
+
+        # Install Server button (shown when server is missing but mods exist)
+        self.mp_install_server = self._styled_button("Install Server", self.colors['blue'], "#ffffff", 140)
+        self.mp_install_server.setEnabled(False)
+        self.mp_install_server.setVisible(False)
+        self.mp_install_server.clicked.connect(self._install_missing_server_mp)
+        ctrl_layout.addWidget(self.mp_install_server)
 
         console_layout.addWidget(ctrl_row)
 
@@ -2739,8 +2729,6 @@ class PyCraftGUI(QMainWindow):
 
             finally:
                 QTimer.singleShot(0, lambda: self.download_btn.setEnabled(True))
-                QTimer.singleShot(0, lambda: self.create_progress.setValue(0))
-                QTimer.singleShot(0, lambda: self.create_progress_label.setText("0/100%"))
 
         threading.Thread(target=process, daemon=True).start()
 
@@ -4458,15 +4446,34 @@ class PyCraftGUI(QMainWindow):
             else:
                 self.modpack_server_path = None
                 self.mp_run_folder_label.setText(f"Folder: {folder}")
-                self.mp_run_status.setText("Server not found")
-                self.mp_run_status.setStyleSheet(f"color: {self.colors['red']}; font-size: 13px; font-weight: 600; border: none;")
                 self.mp_start.setEnabled(False)
                 self.mp_config.setEnabled(False)
                 self.mp_stop.setEnabled(False)
                 self.mp_cmd_btn.setEnabled(False)
-                self.modpack_server_manager = None
                 self.is_modpack_configured = False
-                self.modpack_server_info.setVisible(False)
+
+                # Check if we can detect version/loader from mods to offer auto-install
+                temp_sm = ServerManager(folder)
+                detected_version = temp_sm.detect_version_from_mods()
+                detected_loader = temp_sm.detect_loader_from_mods()
+
+                if detected_version and detected_loader:
+                    self.mp_run_status.setText(f"Server not found - Can install {detected_loader.title()} {detected_version}")
+                    self.mp_run_status.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600; border: none;")
+                    self.mp_install_server.setEnabled(True)
+                    self.mp_install_server.setVisible(True)
+                    self.modpack_server_manager = temp_sm
+                    self.modpack_server_info.setText(f"Detected: MC {detected_version} | {detected_loader.title()}")
+                    self.modpack_server_info.setVisible(True)
+                    self._log(self.modpack_run_console, f"Server not found, but detected: MC {detected_version} | {detected_loader.title()}\n", "warning")
+                    self._log(self.modpack_run_console, f"Click 'Install Server' to auto-install {detected_loader.title()}\n", "info")
+                else:
+                    self.mp_run_status.setText("Server not found")
+                    self.mp_run_status.setStyleSheet(f"color: {self.colors['red']}; font-size: 13px; font-weight: 600; border: none;")
+                    self.mp_install_server.setEnabled(False)
+                    self.mp_install_server.setVisible(False)
+                    self.modpack_server_manager = None
+                    self.modpack_server_info.setVisible(False)
 
     def _has_server(self, folder: str) -> bool:
         """Check if folder contains a Minecraft server (vanilla or modded)"""
@@ -4492,6 +4499,10 @@ class PyCraftGUI(QMainWindow):
 
         # Check for start scripts
         if os.path.exists(os.path.join(folder, "start.bat")) or os.path.exists(os.path.join(folder, "start.sh")):
+            return True
+
+        # Check for startserver scripts (ATM and similar modpacks)
+        if os.path.exists(os.path.join(folder, "startserver.bat")) or os.path.exists(os.path.join(folder, "startserver.sh")):
             return True
 
         # Check for libraries folder with forge/neoforge (modern Forge structure)
@@ -4574,18 +4585,26 @@ class PyCraftGUI(QMainWindow):
             except Exception:
                 pass
 
-        # Check run.bat/run.sh for version info
-        for script in ["run.bat", "run.sh"]:
+        # Check run.bat/run.sh and startserver.bat/sh for version info
+        for script in ["run.bat", "run.sh", "startserver.bat", "startserver.sh"]:
             script_path = os.path.join(folder, script)
             if os.path.exists(script_path):
                 try:
-                    with open(script_path, 'r') as f:
-                        content = f.read()
+                    with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        script_content = f.read()
+                        # Look for NEOFORGE_VERSION (ATM modpacks format)
+                        neoforge_match = re.search(r'NEOFORGE_VERSION[=\s]+(\d+)\.(\d+)\.(\d+)', script_content)
+                        if neoforge_match:
+                            major, minor, patch = neoforge_match.groups()
+                            if minor == "0":
+                                return f"1.{major}"
+                            else:
+                                return f"1.{major}.{minor}"
                         # Look for MC version pattern
-                        match = re.search(r'minecraft[_-]?server[_-]?([\d.]+)', content, re.IGNORECASE)
+                        match = re.search(r'minecraft[_-]?server[_-]?([\d.]+)', script_content, re.IGNORECASE)
                         if match:
                             return match.group(1)
-                        match = re.search(r'forge[/-]([\d.]+)-[\d.]+', content, re.IGNORECASE)
+                        match = re.search(r'forge[/-]([\d.]+)-[\d.]+', script_content, re.IGNORECASE)
                         if match:
                             return match.group(1)
                 except Exception:
@@ -4625,7 +4644,7 @@ class PyCraftGUI(QMainWindow):
                 return f"Forge {match.group(1)}"
             return "Forge"
 
-        # Check for NeoForge
+        # Check for NeoForge jars
         neoforge_jars = glob.glob(os.path.join(folder, "neoforge-*.jar"))
         if neoforge_jars:
             jar_name = os.path.basename(neoforge_jars[0])
@@ -4634,12 +4653,41 @@ class PyCraftGUI(QMainWindow):
                 return f"NeoForge {match.group(1)}"
             return "NeoForge"
 
+        # Check for NeoForge from startserver.bat/sh (ATM modpacks)
+        for script in ["startserver.bat", "startserver.sh"]:
+            script_path = os.path.join(folder, script)
+            if os.path.exists(script_path):
+                try:
+                    with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
+                        script_content = f.read()
+                        if 'neoforge' in script_content.lower():
+                            neoforge_match = re.search(r'NEOFORGE_VERSION[=\s]+(\d+\.\d+\.\d+)', script_content)
+                            if neoforge_match:
+                                return f"NeoForge {neoforge_match.group(1)}"
+                            return "NeoForge"
+                except Exception:
+                    pass
+
         # Check for Fabric - multiple detection methods
+        # Check both launcher names (modern: fabric-server-launcher.jar, old: fabric-server-launch.jar)
+        fabric_launcher_jar = os.path.join(folder, "fabric-server-launcher.jar")
         fabric_launch_jar = os.path.join(folder, "fabric-server-launch.jar")
         fabric_jars = glob.glob(os.path.join(folder, "fabric-server-*.jar"))
 
-        if os.path.exists(fabric_launch_jar) or fabric_jars:
-            # Try to get version from libraries folder
+        if os.path.exists(fabric_launcher_jar) or os.path.exists(fabric_launch_jar) or fabric_jars:
+            # Method 1: Check .fabric/server/version.json (created by Fabric installer)
+            fabric_version_file = os.path.join(folder, ".fabric", "server", "version.json")
+            if os.path.exists(fabric_version_file):
+                try:
+                    with open(fabric_version_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                        loader_version = data.get("loader", {}).get("version")
+                        if loader_version:
+                            return f"Fabric Loader {loader_version}"
+                except:
+                    pass
+
+            # Method 2: Try to get version from libraries folder
             fabric_loader_libs = os.path.join(folder, "libraries", "net", "fabricmc", "fabric-loader")
             if os.path.exists(fabric_loader_libs):
                 try:
@@ -4649,7 +4697,7 @@ class PyCraftGUI(QMainWindow):
                 except:
                     pass
 
-            # Try to get version from server log
+            # Method 3: Try to get version from server log
             logs_path = os.path.join(folder, "logs", "latest.log")
             if os.path.exists(logs_path):
                 try:
@@ -4665,7 +4713,7 @@ class PyCraftGUI(QMainWindow):
                 except:
                     pass
 
-            # Fallback: try old naming pattern
+            # Method 4: Fallback - try old naming pattern from jar name
             if fabric_jars:
                 jar_name = os.path.basename(fabric_jars[0])
                 match = re.search(r'fabric-server-mc\.[\d.]+-(\d+\.\d+\.\d+)', jar_name)
@@ -4738,6 +4786,81 @@ class PyCraftGUI(QMainWindow):
                         pass
 
         return ""
+
+    def _install_missing_server_mp(self):
+        """Install missing server for modpack"""
+        if not self.modpack_server_manager:
+            return
+
+        folder = self.modpack_server_manager.server_folder
+
+        # Get Java executable
+        mc_version = self.modpack_server_manager.detect_version_from_mods()
+        java_exe = "java"
+        if mc_version:
+            java_check = self.java_manager.get_best_java_for_version(mc_version)
+            if java_check.get("java_path"):
+                java_exe = java_check["java_path"]
+            elif java_check.get("needs_install"):
+                required_ver = java_check.get("required_java_version", 17)
+                reply = QMessageBox.question(
+                    self, "Java Required",
+                    f"Minecraft {mc_version} requires Java {required_ver}.\n\nDo you want to install it now?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._install_java_for_version(mc_version)
+                    return
+                else:
+                    return
+
+        # Disable buttons during install
+        self.mp_install_server.setEnabled(False)
+        self.mp_install_server.setText("Installing...")
+
+        def install_thread():
+            def log_cb(msg):
+                self.log_signal.emit(msg, "info", "modpack_run")
+
+            success, message = self.modpack_server_manager.install_missing_server(
+                java_executable=java_exe,
+                log_callback=log_cb
+            )
+            self.mp_server_install_done_signal.emit()
+
+        def on_install_done():
+            self.mp_install_server.setText("Install Server")
+
+            if self.modpack_server_manager.is_server_installed():
+                self.log_signal.emit("\n[SUCCESS] Server installed successfully!\n", "success", "modpack_run")
+                self.mp_install_server.setVisible(False)
+                self.mp_start.setEnabled(True)
+                self.modpack_server_path = folder
+                self.is_modpack_configured = True
+                self.mp_run_status.setText("Ready")
+                self.mp_run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
+
+                mc_ver = self._detect_modpack_mc_version(folder)
+                loader = self._detect_modpack_loader(folder)
+                info_parts = []
+                if mc_ver:
+                    info_parts.append(f"MC {mc_ver}")
+                if loader:
+                    info_parts.append(loader)
+                if info_parts:
+                    self.modpack_server_info.setText(" | ".join(info_parts))
+
+                props_path = os.path.join(folder, "server.properties")
+                self.mp_config.setEnabled(os.path.exists(props_path))
+            else:
+                self.log_signal.emit("\n[ERROR] Server installation failed\n", "error", "modpack_run")
+                self.mp_install_server.setEnabled(True)
+
+        self.mp_server_install_done_signal.connect(on_install_done)
+
+        import threading
+        thread = threading.Thread(target=install_thread, daemon=True)
+        thread.start()
 
     def _start_mp(self):
         """Start modded server"""
