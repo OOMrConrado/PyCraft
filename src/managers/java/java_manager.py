@@ -253,46 +253,46 @@ class JavaManager:
                     actual_size = dest_path.stat().st_size
                     if actual_size < total_size * 0.95:  # Allow 5% margin
                         if log_callback:
-                            log_callback(f"⚠ Descarga incompleta: {actual_size}/{total_size} bytes\n")
+                            log_callback(f"⚠ Incomplete download: {actual_size}/{total_size} bytes\n")
                         continue  # Retry
 
                 if log_callback:
-                    log_callback("✓ Descarga completada\n")
+                    log_callback("✓ Download completed\n")
 
                 return True
 
             except requests.Timeout:
                 if log_callback:
-                    log_callback(f"\n⏱️ Timeout en la descarga (intento {attempt + 1}/{max_retries})\n")
-                    log_callback("  Esto puede deberse a una conexión lenta. El archivo puede ser grande (>50MB).\n")
+                    log_callback(f"\n⏱️ Download timeout (attempt {attempt + 1}/{max_retries})\n")
+                    log_callback("  This may be due to a slow connection. The file may be large (>50MB).\n")
                 if attempt < max_retries - 1:
                     continue
                 else:
                     if log_callback:
-                        log_callback("✗ Se agotaron los reintentos por timeout\n")
+                        log_callback("✗ Retries exhausted due to timeout\n")
                     return False
 
             except requests.RequestException as e:
                 if log_callback:
-                    log_callback(f"\n✗ Error de red: {str(e)}\n")
-                    log_callback(f"  Código de estado HTTP: {getattr(e.response, 'status_code', 'N/A')}\n")
+                    log_callback(f"\n✗ Network error: {str(e)}\n")
+                    log_callback(f"  HTTP status code: {getattr(e.response, 'status_code', 'N/A')}\n")
                 if attempt < max_retries - 1:
                     continue
                 else:
                     if log_callback:
-                        log_callback("✗ Se agotaron los reintentos\n")
+                        log_callback("✗ Retries exhausted\n")
                     return False
 
             except IOError as e:
                 if log_callback:
-                    log_callback(f"\n✗ Error escribiendo archivo: {str(e)}\n")
-                    log_callback(f"  Verifica que tienes espacio en disco y permisos de escritura.\n")
+                    log_callback(f"\n✗ Error writing file: {str(e)}\n")
+                    log_callback(f"  Check that you have disk space and write permissions.\n")
                 return False
 
             except Exception as e:
                 if log_callback:
-                    log_callback(f"\n✗ Error inesperado: {str(e)}\n")
-                    log_callback(f"  Tipo: {type(e).__name__}\n")
+                    log_callback(f"\n✗ Unexpected error: {str(e)}\n")
+                    log_callback(f"  Type: {type(e).__name__}\n")
                 return False
 
         return False
@@ -314,7 +314,7 @@ class JavaManager:
         """
         try:
             if log_callback:
-                log_callback(f"Downloading Java {java_version} desde Adoptium...\n")
+                log_callback(f"Downloading Java {java_version} from Adoptium...\n")
 
             # Determine OS and architecture for Adoptium API
             os_type = self._get_adoptium_os()
@@ -322,7 +322,7 @@ class JavaManager:
 
             if not os_type or not arch_type:
                 if log_callback:
-                    log_callback("Error: Sistema operativo o arquitectura no soportados\n")
+                    log_callback("Error: Unsupported operating system or architecture\n")
                 return None
 
             # Build API URL
@@ -332,7 +332,7 @@ class JavaManager:
             )
 
             if log_callback:
-                log_callback(f"Obteniendo Java para {os_type} {arch_type}...\n")
+                log_callback(f"Getting Java for {os_type} {arch_type}...\n")
 
             # Save file
             file_extension = ".zip" if self.system == "Windows" else ".tar.gz"
@@ -342,13 +342,13 @@ class JavaManager:
             if not self._download_with_retry(api_url, download_path, log_callback, max_retries=3, timeout=300):
                 if log_callback:
                     log_callback("\n✗ Could not complete Java download\n")
-                    log_callback("Verifica tu conexión a internet e intenta de nuevo.\n")
+                    log_callback("Check your internet connection and try again.\n")
                 return None
 
             if log_callback:
-                log_callback("\nExtrayendo archivos...\n")
-                log_callback(f"Archivo descargado: {download_path}\n")
-                log_callback(f"Tamaño: {download_path.stat().st_size // (1024*1024)} MB\n")
+                log_callback("\nExtracting files...\n")
+                log_callback(f"Downloaded file: {download_path}\n")
+                log_callback(f"Size: {download_path.stat().st_size // (1024*1024)} MB\n")
 
             # Extract file
             extract_dir = self.java_installs_dir / f"java-{java_version}"
@@ -357,7 +357,7 @@ class JavaManager:
                 if self.system == "Windows":
                     with zipfile.ZipFile(download_path, 'r') as zip_ref:
                         if log_callback:
-                            log_callback(f"Extrayendo {len(zip_ref.namelist())} archivos...\n")
+                            log_callback(f"Extracting {len(zip_ref.namelist())} files...\n")
                         zip_ref.extractall(extract_dir)
                 else:
                     import tarfile
@@ -365,16 +365,16 @@ class JavaManager:
                         tar_ref.extractall(extract_dir)
 
                 if log_callback:
-                    log_callback("✓ Extracción completada\n")
+                    log_callback("✓ Extraction completed\n")
             except zipfile.BadZipFile as e:
                 if log_callback:
-                    log_callback(f"✗ Error: Archivo ZIP corrupto\n")
-                    log_callback(f"  Detalles: {str(e)}\n")
+                    log_callback(f"✗ Error: Corrupted ZIP file\n")
+                    log_callback(f"  Details: {str(e)}\n")
                 return None
             except Exception as e:
                 if log_callback:
-                    log_callback(f"✗ Error durante la extracción: {str(e)}\n")
-                    log_callback(f"  Tipo: {type(e).__name__}\n")
+                    log_callback(f"✗ Error during extraction: {str(e)}\n")
+                    log_callback(f"  Type: {type(e).__name__}\n")
                 return None
 
             # Clean up downloaded file
@@ -382,42 +382,42 @@ class JavaManager:
 
             # Find the bin/java directory
             if log_callback:
-                log_callback("Buscando ejecutable de Java...\n")
+                log_callback("Looking for Java executable...\n")
 
             java_bin_path = self._find_java_executable(extract_dir)
 
             if java_bin_path:
                 if log_callback:
-                    log_callback(f"✓ Java {java_version} descargado correctamente\n")
-                    log_callback(f"  Directorio: {extract_dir}\n")
-                    log_callback(f"  Ejecutable: {java_bin_path}\n")
+                    log_callback(f"✓ Java {java_version} downloaded successfully\n")
+                    log_callback(f"  Directory: {extract_dir}\n")
+                    log_callback(f"  Executable: {java_bin_path}\n")
 
                 # Add Java to PATH automatically
                 if log_callback:
-                    log_callback("\nConfigurando PATH del sistema...\n")
+                    log_callback("\nConfiguring system PATH...\n")
 
                 java_bin_dir = java_bin_path.parent
                 if self.add_java_to_path(java_bin_dir, log_callback):
                     if log_callback:
-                        log_callback("✓ Java configurado en el PATH del sistema\n")
-                        log_callback("  Ahora puedes usar 'java' desde cualquier terminal\n")
+                        log_callback("✓ Java configured in system PATH\n")
+                        log_callback("  You can now use 'java' from any terminal\n")
                     return str(extract_dir)
                 else:
                     # PATH configuration failed - clean up downloaded files
                     if log_callback:
-                        log_callback("\n🗑️ Limpiando archivos descargados...\n")
+                        log_callback("\n🗑️ Cleaning up downloaded files...\n")
                     try:
                         shutil.rmtree(extract_dir)
                         if log_callback:
-                            log_callback("✓ Archivos eliminados\n")
+                            log_callback("✓ Files deleted\n")
                     except Exception as e:
                         if log_callback:
-                            log_callback(f"⚠ No se pudieron eliminar los archivos: {e}\n")
+                            log_callback(f"⚠ Could not delete files: {e}\n")
                     return None
             else:
                 if log_callback:
-                    log_callback("✗ Error: No se encontró el ejecutable de Java después de la extracción\n")
-                    log_callback(f"  Contenido del directorio:\n")
+                    log_callback("✗ Error: Java executable not found after extraction\n")
+                    log_callback(f"  Directory contents:\n")
                     try:
                         for item in extract_dir.rglob("*"):
                             if item.is_dir():
@@ -428,13 +428,13 @@ class JavaManager:
 
         except PermissionError as e:
             if log_callback:
-                log_callback(f"\n✗ Error de permisos: No se puede crear la carpeta de Java.\n")
-                log_callback(f"Detalles: {str(e)}\n")
+                log_callback(f"\n✗ Permission error: Cannot create Java folder.\n")
+                log_callback(f"Details: {str(e)}\n")
             return None
         except Exception as e:
             if log_callback:
-                log_callback(f"\n✗ Error inesperado al descargar Java: {str(e)}\n")
-                log_callback("Tipo de error: " + type(e).__name__ + "\n")
+                log_callback(f"\n✗ Unexpected error downloading Java: {str(e)}\n")
+                log_callback("Error type: " + type(e).__name__ + "\n")
             return None
 
     def _get_adoptium_os(self) -> Optional[str]:
@@ -909,13 +909,13 @@ class JavaManager:
             java_home_configured_as = None
 
             if log_callback:
-                log_callback("\n┌─ Configurando Java en el sistema ─┐\n")
+                log_callback("\n┌─ Configuring Java in system ─┐\n")
                 log_callback("│                                    │\n")
 
             # ===== STRATEGY 1: Try SYSTEM variables first (requires admin) =====
             if log_callback:
-                log_callback("│ → Intentando configurar variables  │\n")
-                log_callback("│   de SISTEMA (nivel global)...     │\n")
+                log_callback("│ → Trying to configure SYSTEM       │\n")
+                log_callback("│   variables (global level)...      │\n")
                 log_callback("│                                    │\n")
 
             system_success = self._configure_java_environment(
@@ -927,12 +927,12 @@ class JavaManager:
 
             if system_success:
                 if log_callback:
-                    log_callback("│ ✓ Variables de SISTEMA configuradas│\n")
+                    log_callback("│ ✓ SYSTEM variables configured      │\n")
             else:
                 # SYSTEM failed (no admin), try UAC elevation
                 if log_callback:
-                    log_callback("│ ⚠ Sin permisos de administrador    │\n")
-                    log_callback("│ → Solicitando elevación UAC...     │\n")
+                    log_callback("│ ⚠ No administrator permissions     │\n")
+                    log_callback("│ → Requesting UAC elevation...      │\n")
 
                 # Try to get admin rights via UAC popup
                 elevation_success = self._configure_java_with_elevation(
@@ -945,22 +945,22 @@ class JavaManager:
                     # UAC was cancelled or failed - cannot continue
                     if log_callback:
                         log_callback("└────────────────────────────────────┘\n")
-                        log_callback("\n⚠ Permisos de administrador requeridos\n")
-                        log_callback("✗ Instalación cancelada\n")
-                        log_callback("\nDebes aceptar los permisos de administrador\n")
-                        log_callback("de Windows para instalar Java.\n\n")
-                        log_callback("Intenta de nuevo y acepta la ventana\n")
-                        log_callback("de permisos cuando aparezca.\n")
+                        log_callback("\n⚠ Administrator permissions required\n")
+                        log_callback("✗ Installation cancelled\n")
+                        log_callback("\nYou must accept administrator permissions\n")
+                        log_callback("from Windows to install Java.\n\n")
+                        log_callback("Try again and accept the permissions\n")
+                        log_callback("window when it appears.\n")
                     return False
 
             # ===== SUCCESS =====
             if log_callback:
                 log_callback("│                                    │\n")
                 log_callback("└────────────────────────────────────┘\n")
-                log_callback("\n✅ Java configurado correctamente\n")
-                log_callback(f"   • Ubicación: {java_bin_str}\n")
+                log_callback("\n✅ Java configured successfully\n")
+                log_callback(f"   • Location: {java_bin_str}\n")
                 log_callback(f"   • JAVA_HOME: {java_home_str}\n\n")
-                log_callback("   Java está disponible para todas las aplicaciones.\n")
+                log_callback("   Java is available for all applications.\n")
 
             # Refresh current process environment so Java is detected immediately
             self._refresh_process_environment(log_callback)
@@ -969,7 +969,7 @@ class JavaManager:
 
         except Exception as e:
             if log_callback:
-                log_callback(f"\n✗ Error inesperado: {str(e)}\n")
+                log_callback(f"\n✗ Unexpected error: {str(e)}\n")
             return False
 
     def _configure_java_environment(
@@ -1058,8 +1058,8 @@ class JavaManager:
 
             if log_callback:
                 log_callback("│                                    │\n")
-                log_callback("│ ⚡ Se abrirá ventana de permisos   │\n")
-                log_callback("│    Acepta para configurar Java     │\n")
+                log_callback("│ ⚡ Permissions window will open    │\n")
+                log_callback("│    Accept to configure Java        │\n")
                 log_callback("│                                    │\n")
 
             # Create a batch script that uses setx /M (requires admin)
@@ -1133,11 +1133,11 @@ exit /b 0
                     error_code = ctypes.GetLastError()
                     if error_code == 1223:  # ERROR_CANCELLED - User cancelled UAC
                         if log_callback:
-                            log_callback("│ ⚠ Usuario canceló permisos        │\n")
+                            log_callback("│ ⚠ User cancelled permissions      │\n")
                         return False
                     else:
                         if log_callback:
-                            log_callback(f"│ ✗ Error ShellExecute: {error_code}       │\n")
+                            log_callback(f"│ ✗ ShellExecute Error: {error_code}       │\n")
                         return False
 
                 # Wait for the process to complete
@@ -1152,7 +1152,7 @@ exit /b 0
 
                     if exit_code.value != 0:
                         if log_callback:
-                            log_callback("│ ✗ Error en script de config       │\n")
+                            log_callback("│ ✗ Error in config script          │\n")
                         return False
 
                 # Give Windows a moment to update the registry
@@ -1239,8 +1239,8 @@ exit /b 0
 
             if log_callback:
                 log_callback("│                                     │\n")
-                log_callback("│ ⚡ Se abrirá ventana de permisos    │\n")
-                log_callback("│    Acepta para eliminar config      │\n")
+                log_callback("│ ⚡ Permissions window will open     │\n")
+                log_callback("│    Accept to remove config          │\n")
                 log_callback("│                                     │\n")
 
             # Determine what path pattern to remove
@@ -1327,11 +1327,11 @@ exit /b 0
                     error_code = ctypes.GetLastError()
                     if error_code == 1223:  # ERROR_CANCELLED - User cancelled UAC
                         if log_callback:
-                            log_callback("│ ⚠ Usuario canceló permisos         │\n")
+                            log_callback("│ ⚠ User cancelled permissions       │\n")
                         return False
                     else:
                         if log_callback:
-                            log_callback(f"│ ✗ Error ShellExecute: {error_code}        │\n")
+                            log_callback(f"│ ✗ ShellExecute Error: {error_code}        │\n")
                         return False
 
                 # Wait for the process to complete
@@ -1369,11 +1369,11 @@ exit /b 0
                         winreg.QueryValueEx(key, "JAVA_HOME")
                         # If we get here, JAVA_HOME still exists
                         if log_callback:
-                            log_callback("│ ⚠ JAVA_HOME aún existe             │\n")
+                            log_callback("│ ⚠ JAVA_HOME still exists           │\n")
                 except FileNotFoundError:
                     # JAVA_HOME was removed successfully
                     if log_callback:
-                        log_callback("│ ✓ Variables de SISTEMA eliminadas  │\n")
+                        log_callback("│ ✓ SYSTEM variables removed         │\n")
                     return True
 
                 return True
@@ -1416,7 +1416,7 @@ exit /b 0
             overall_success = False
 
             if log_callback:
-                log_callback("\n┌─ Eliminando configuración de Java ─┐\n")
+                log_callback("\n┌─ Removing Java configuration ─┐\n")
                 log_callback("│                                     │\n")
 
             # ===== TRY SYSTEM VARIABLES FIRST =====
@@ -1429,7 +1429,7 @@ exit /b 0
 
             if java_in_system:
                 if log_callback:
-                    log_callback("│ → Eliminando de variables SISTEMA...│\n")
+                    log_callback("│ → Removing from SYSTEM variables...│\n")
 
                 system_path_removed = self._remove_from_path_registry(
                     java_bin_path, pycraft_java_base, use_system=True
@@ -1437,18 +1437,18 @@ exit /b 0
 
                 if system_path_removed:
                     if log_callback:
-                        log_callback("│   ✓ PATH de SISTEMA limpiado       │\n")
+                        log_callback("│   ✓ SYSTEM PATH cleaned            │\n")
                     overall_success = True
 
                     # Remove JAVA_HOME from system
                     if self._remove_java_home(use_system=True):
                         if log_callback:
-                            log_callback("│   ✓ JAVA_HOME de SISTEMA eliminado │\n")
+                            log_callback("│   ✓ SYSTEM JAVA_HOME removed       │\n")
                 else:
                     # Direct removal failed (no admin), try UAC elevation
                     if log_callback:
-                        log_callback("│   ⚠ Sin permisos de administrador  │\n")
-                        log_callback("│   → Solicitando elevación UAC...   │\n")
+                        log_callback("│   ⚠ No administrator permissions   │\n")
+                        log_callback("│   → Requesting UAC elevation...    │\n")
 
                     java_bin_str = str(java_bin_path.absolute()) if java_bin_path else None
                     if self._remove_java_with_elevation(java_bin_str, log_callback):
@@ -1457,19 +1457,19 @@ exit /b 0
                         # SYSTEM removal failed - cannot continue
                         if log_callback:
                             log_callback("│                                     │\n")
-                            log_callback("│ ✗ ELIMINACIÓN CANCELADA             │\n")
+                            log_callback("│ ✗ REMOVAL CANCELLED                 │\n")
                             log_callback("│                                     │\n")
                             log_callback("└─────────────────────────────────────┘\n")
-                            log_callback("\n⚠ Permisos de administrador requeridos\n")
-                            log_callback("✗ No se puede eliminar Java\n")
-                            log_callback("\nDebes aceptar los permisos de administrador\n")
-                            log_callback("de Windows para eliminar Java del sistema.\n")
+                            log_callback("\n⚠ Administrator permissions required\n")
+                            log_callback("✗ Cannot remove Java\n")
+                            log_callback("\nYou must accept administrator permissions\n")
+                            log_callback("from Windows to remove Java from the system.\n")
                         return False
 
             # ===== CLEAN USER VARIABLES (only if system succeeded or wasn't in system) =====
             if log_callback:
                 log_callback("│                                     │\n")
-                log_callback("│ → Limpiando variables de USUARIO... │\n")
+                log_callback("│ → Cleaning USER variables...        │\n")
 
             user_path_removed = self._remove_from_path_registry(
                 java_bin_path, pycraft_java_base, use_system=False
@@ -1477,19 +1477,19 @@ exit /b 0
 
             if user_path_removed:
                 if log_callback:
-                    log_callback("│   ✓ PATH de USUARIO limpiado       │\n")
+                    log_callback("│   ✓ USER PATH cleaned              │\n")
                 overall_success = True
 
             # Remove JAVA_HOME from user
             if self._remove_java_home(use_system=False):
                 if log_callback:
-                    log_callback("│   ✓ JAVA_HOME de USUARIO eliminado │\n")
+                    log_callback("│   ✓ USER JAVA_HOME removed         │\n")
                 overall_success = True
 
             if log_callback:
                 log_callback("│                                     │\n")
                 log_callback("└─────────────────────────────────────┘\n")
-                log_callback("\n✅ Configuración de Java eliminada\n")
+                log_callback("\n✅ Java configuration removed\n")
 
             # Refresh current process environment
             self._refresh_process_environment(log_callback)
@@ -1498,7 +1498,7 @@ exit /b 0
 
         except Exception as e:
             if log_callback:
-                log_callback(f"\n✗ Error eliminando configuración: {str(e)}\n")
+                log_callback(f"\n✗ Error removing configuration: {str(e)}\n")
             return False
 
     def _remove_from_path_registry(
@@ -1642,8 +1642,8 @@ exit /b 0
                     if not path_removed:
                         # User cancelled UAC - don't delete files
                         if log_callback:
-                            log_callback("\n⚠ No se puede eliminar Java\n")
-                            log_callback("Debes aceptar los permisos de administrador.\n")
+                            log_callback("\n⚠ Cannot remove Java\n")
+                            log_callback("You must accept administrator permissions.\n")
                         return False
                 else:
                     # Not in system, just try to clean up user variables
@@ -1651,12 +1651,12 @@ exit /b 0
 
             # Delete the directory
             if log_callback:
-                log_callback(f"\n🗑️ Eliminando archivos de Java {java_version}...\n")
+                log_callback(f"\n🗑️ Deleting Java {java_version} files...\n")
 
             shutil.rmtree(install_dir)
 
             if log_callback:
-                log_callback(f"✓ Java {java_version} eliminado correctamente\n")
+                log_callback(f"✓ Java {java_version} deleted successfully\n")
 
             return True
 

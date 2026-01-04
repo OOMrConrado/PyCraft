@@ -332,11 +332,11 @@ class ModpackManager:
                     log_callback
                 )
                 if loader_type == "quilt" and log_callback:
-                    log_callback("⚠ Nota: Installed Fabric (compatible with most Quilt mods)\n")
+                    log_callback("⚠ Note: Installed Fabric (compatible with most Quilt mods)\n")
             else:
                 if log_callback:
-                    log_callback(f"✗ Error: Loader '{loader_type}' no soportado\n")
-                    log_callback("  Loaders soportados: forge, neoforge, fabric, quilt\n")
+                    log_callback(f"✗ Error: Loader '{loader_type}' not supported\n")
+                    log_callback("  Supported loaders: forge, neoforge, fabric, quilt\n")
                 success = False
 
             # Save manifest to server folder for version detection later
@@ -637,12 +637,25 @@ class ModpackManager:
 
             # Method 5: Check run.bat/run.sh for version info
             if not minecraft_version:
-                for script in ["run.bat", "run.sh", "start.bat", "start.sh", "LaunchServer.bat", "LaunchServer.sh"]:
+                for script in ["run.bat", "run.sh", "start.bat", "start.sh", "LaunchServer.bat", "LaunchServer.sh", "startserver.bat", "startserver.sh"]:
                     script_path = Path(server_folder) / script
                     if script_path.exists():
                         try:
                             with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
                                 content = f.read()
+                                # Look for NEOFORGE_VERSION (ATM modpacks format)
+                                # Format: NEOFORGE_VERSION=21.1.215 -> MC 1.21.1
+                                neoforge_match = re.search(r'NEOFORGE_VERSION[=\s]+(\d+)\.(\d+)\.(\d+)', content)
+                                if neoforge_match:
+                                    major, minor, patch = neoforge_match.groups()
+                                    # NeoForge version MAJOR.MINOR.PATCH maps to MC 1.MAJOR.MINOR
+                                    if minor == "0":
+                                        minecraft_version = f"1.{major}"
+                                    else:
+                                        minecraft_version = f"1.{major}.{minor}"
+                                    loader_type = "neoforge"
+                                    loader_version = f"{major}.{minor}.{patch}"
+                                    break
                                 # Look for MC version pattern in Forge paths
                                 match = re.search(r'forge[/-]([\d.]+)-([\d.]+)', content, re.IGNORECASE)
                                 if match:
@@ -1035,11 +1048,11 @@ class ModpackManager:
                 content = eula_path.read_text(encoding='utf-8')
                 if 'eula=true' in content.lower():
                     if log_callback:
-                        log_callback("[OK] EULA ya estaba aceptado\n")
+                        log_callback("[OK] EULA was already accepted\n")
                     return True
                 # EULA exists but not accepted - overwrite it
                 if log_callback:
-                    log_callback("Actualizando EULA a aceptado...\n")
+                    log_callback("Updating EULA to accepted...\n")
 
             # Create/overwrite EULA file
             eula_content = (
@@ -1080,7 +1093,7 @@ class ModpackManager:
                 return True
 
             if log_callback:
-                log_callback("Creando server.properties por defecto...\n")
+                log_callback("Creating default server.properties...\n")
 
             # Default server.properties content (Minecraft 1.19.2+ compatible)
             default_properties = """#Minecraft server properties

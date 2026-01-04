@@ -11,7 +11,7 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
-    print("⚠️ psutil no está instalado. Algunas verificaciones estarán deshabilitadas.")
+    print("⚠️ psutil is not installed. Some checks will be disabled.")
 
 
 def validate_eula_file(eula_path: str) -> bool:
@@ -31,7 +31,7 @@ def validate_eula_file(eula_path: str) -> bool:
         # Check minimum size (must be at least 50 bytes)
         file_size = os.path.getsize(eula_path)
         if file_size < 50:
-            print(f"⚠️ EULA demasiado pequeño: {file_size} bytes")
+            print(f"⚠️ EULA too small: {file_size} bytes")
             return False
 
         # Read and verify content
@@ -40,13 +40,13 @@ def validate_eula_file(eula_path: str) -> bool:
 
         # Must contain "eula="
         if "eula=" not in content:
-            print("⚠️ EULA no contiene 'eula='")
+            print("⚠️ EULA does not contain 'eula='")
             return False
 
         return True
 
     except Exception as e:
-        print(f"Error validando EULA: {e}")
+        print(f"Error validating EULA: {e}")
         return False
 
 
@@ -67,7 +67,7 @@ def validate_properties_file(properties_path: str) -> bool:
         # Check minimum size (must be at least 500 bytes)
         file_size = os.path.getsize(properties_path)
         if file_size < 500:
-            print(f"⚠️ server.properties demasiado pequeño: {file_size} bytes")
+            print(f"⚠️ server.properties too small: {file_size} bytes")
             return False
 
         # Read and verify content
@@ -78,13 +78,13 @@ def validate_properties_file(properties_path: str) -> bool:
         required_props = ['server-port=', 'difficulty=', 'gamemode=']
         for prop in required_props:
             if prop not in content:
-                print(f"⚠️ server.properties no contiene '{prop}'")
+                print(f"⚠️ server.properties does not contain '{prop}'")
                 return False
 
         return True
 
     except Exception as e:
-        print(f"Error validando server.properties: {e}")
+        print(f"Error validating server.properties: {e}")
         return False
 
 
@@ -110,10 +110,10 @@ def check_write_permissions(folder_path: str) -> Tuple[bool, str]:
 
     except PermissionError:
         return (False,
-                f"No tienes permisos de escritura en:\n  {folder_path}\n\n"
-                f"Sugerencia: Usa una carpeta en Documentos o Escritorio")
+                f"You don't have write permissions in:\n  {folder_path}\n\n"
+                f"Suggestion: Use a folder in Documents or Desktop")
     except Exception as e:
-        return (False, f"Error verificando permisos: {e}")
+        return (False, f"Error checking permissions: {e}")
 
 
 def check_available_ram() -> int:
@@ -170,15 +170,15 @@ def can_allocate_ram(required_mb: int) -> Tuple[bool, str]:
     if available < required_mb:
         # Critical: not even enough for the server
         return (True,
-                f"⚠️ RAM muy baja! Disponible: {available} MB, Requerido: {required_mb} MB\n"
-                f"   El servidor podría no iniciar. Cierra otros programas.\n")
+                f"⚠️ RAM very low! Available: {available} MB, Required: {required_mb} MB\n"
+                f"   Server may not start. Close other programs.\n")
     elif available < recommended:
         # Warning: enough but tight
         return (True,
-                f"⚠️ RAM ajustada: {available} MB disponibles.\n"
-                f"   Recomendado: {recommended} MB. El servidor debería funcionar.\n")
+                f"⚠️ RAM is tight: {available} MB available.\n"
+                f"   Recommended: {recommended} MB. Server should work.\n")
 
-    return (True, f"✓ RAM OK ({available} MB disponibles)\n")
+    return (True, f"✓ RAM OK ({available} MB available)\n")
 
 
 def is_port_in_use(port: int) -> bool:
@@ -206,11 +206,11 @@ def check_minecraft_port(log_callback: Optional[Callable[[str], None]] = None) -
         log_callback: Callback function to report messages
     """
     if is_port_in_use(25565):
-        msg = ("\n⚠️ ADVERTENCIA: El puerto 25565 ya está en uso!\n"
-               "  Posibles causas:\n"
-               "  • Otro servidor de Minecraft está corriendo\n"
-               "  • Otro programa está usando el puerto\n"
-               "  Solución: Cierra el otro programa o cambia el puerto en server.properties\n")
+        msg = ("\n⚠️ WARNING: Port 25565 is already in use!\n"
+               "  Possible causes:\n"
+               "  • Another Minecraft server is running\n"
+               "  • Another program is using the port\n"
+               "  Solution: Close the other program or change the port in server.properties\n")
         if log_callback:
             log_callback(msg)
         else:
@@ -225,7 +225,7 @@ def show_firewall_antivirus_warning(log_callback: Optional[Callable[[str], None]
         log_callback: Callback function to report messages
     """
     # Simplified message to avoid console spam
-    msg = ("\n⚠️ IMPORTANTE: Para jugar con amigos, ve a 'Información y Ayuda' → 'Jugar con Amigos'\n")
+    msg = ("\n⚠️ IMPORTANT: To play with friends, go to 'Info & Help' → 'Play with Friends'\n")
 
     if log_callback:
         log_callback(msg)
@@ -278,6 +278,6 @@ def cleanup_zombie_processes(log_callback: Optional[Callable[[str], None]] = Non
 
     except Exception as e:
         if log_callback:
-            log_callback(f"Error limpiando procesos: {e}\n")
+            log_callback(f"Error cleaning up processes: {e}\n")
         else:
-            print(f"Error limpiando procesos: {e}")
+            print(f"Error cleaning up processes: {e}")

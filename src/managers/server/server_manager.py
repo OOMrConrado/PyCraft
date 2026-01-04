@@ -234,9 +234,62 @@ set "PATH=%JAVA_HOME%\\bin;%PATH%"
                 log_callback(f"Warning: Could not patch batch script: {e}\n")
             return True  # Continue anyway
 
+    def _patch_script_for_execution(
+        self,
+        script_path: str,
+        script_type: str,
+        java_executable: str = None,
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> bool:
+        """
+        Apply appropriate patches to a script before execution.
+        
+        Automatically detects what patches are needed based on script content:
+        - .ps1 scripts: Fix CMD /C compatibility issues
+        - .bat scripts: Inject correct Java path
+        
+        Args:
+            script_path: Path to the script
+            script_type: Type of script ('ps1', 'bat', 'sh')
+            java_executable: Java path to inject
+            log_callback: Optional callback for logging
+            
+        Returns:
+            True if patching succeeded or wasn't needed
+        """
+        if script_type == 'ps1':
+            return self._patch_serverpack_script(script_path, java_executable, log_callback)
+        elif script_type == 'bat':
+            return self._patch_serverpack_bat(script_path, java_executable, log_callback)
+        # .sh scripts don't need patching currently
+        return True
+
+    def _is_minecraft_start_script(self, filepath: str) -> bool:
+        """
+        Check if a script file is likely a Minecraft server start script.
+        
+        Args:
+            filepath: Path to the script file
+            
+        Returns:
+            True if the script contains Minecraft-related keywords
+        """
+        try:
+            with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+                content = f.read().lower()
+                # Keywords that indicate a Minecraft server start script
+                keywords = ['java', 'minecraft', 'forge', 'neoforge', 'fabric', 'quilt', 
+                           'server.jar', 'nogui', 'xmx', 'xms', 'libraries']
+                return any(kw in content for kw in keywords)
+        except Exception:
+            return False
+
     def _find_start_script(self) -> Optional[Tuple[str, str]]:
         """
         Finds any start script in the server folder.
+        
+        First tries known script names, then falls back to dynamic detection
+        by scanning for any script files that contain Minecraft-related keywords.
 
         Returns:
             Tuple of (script_path, script_type) where script_type is 'bat', 'ps1', or 'sh'
@@ -252,17 +305,32 @@ set "PATH=%JAVA_HOME%\\bin;%PATH%"
         ]
 
         if os.name == 'nt':  # Windows
-            # Check .bat and .ps1 files
-            for name in script_names:
-                for ext in [".bat", ".ps1"]:
-                    script_path = os.path.join(self.server_folder, f"{name}{ext}")
-                    if os.path.exists(script_path):
-                        return (script_path, ext[1:])  # Remove the dot from extension
+            extensions = [".bat", ".ps1"]
         else:  # Linux/Mac
-            for name in script_names:
-                script_path = os.path.join(self.server_folder, f"{name}.sh")
+            extensions = [".sh"]
+
+        # First try known script names
+        for name in script_names:
+            for ext in extensions:
+                script_path = os.path.join(self.server_folder, f"{name}{ext}")
                 if os.path.exists(script_path):
-                    return (script_path, "sh")
+                    return (script_path, ext[1:])  # Remove the dot from extension
+
+        # Fallback: Dynamic detection - scan for any script that looks like a MC start script
+        try:
+            for file in os.listdir(self.server_folder):
+                file_lower = file.lower()
+                # Skip known non-start scripts
+                if file_lower.startswith('install'):
+                    continue
+                    
+                for ext in extensions:
+                    if file_lower.endswith(ext):
+                        script_path = os.path.join(self.server_folder, file)
+                        if self._is_minecraft_start_script(script_path):
+                            return (script_path, ext[1:])
+        except Exception:
+            pass
 
         return None
 
@@ -597,7 +665,7 @@ max-world-size=29999984
                 f.write(default_properties)
 
             if log_callback:
-                log_callback("[OK] server.properties creado con configuración por defecto\n")
+                log_callback("[OK] server.properties created with default configuration\n")
 
             return True
 
@@ -671,7 +739,7 @@ max-world-size=29999984
 
         except PermissionError as e:
             if log_callback:
-                log_callback(f"[ERROR] Sin permisos para escribir eula.txt: {e}\n")
+                log_callback(f"[ERROR] No permission to write eula.txt: {e}\n")
             return False
         except Exception as e:
             if log_callback:
@@ -691,7 +759,7 @@ max-world-size=29999984
         """
         try:
             if not os.path.exists(self.properties_path):
-                error_msg = "Archivo server.properties no encontrado. Asegúrate de que el servidor se haya ejecutado al menos una vez."
+                error_msg = "server.properties file not found. Make sure the server has been run at least once."
                 print(error_msg)
                 if log_callback:
                     log_callback(error_msg + "\n")
@@ -700,7 +768,7 @@ max-world-size=29999984
             # Validate difficulty
             valid_difficulties = ['peaceful', 'easy', 'normal', 'hard']
             if difficulty not in valid_difficulties:
-                error_msg = f"Dificultad inválida: {difficulty}. Debe ser una de: {', '.join(valid_difficulties)}"
+                error_msg = f"Invalid difficulty: {difficulty}. Must be one of: {', '.join(valid_difficulties)}"
                 print(error_msg)
                 if log_callback:
                     log_callback(error_msg + "\n")
@@ -729,7 +797,7 @@ max-world-size=29999984
                     difficulty_modified = True
 
             if not difficulty_modified:
-                error_msg = f"Propiedad 'difficulty' no encontrada en server.properties. El archivo podría estar corrupto."
+                error_msg = f"Property 'difficulty' not found in server.properties. The file might be corrupted."
                 print(error_msg)
                 if log_callback:
                     log_callback(error_msg + "\n")
@@ -751,7 +819,7 @@ max-world-size=29999984
             with open(self.properties_path, 'r', encoding='utf-8') as file:
                 content = file.read()
                 if f'difficulty={difficulty}' not in content:
-                    error_msg = "Error: El cambio no se guardó correctamente en server.properties"
+                    error_msg = "Error: The change was not saved correctly to server.properties"
                     print(error_msg)
                     if log_callback:
                         log_callback(error_msg + "\n")
@@ -759,9 +827,9 @@ max-world-size=29999984
 
             # Report success with details
             if old_difficulty and old_difficulty != difficulty:
-                success_msg = f"[OK] Configuración actualizada:\n  -Dificultad cambiada de '{old_difficulty}' a '{difficulty}'"
+                success_msg = f"[OK] Configuration updated:\n  -Difficulty changed from '{old_difficulty}' to '{difficulty}'"
             else:
-                success_msg = f"[OK] Configuración aplicada:\n  -Dificultad: {difficulty}"
+                success_msg = f"[OK] Configuration applied:\n  -Difficulty: {difficulty}"
 
             print(success_msg)
             if log_callback:
@@ -770,7 +838,7 @@ max-world-size=29999984
             return True
 
         except PermissionError as e:
-            error_msg = f"Error de permisos al modificar server.properties. Asegúrate de que el servidor no esté corriendo: {e}"
+            error_msg = f"Permission error modifying server.properties. Make sure the server is not running: {e}"
             print(error_msg)
             if log_callback:
                 log_callback(error_msg + "\n")
@@ -919,14 +987,14 @@ max-world-size=29999984
         """
         try:
             if log_callback:
-                log_callback("Iniciando servidor por primera vez...\n")
+                log_callback("Starting server for the first time...\n")
                 log_callback("\n" + "="*70 + "\n")
-                log_callback("VERIFICACIONES PREVIAS\n")
+                log_callback("PRE-FLIGHT CHECKS\n")
                 log_callback("="*70 + "\n\n")
 
             # 1. Check write permissions
             if log_callback:
-                log_callback("Verificando permisos de escritura...\n")
+                log_callback("Checking write permissions...\n")
 
             has_perms, perm_msg = system_utils.check_write_permissions(self.server_folder)
             if not has_perms:
@@ -935,11 +1003,11 @@ max-world-size=29999984
                 return False
 
             if log_callback:
-                log_callback("[OK] Permisos de escritura confirmados\n\n")
+                log_callback("[OK] Write permissions confirmed\n\n")
 
             # 2. Check available RAM (minimum 1GB for server)
             if log_callback:
-                log_callback("Verificando RAM disponible...\n")
+                log_callback("Checking available RAM...\n")
 
             can_ram, ram_msg = system_utils.can_allocate_ram(1024)
             if log_callback:
@@ -949,18 +1017,18 @@ max-world-size=29999984
 
             # 3. Check if port 25565 is in use
             if log_callback:
-                log_callback("Verificando puerto 25565...\n")
+                log_callback("Checking port 25565...\n")
 
             system_utils.check_minecraft_port(log_callback)
 
             if log_callback:
                 log_callback("\n" + "="*70 + "\n")
-                log_callback("GENERACIÓN DE ARCHIVOS\n")
+                log_callback("FILE GENERATION\n")
                 log_callback("="*70 + "\n\n")
 
             # 4. First execution (will generate eula.txt) - Increased timeout to 20s
             if log_callback:
-                log_callback("Generando EULA (esto puede tomar hasta 20 segundos)...\n")
+                log_callback("Generating EULA (this may take up to 20 seconds)...\n")
 
             self._run_server_and_wait(log_callback, timeout=20, check_for="eula.txt")
 
@@ -970,31 +1038,31 @@ max-world-size=29999984
             # 5. Validate EULA file
             if not system_utils.validate_eula_file(self.eula_path):
                 if log_callback:
-                    log_callback("\n[ERROR] EULA no se generó correctamente o está corrupto\n")
-                    log_callback("   Posibles causas:\n")
-                    log_callback("   -Java no se ejecutó correctamente\n")
-                    log_callback("   -El proceso se interrumpió\n")
-                    log_callback("   -Problemas de permisos\n")
+                    log_callback("\n[ERROR] EULA was not generated correctly or is corrupted\n")
+                    log_callback("   Possible causes:\n")
+                    log_callback("   -Java did not execute correctly\n")
+                    log_callback("   -The process was interrupted\n")
+                    log_callback("   -Permission issues\n")
                 return False
 
             # 6. Accept EULA
             if os.path.exists(self.eula_path):
                 if log_callback:
-                    log_callback("[OK] EULA generado correctamente\n")
-                    log_callback("Aceptando EULA automáticamente...\n")
+                    log_callback("[OK] EULA generated successfully\n")
+                    log_callback("Accepting EULA automatically...\n")
                 if not self.accept_eula():
                     if log_callback:
                         log_callback("[ERROR] Error accepting EULA\n")
                     return False
             else:
                 if log_callback:
-                    log_callback("[ERROR] Archivo EULA no encontrado\n")
+                    log_callback("[ERROR] EULA file not found\n")
                 return False
 
             # 7. Second execution (will generate all server files) - Increased timeout to 40s
             if log_callback:
-                log_callback("[OK] EULA aceptado\n\n")
-                log_callback("Generando archivos del servidor (esto puede tomar hasta 40 segundos)...\n")
+                log_callback("[OK] EULA accepted\n\n")
+                log_callback("Generating server files (this may take up to 40 seconds)...\n")
 
             self._run_server_and_wait(log_callback, timeout=40, check_for="server.properties")
 
@@ -1004,37 +1072,37 @@ max-world-size=29999984
             # 8. Validate server.properties file
             if not system_utils.validate_properties_file(self.properties_path):
                 if log_callback:
-                    log_callback("\n[ERROR] server.properties no se generó correctamente o está corrupto\n")
-                    log_callback("   Posibles causas:\n")
-                    log_callback("   -El servidor no tuvo tiempo suficiente para inicializar\n")
-                    log_callback("   -Versión de Minecraft incompatible\n")
-                    log_callback("   -Problemas de permisos\n")
+                    log_callback("\n[ERROR] server.properties was not generated correctly or is corrupted\n")
+                    log_callback("   Possible causes:\n")
+                    log_callback("   -The server did not have enough time to initialize\n")
+                    log_callback("   -Incompatible Minecraft version\n")
+                    log_callback("   -Permission issues\n")
                 return False
 
             # 9. Modify server.properties
             if os.path.exists(self.properties_path):
                 if log_callback:
-                    log_callback("[OK] server.properties generado correctamente\n")
-                    log_callback("Configurando server.properties...\n")
+                    log_callback("[OK] server.properties generated successfully\n")
+                    log_callback("Configuring server.properties...\n")
                 if not self.configure_server_properties(log_callback=log_callback):
                     if log_callback:
                         log_callback("[ERROR] Error modifying server.properties\n")
                     return False
             else:
                 if log_callback:
-                    log_callback("[ERROR] Archivo server.properties no encontrado\n")
+                    log_callback("[ERROR] server.properties file not found\n")
                 return False
 
             # 10. Configuration complete
             if log_callback:
-                log_callback("\n[OK] ¡Configuración completada exitosamente!\n\n")
+                log_callback("\n[OK] Configuration completed successfully!\n\n")
 
             return True
 
         except Exception as e:
             if log_callback:
-                log_callback(f"\n[ERROR] Error durante la configuración: {e}\n")
-                log_callback(f"   Tipo de error: {type(e).__name__}\n")
+                log_callback(f"\n[ERROR] Error during configuration: {e}\n")
+                log_callback(f"   Error type: {type(e).__name__}\n")
             return False
         finally:
             # Clean up zombie processes
@@ -1117,16 +1185,16 @@ max-world-size=29999984
 
         except FileNotFoundError as e:
             if log_callback:
-                log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
-                log_callback(f"Ruta buscada: {self.java_executable}\n")
+                log_callback(f"\n✗ Error: Java executable not found.\n")
+                log_callback(f"Path searched: {self.java_executable}\n")
                 log_callback("Make sure Java is installed correctly.\n")
         except PermissionError as e:
             if log_callback:
-                log_callback(f"\n✗ Error de permisos al ejecutar el servidor: {e}\n")
+                log_callback(f"\n✗ Permission error running the server: {e}\n")
         except Exception as e:
             if log_callback:
                 log_callback(f"\n✗ Error running server: {e}\n")
-                log_callback(f"Tipo de error: {type(e).__name__}\n")
+                log_callback(f"Error type: {type(e).__name__}\n")
 
     def start_server(
         self,
@@ -1150,7 +1218,7 @@ max-world-size=29999984
         try:
             if self.server_process and self.server_process.poll() is None:
                 if log_callback:
-                    log_callback("El servidor ya está en ejecución\n")
+                    log_callback("Server is already running\n")
                 return False
 
             # NOTE: Client-only mods detection/removal is now handled by main_window.py
@@ -1222,12 +1290,12 @@ max-world-size=29999984
                         return False
 
             if log_callback:
-                log_callback(f"Iniciando servidor con {ram_mb} MB ({ram_mb/1024:.1f} GB) de RAM...\n")
+                log_callback(f"Starting server with {ram_mb} MB ({ram_mb/1024:.1f} GB) of RAM...\n")
 
             if detached:
-                # Ejecutar en segundo plano con stdin para comandos
+                # Run in background with stdin for commands
                 if log_callback:
-                    log_callback("Iniciando servidor en segundo plano...\n")
+                    log_callback("Starting server in background...\n")
 
                 # Configurar flags para Windows
                 creation_flags = 0
@@ -1263,12 +1331,12 @@ max-world-size=29999984
                 thread.start()
 
                 if log_callback:
-                    log_callback("Servidor iniciado!\n")
+                    log_callback("Server started!\n")
                 return True
             else:
-                # Ejecutar en primer plano (bloqueante)
+                # Run in foreground (blocking)
                 if log_callback:
-                    log_callback("Iniciando servidor...\n")
+                    log_callback("Starting server...\n")
 
                 # Configurar flags para Windows
                 creation_flags = 0
@@ -1286,29 +1354,29 @@ max-world-size=29999984
 
         except FileNotFoundError as e:
             if log_callback:
-                log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
-                log_callback(f"Ruta buscada: {self.java_executable}\n")
+                log_callback(f"\n✗ Error: Java executable not found.\n")
+                log_callback(f"Path searched: {self.java_executable}\n")
                 log_callback("Make sure Java is installed correctly.\n")
             return False
         except PermissionError as e:
             if log_callback:
-                log_callback(f"\n✗ Error de permisos al iniciar el servidor: {e}\n")
+                log_callback(f"\n✗ Permission error starting server: {e}\n")
             return False
         except Exception as e:
             if log_callback:
                 log_callback(f"\n✗ Error starting server: {e}\n")
-                log_callback(f"Tipo de error: {type(e).__name__}\n")
+                log_callback(f"Error type: {type(e).__name__}\n")
             return False
 
     def stop_server(self, log_callback: Optional[Callable[[str], None]] = None) -> bool:
         """
-        Detiene el servidor si está en ejecución
+        Stops the server if running
 
         Args:
-            log_callback: Función callback para recibir logs
+            log_callback: Callback function for logs
 
         Returns:
-            True si se detuvo correctamente, False en caso contrario
+            True if stopped successfully, False otherwise
         """
         try:
             if self.server_process and self.server_process.poll() is None:
@@ -1380,7 +1448,7 @@ max-world-size=29999984
                 self.server_process = None
                 return True
             else:
-                print("El servidor no está en ejecución")
+                print("Server is not running")
                 self.server_process = None  # Clean up reference anyway
                 return False
         except Exception as e:
@@ -1404,7 +1472,7 @@ max-world-size=29999984
         """
         try:
             if not self.is_server_running():
-                print("El servidor no está en ejecución")
+                print("Server is not running")
                 return False
 
             if self.server_process and self.server_process.stdin:
@@ -1529,6 +1597,289 @@ max-world-size=29999984
 
         return "unknown"
 
+    def detect_version_from_mods(self) -> Optional[str]:
+        """
+        Detect Minecraft version by analyzing mod filenames in the mods folder.
+
+        This is a fallback method when no other version detection works.
+        Analyzes mod jar filenames for version patterns like '1.20.1', '1.12.2', etc.
+
+        Returns:
+            Detected Minecraft version or None
+        """
+        import re
+        from collections import Counter
+
+        mods_folder = os.path.join(self.server_folder, "mods")
+        if not os.path.exists(mods_folder):
+            return None
+
+        try:
+            version_pattern = re.compile(r'[_\-\[\(](1\.\d+(?:\.\d+)?)[_\-\]\)\.]')
+            versions = []
+
+            for filename in os.listdir(mods_folder):
+                if filename.endswith('.jar'):
+                    matches = version_pattern.findall(filename)
+                    versions.extend(matches)
+
+            if not versions:
+                return None
+
+            # Count occurrences and get the most common version
+            version_counts = Counter(versions)
+            # Filter out unlikely versions (like 1.0, 1.1 which are usually mod versions)
+            mc_versions = {v: c for v, c in version_counts.items()
+                          if v.startswith('1.') and int(v.split('.')[1]) >= 7}
+
+            if not mc_versions:
+                return None
+
+            most_common = max(mc_versions.items(), key=lambda x: x[1])
+            return most_common[0]
+
+        except Exception:
+            return None
+
+    def detect_loader_from_mods(self) -> Optional[str]:
+        """
+        Detect mod loader type by analyzing mod files.
+
+        Checks for:
+        - Fabric: mods with 'fabric' in name, or fabric.mod.json inside jars
+        - Quilt: mods with 'quilt' in name, or quilt.mod.json inside jars
+        - Forge: mods with mcmod.info or META-INF/mods.toml inside jars
+        - NeoForge: mods with neoforge in name or MC version >= 1.20.5
+
+        Returns:
+            'forge', 'fabric', 'neoforge', 'quilt', or None
+        """
+        mods_folder = os.path.join(self.server_folder, "mods")
+        if not os.path.exists(mods_folder):
+            return None
+
+        try:
+            fabric_count = 0
+            forge_count = 0
+            quilt_count = 0
+            neoforge_count = 0
+
+            for filename in os.listdir(mods_folder):
+                if not filename.endswith('.jar'):
+                    continue
+
+                filename_lower = filename.lower()
+
+                # Quick check by filename
+                if 'fabric' in filename_lower:
+                    fabric_count += 1
+                    continue
+                if 'quilt' in filename_lower:
+                    quilt_count += 1
+                    continue
+                if 'neoforge' in filename_lower:
+                    neoforge_count += 1
+                    continue
+
+                # Check inside jar for mod metadata
+                jar_path = os.path.join(mods_folder, filename)
+                try:
+                    with zipfile.ZipFile(jar_path, 'r') as zf:
+                        names = zf.namelist()
+                        if 'fabric.mod.json' in names:
+                            fabric_count += 1
+                        elif 'quilt.mod.json' in names:
+                            quilt_count += 1
+                        elif 'META-INF/mods.toml' in names or 'mcmod.info' in names:
+                            forge_count += 1
+                except Exception:
+                    pass
+
+            # Determine loader based on counts
+            if fabric_count > forge_count and fabric_count > quilt_count:
+                return 'fabric'
+            if quilt_count > forge_count and quilt_count > fabric_count:
+                return 'quilt'
+            if neoforge_count > 0:
+                return 'neoforge'
+            if forge_count > 0:
+                # Check MC version to distinguish Forge vs NeoForge
+                mc_version = self.detect_version_from_mods()
+                if mc_version:
+                    parts = mc_version.split('.')
+                    if len(parts) >= 2:
+                        major = int(parts[1])
+                        minor = int(parts[2]) if len(parts) > 2 else 0
+                        # NeoForge is for 1.20.5+ (though some still use Forge)
+                        if major > 20 or (major == 20 and minor >= 5):
+                            return 'neoforge'
+                return 'forge'
+
+            return None
+
+        except Exception:
+            return None
+
+    def is_server_installed(self) -> bool:
+        """
+        Check if a Minecraft server is installed in this folder.
+
+        Checks for:
+        - server.jar (vanilla)
+        - forge-*.jar, neoforge-*.jar (Forge/NeoForge)
+        - fabric-server-*.jar (Fabric)
+        - quilt-server-*.jar (Quilt)
+        - libraries folder with loader files
+        - Start scripts (run.bat, start.bat, startserver.bat, etc.)
+
+        Returns:
+            True if server is installed, False otherwise
+        """
+        import glob
+
+        # Check for server jars
+        jar_patterns = [
+            "server.jar",
+            "forge-*.jar",
+            "neoforge-*.jar",
+            "fabric-server-*.jar",
+            "quilt-server-*.jar",
+            "minecraft_server*.jar"
+        ]
+
+        for pattern in jar_patterns:
+            if glob.glob(os.path.join(self.server_folder, pattern)):
+                return True
+
+        # Check for libraries folder (modern Forge/NeoForge)
+        for loader_path in [
+            os.path.join(self.server_folder, "libraries", "net", "minecraftforge"),
+            os.path.join(self.server_folder, "libraries", "net", "neoforged"),
+            os.path.join(self.server_folder, "libraries", "net", "fabricmc"),
+        ]:
+            if os.path.exists(loader_path):
+                return True
+
+        # Check for start scripts
+        script_result = self._find_start_script()
+        if script_result:
+            return True
+
+        return False
+
+    def install_missing_server(
+        self,
+        java_executable: str = "java",
+        log_callback: Optional[Callable[[str], None]] = None
+    ) -> Tuple[bool, str]:
+        """
+        Detect and install missing server for a modpack.
+
+        This is used when a server pack only contains mods/configs but no server files.
+        It detects the MC version and loader from the mods, then installs the appropriate server.
+
+        Args:
+            java_executable: Java executable to use for installation
+            log_callback: Optional callback for logging
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        from ..loader.loader_manager import LoaderManager
+
+        # Check if server is already installed
+        if self.is_server_installed():
+            return (True, "Server is already installed")
+
+        if log_callback:
+            log_callback("=== DETECTING MISSING SERVER ===\n")
+
+        # Try to detect MC version
+        mc_version = self.detect_minecraft_version()
+        if not mc_version:
+            mc_version = self.detect_version_from_mods()
+
+        if not mc_version:
+            return (False, "Could not detect Minecraft version. Please specify manually.")
+
+        if log_callback:
+            log_callback(f"Detected Minecraft version: {mc_version}\n")
+
+        # Try to detect loader
+        loader = self.detect_server_type()
+        if loader == "unknown":
+            loader = self.detect_loader_from_mods()
+
+        if not loader or loader == "unknown":
+            # Default to Forge for older versions, check mods folder
+            mods_folder = os.path.join(self.server_folder, "mods")
+            if os.path.exists(mods_folder) and os.listdir(mods_folder):
+                loader = "forge"  # Default assumption for modded
+            else:
+                return (False, "Could not detect mod loader. Please specify manually.")
+
+        if log_callback:
+            log_callback(f"Detected loader: {loader}\n")
+
+        # Install the appropriate server
+        loader_manager = LoaderManager()
+
+        if loader == "forge":
+            if log_callback:
+                log_callback(f"\nInstalling Forge for Minecraft {mc_version}...\n")
+            success = loader_manager.install_forge(
+                minecraft_version=mc_version,
+                server_folder=self.server_folder,
+                java_executable=java_executable,
+                log_callback=log_callback
+            )
+            if success:
+                return (True, f"Forge installed successfully for MC {mc_version}")
+            else:
+                return (False, "Failed to install Forge. Check logs for details.")
+
+        elif loader == "neoforge":
+            if log_callback:
+                log_callback(f"\nInstalling NeoForge for Minecraft {mc_version}...\n")
+            # NeoForge installation - check if we have install_neoforge method
+            if hasattr(loader_manager, 'install_neoforge'):
+                success = loader_manager.install_neoforge(
+                    minecraft_version=mc_version,
+                    server_folder=self.server_folder,
+                    java_executable=java_executable,
+                    log_callback=log_callback
+                )
+                if success:
+                    return (True, f"NeoForge installed successfully for MC {mc_version}")
+                else:
+                    return (False, "Failed to install NeoForge. Check logs for details.")
+            else:
+                # Fallback: try to download and run NeoForge installer
+                if log_callback:
+                    log_callback("NeoForge auto-install not yet implemented. Please install manually.\n")
+                return (False, "NeoForge auto-install not yet implemented")
+
+        elif loader == "fabric":
+            if log_callback:
+                log_callback(f"\nInstalling Fabric for Minecraft {mc_version}...\n")
+            success = loader_manager.install_fabric(
+                minecraft_version=mc_version,
+                server_folder=self.server_folder,
+                log_callback=log_callback
+            )
+            if success:
+                return (True, f"Fabric installed successfully for MC {mc_version}")
+            else:
+                return (False, "Failed to install Fabric. Check logs for details.")
+
+        elif loader == "quilt":
+            if log_callback:
+                log_callback(f"\nQuilt auto-install not yet implemented. Please install manually.\n")
+            return (False, "Quilt auto-install not yet implemented")
+
+        else:
+            return (False, f"Unknown loader type: {loader}")
+
     def start_modded_server(
         self,
         server_type: str,
@@ -1555,7 +1906,7 @@ max-world-size=29999984
         try:
             if self.server_process and self.server_process.poll() is None:
                 if log_callback:
-                    log_callback("El servidor ya está en ejecución\n")
+                    log_callback("Server is already running\n")
                 return False
 
             # NOTE: Client-only mods detection/removal is now handled by main_window.py
@@ -1565,7 +1916,7 @@ max-world-size=29999984
             # Accept EULA BEFORE starting the server - this allows the server to
             # start and generate server.properties in a SINGLE run (no restart needed)
             if log_callback:
-                log_callback("=== CONFIGURACIÓN INICIAL ===\n")
+                log_callback("=== INITIAL SETUP ===\n")
 
             if not self.ensure_eula_accepted(log_callback):
                 if log_callback:
@@ -1573,7 +1924,7 @@ max-world-size=29999984
                 return False
 
             if log_callback:
-                log_callback("[OK] Configuración completada\n\n")
+                log_callback("[OK] Configuration completed\n\n")
 
             ram_min = f"-Xms{ram_mb}M"
             ram_max = f"-Xmx{ram_mb}M"
@@ -2070,12 +2421,12 @@ max-world-size=29999984
             return False
         except PermissionError as e:
             if log_callback:
-                log_callback(f"\n✗ Error de permisos al iniciar el servidor: {e}\n")
+                log_callback(f"\n✗ Permission error starting server: {e}\n")
             return False
         except Exception as e:
             if log_callback:
                 log_callback(f"\n✗ Error starting server: {e}\n")
-                log_callback(f"Tipo de error: {type(e).__name__}\n")
+                log_callback(f"Error type: {type(e).__name__}\n")
             return False
 
     def _modify_forge_run_script(self, script_path: str, ram_mb: int):
@@ -2143,23 +2494,23 @@ max-world-size=29999984
             # Modificar server.properties
             if os.path.exists(self.properties_path):
                 if log_callback:
-                    log_callback("[OK] server.properties generado\n")
-                    log_callback("Configurando server.properties...\n")
+                    log_callback("[OK] server.properties generated\n")
+                    log_callback("Configuring server.properties...\n")
                 if not self.configure_server_properties():
                     if log_callback:
-                        log_callback("⚠ Error modifying server.properties (continuando)\n")
+                        log_callback("⚠ Error modifying server.properties (continuing)\n")
             else:
                 if log_callback:
-                    log_callback("⚠ server.properties no encontrado (se generará al iniciar)\n")
+                    log_callback("⚠ server.properties not found (will be generated on start)\n")
 
             if log_callback:
-                log_callback("[OK] ¡Configuración completada!\n")
+                log_callback("[OK] Configuration completed!\n")
 
             return True
 
         except Exception as e:
             if log_callback:
-                log_callback(f"[ERROR] Error durante la configuración: {e}\n")
+                log_callback(f"[ERROR] Error during configuration: {e}\n")
             return False
 
     def _run_modded_server_and_wait(
@@ -2478,16 +2829,16 @@ max-world-size=29999984
 
         except FileNotFoundError as e:
             if log_callback:
-                log_callback(f"\n✗ Error: No se encontró el ejecutable de Java.\n")
-                log_callback(f"Ruta buscada: {java_executable}\n")
+                log_callback(f"\n✗ Error: Java executable not found.\n")
+                log_callback(f"Path searched: {java_executable}\n")
                 log_callback("Make sure Java is installed correctly.\n")
         except PermissionError as e:
             if log_callback:
-                log_callback(f"\n✗ Error de permisos al ejecutar el servidor: {e}\n")
+                log_callback(f"\n✗ Permission error running server: {e}\n")
         except Exception as e:
             if log_callback:
                 log_callback(f"\n✗ Error running server: {e}\n")
-                log_callback(f"Tipo de error: {type(e).__name__}\n")
+                log_callback(f"Error type: {type(e).__name__}\n")
 
     def get_recommended_ram_for_modpack(self, num_mods: int) -> int:
         """
