@@ -1,5 +1,3 @@
-
-
 <h1 align="center">PyCraft</h1>
 
 <p align="center">
@@ -11,11 +9,13 @@
   <a href="README.es.md">Español</a> | <strong>English</strong>
 </p>
 
-PyCraft simplifies the creation of Minecraft servers, allowing you to download, configure, and launch vanilla or modded servers automatically. With support for Forge, Fabric, NeoForge, Quilt, and integrated Modrinth modpack search.
+
 
 <p align="center">
   <img width="250" height="250" alt="logo" src="https://github.com/user-attachments/assets/2fc1bd73-98b5-447f-b163-8f1e6fa88b09" />
 </p>
+
+PyCraft simplifies the creation of Minecraft servers, allowing you to download, configure, and launch vanilla or modded servers automatically. With support for Forge, Fabric, NeoForge, Quilt, and integrated Modrinth modpack search.
 
 ---
 
