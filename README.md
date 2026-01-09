@@ -48,6 +48,15 @@ PyCraft simplifies the creation of Minecraft servers, allowing you to download, 
 - **Visual Feedback**: Button animations and status indicators
 - **Thread-safe Operations**: Reliable server management with proper threading
 
+## Screenshots
+
+<p align="center">
+  <img width="700" alt="MainMenu" src="https://github.com/user-attachments/assets/047b8b87-97d6-4cee-b6eb-790f92a8a4c4" />
+  <br/>
+  <em>Main interface</em>
+</p>
+
+
 ---
 
 ## Installation
