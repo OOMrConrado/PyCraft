@@ -1,10 +1,21 @@
-# PyCraft - Minecraft Server Manager
 
-[Español](README.es.md) | **English**
 
-**An intuitive tool to create and manage Minecraft vanilla and modded servers**
+<h1 align="center">PyCraft</h1>
+
+<p align="center">
+  <strong>Minecraft Server Manager</strong><br/>
+  An intuitive tool to create and manage Minecraft vanilla and modded servers
+</p>
+
+<p align="center">
+  <a href="README.es.md">Español</a> | <strong>English</strong>
+</p>
 
 PyCraft simplifies the creation of Minecraft servers, allowing you to download, configure, and launch vanilla or modded servers automatically. With support for Forge, Fabric, NeoForge, Quilt, and integrated Modrinth modpack search.
+
+<p align="center">
+  <img width="250" height="250" alt="logo" src="https://github.com/user-attachments/assets/2fc1bd73-98b5-447f-b163-8f1e6fa88b09" />
+</p>
 
 ---
 
@@ -213,7 +224,7 @@ This project is under the MIT License. See [LICENSE](LICENSE) for more details.
 ## Acknowledgments
 
 - [Mojang](https://www.minecraft.net/) - For Minecraft
-- [Modrinth](https://modrinth.com/) - For their excellent modpack API
+- [Modrinth](https://modrinth.com/) - For their modpack API
 - [CurseForge](https://www.curseforge.com/) - For their modpack platform and API
 - [PySide6](https://www.qt.io/qt-for-python) - For the Qt framework
 - [QtAwesome](https://github.com/spyder-ide/qtawesome) - For the icon library
