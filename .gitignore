@@ -68,7 +68,18 @@ proxy/node_modules/
 proxy/.wrangler/
 proxy/package-lock.json
 
+# Testing
+tests/
+pytest.ini
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+*.cover
+*.py,cover
+
 # OS
 Thumbs.db
 create_release.bat
 upload-exe.md
+reddit.md
