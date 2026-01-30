@@ -23,57 +23,6 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer, QSize, QUrl
 from PySide6.QtGui import QPixmap, QIcon, QTextCharFormat, QColor, QTextCursor, QCursor, QFont, QDesktopServices
 
-
-class NoFocusRectStyle(QProxyStyle):
-    """Custom style that removes focus rectangles from all widgets"""
-
-    def drawPrimitive(self, element, option, painter, widget=None):
-        # Skip drawing focus rectangles
-        if element == QStyle.PrimitiveElement.PE_FrameFocusRect:
-            return
-        super().drawPrimitive(element, option, painter, widget)
-
-
-class NonPropagatingScrollArea(QScrollArea):
-    """ScrollArea that doesn't propagate wheel events to parent when at limits"""
-
-    def wheelEvent(self, event):
-        # Get the vertical scrollbar
-        scrollbar = self.verticalScrollBar()
-
-        # Check if we're at the limits
-        at_top = scrollbar.value() == scrollbar.minimum()
-        at_bottom = scrollbar.value() == scrollbar.maximum()
-
-        # Determine scroll direction
-        scrolling_up = event.angleDelta().y() > 0
-        scrolling_down = event.angleDelta().y() < 0
-
-        # If at limit and trying to scroll past it, accept event to prevent propagation
-        if (at_top and scrolling_up) or (at_bottom and scrolling_down):
-            event.accept()
-            return
-
-        # Otherwise, handle normally
-        super().wheelEvent(event)
-
-
-class NonPropagatingTextEdit(QTextEdit):
-    """TextEdit that doesn't propagate wheel events to parent when at limits"""
-
-    def wheelEvent(self, event):
-        scrollbar = self.verticalScrollBar()
-        at_top = scrollbar.value() == scrollbar.minimum()
-        at_bottom = scrollbar.value() == scrollbar.maximum()
-        scrolling_up = event.angleDelta().y() > 0
-        scrolling_down = event.angleDelta().y() < 0
-
-        if (at_top and scrolling_up) or (at_bottom and scrolling_down):
-            event.accept()
-            return
-
-        super().wheelEvent(event)
-
 import qtawesome as qta
 
 from ..core.api import MinecraftAPIHandler, APIConfig
@@ -85,376 +34,58 @@ from ..utils import system_utils
 from ..utils.updater import UpdateChecker
 from ..__version__ import __version__
 
+# Import extracted widgets
+from .widgets import (
+    NonPropagatingScrollArea,
+    NonPropagatingTextEdit,
+    NoFocusRectStyle,
+    SidebarButton,
+    OptionCard,
+    FooterLink,
+    ToastNotification,
+)
 
-class SidebarButton(QPushButton):
-    """Navigation button for sidebar"""
+# Import services (for future use when pages are extracted)
+from .services import FolderValidator, VersionDetector
 
-    def __init__(self, text: str, icon_name: str, parent=None):
-        super().__init__(parent)
-        self.setText(f"  {text}")
-        self.icon_name = icon_name
-        self.setCheckable(True)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setFixedHeight(48)
-        self.setIcon(qta.icon(icon_name, color="#8b949e"))
-        self.setIconSize(QSize(20, 20))
-        self._apply_style(False)
+# Import dialogs
+from .dialogs import ServerCrashDialog, ServerConfigDialog
 
-        # Notification dot (hidden by default)
-        self._notification_dot = QLabel(self)
-        self._notification_dot.setFixedSize(8, 8)
-        self._notification_dot.setStyleSheet("background-color: #fbbf24; border-radius: 4px;")
-        self._notification_dot.hide()
+# Import controllers
+from .controllers import (
+    VanillaInstallController,
+    VanillaRunController,
+    ModpackInstallController,
+    ModpackRunController,
+    ClientInstallController,
+)
 
-        # Blink timer for notification
-        self._blink_timer = QTimer(self)
-        self._blink_timer.timeout.connect(self._toggle_dot_visibility)
-        self._dot_visible = True
-
-    def _toggle_dot_visibility(self):
-        """Toggle dot visibility for blinking effect"""
-        self._dot_visible = not self._dot_visible
-        self._notification_dot.setVisible(self._dot_visible)
-
-    def show_notification(self, show: bool = True):
-        """Show or hide the notification dot"""
-        if show:
-            self._notification_dot.show()
-        else:
-            self._notification_dot.hide()
-
-    def resizeEvent(self, event):
-        """Position the notification dot when button is resized"""
-        super().resizeEvent(event)
-        # Position dot at the right side of the button
-        self._notification_dot.move(self.width() - 20, (self.height() - 8) // 2)
-
-    def _apply_style(self, selected: bool):
-        if selected:
-            self.setIcon(qta.icon(self.icon_name, color="#4ade80"))
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: rgba(74, 222, 128, 0.1);
-                    color: #ffffff;
-                    border: none;
-                    border-left: 3px solid #4ade80;
-                    border-radius: 0px;
-                    text-align: left;
-                    padding-left: 15px;
-                    font-size: 14px;
-                    font-weight: 500;
-                }
-            """)
-        else:
-            self.setIcon(qta.icon(self.icon_name, color="#8b949e"))
-            self.setStyleSheet("""
-                QPushButton {
-                    background-color: transparent;
-                    color: #8b949e;
-                    border: none;
-                    border-left: 3px solid transparent;
-                    border-radius: 0px;
-                    text-align: left;
-                    padding-left: 15px;
-                    font-size: 14px;
-                }
-                QPushButton:hover {
-                    background-color: rgba(255, 255, 255, 0.05);
-                    color: #ffffff;
-                }
-            """)
-
-    def setChecked(self, checked: bool):
-        super().setChecked(checked)
-        self._apply_style(checked)
-
-
-class OptionCard(QFrame):
-    """Clickable card for selecting options"""
-
-    clicked = Signal()
-
-    def __init__(self, title: str, description: str, icon_name: str, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(260, 160)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._hovered = False
-        self._setup_ui(title, description, icon_name)
-        self._apply_style()
-
-    def _setup_ui(self, title: str, description: str, icon_name: str):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-
-        # Icon
-        icon_label = QLabel()
-        icon_label.setPixmap(qta.icon(icon_name, color="#4ade80").pixmap(40, 40))
-        icon_label.setStyleSheet("background: transparent; border: none;")
-        layout.addWidget(icon_label)
-
-        # Title
-        title_label = QLabel(title)
-        title_label.setStyleSheet("""
-            font-size: 16px;
-            font-weight: bold;
-            color: #ffffff;
-            background: transparent;
-            border: none;
-        """)
-        layout.addWidget(title_label)
-
-        # Description
-        desc_label = QLabel(description)
-        desc_label.setStyleSheet("""
-            font-size: 12px;
-            color: #8b949e;
-            background: transparent;
-            border: none;
-        """)
-        desc_label.setWordWrap(True)
-        layout.addWidget(desc_label)
-
-        layout.addStretch()
-
-    def _apply_style(self):
-        if self._hovered:
-            self.setStyleSheet("""
-                QFrame {
-                    background-color: #2a2a2a;
-                    border: 2px solid #4ade80;
-                    border-radius: 16px;
-                }
-            """)
-        else:
-            self.setStyleSheet("""
-                QFrame {
-                    background-color: #222222;
-                    border: 1px solid #333333;
-                    border-radius: 16px;
-                }
-            """)
-
-    def enterEvent(self, event):
-        self._hovered = True
-        self._apply_style()
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self._apply_style()
-
-    def mousePressEvent(self, event):
-        self.clicked.emit()
-
-
-class FooterLink(QFrame):
-    """Footer link button"""
-
-    clicked = Signal()
-
-    def __init__(self, title: str, subtitle: str, icon_name: str, parent=None):
-        super().__init__(parent)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.setMinimumHeight(56)
-        self._hovered = False
-        self._setup_ui(title, subtitle, icon_name)
-        self._apply_style()
-
-    def _setup_ui(self, title: str, subtitle: str, icon_name: str):
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 10, 16, 10)
-        layout.setSpacing(12)
-
-        # Icon
-        icon_label = QLabel()
-        icon_label.setPixmap(qta.icon(icon_name, color="#8b949e").pixmap(24, 24))
-        icon_label.setStyleSheet("background: transparent; border: none;")
-        layout.addWidget(icon_label)
-
-        # Text
-        text_widget = QWidget()
-        text_widget.setStyleSheet("background: transparent; border: none;")
-        text_layout = QVBoxLayout(text_widget)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(0)
-
-        title_label = QLabel(title)
-        title_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #ffffff; background: transparent; border: none;")
-        text_layout.addWidget(title_label)
-
-        subtitle_label = QLabel(subtitle)
-        subtitle_label.setStyleSheet("font-size: 11px; color: #6e7681; background: transparent; border: none;")
-        text_layout.addWidget(subtitle_label)
-
-        layout.addWidget(text_widget)
-        layout.addStretch()
-
-        # Arrow
-        arrow = QLabel()
-        arrow.setPixmap(qta.icon("fa5s.chevron-right", color="#6e7681").pixmap(12, 12))
-        arrow.setStyleSheet("background: transparent; border: none;")
-        layout.addWidget(arrow)
-
-    def _apply_style(self):
-        border = "#404040" if self._hovered else "#2d2d2d"
-        bg = "#252525" if self._hovered else "#1c1c1c"
-        self.setStyleSheet(f"""
-            QFrame {{
-                background-color: {bg};
-                border: 1px solid {border};
-                border-radius: 10px;
-            }}
-        """)
-
-    def enterEvent(self, event):
-        self._hovered = True
-        self._apply_style()
-
-    def leaveEvent(self, event):
-        self._hovered = False
-        self._apply_style()
-
-    def mousePressEvent(self, event):
-        self.clicked.emit()
-
-
-class ToastNotification(QFrame):
-    """Toast notification widget that appears temporarily"""
-
-    clicked = Signal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(280, 70)
-        self.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self._setup_ui()
-        self._auto_hide_timer = QTimer(self)
-        self._auto_hide_timer.timeout.connect(self._fade_out)
-        self._opacity = 1.0
-        self._fade_timer = QTimer(self)
-        self._fade_timer.timeout.connect(self._do_fade)
-        self._fading_out = False
-
-    def _setup_ui(self):
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #2a2a2a;
-                border: 1px solid #fbbf24;
-                border-radius: 10px;
-            }
-        """)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(10)
-
-        # Icon
-        icon_label = QLabel()
-        icon_label.setPixmap(qta.icon("fa5s.arrow-circle-up", color="#fbbf24").pixmap(24, 24))
-        icon_label.setStyleSheet("background: transparent; border: none;")
-        layout.addWidget(icon_label)
-
-        # Text container
-        text_widget = QWidget()
-        text_widget.setStyleSheet("background: transparent;")
-        text_layout = QVBoxLayout(text_widget)
-        text_layout.setContentsMargins(0, 0, 0, 0)
-        text_layout.setSpacing(2)
-
-        self._title_label = QLabel("Update available")
-        self._title_label.setStyleSheet("font-size: 13px; font-weight: 600; color: #fbbf24; background: transparent; border: none;")
-        text_layout.addWidget(self._title_label)
-
-        self._subtitle_label = QLabel("Go to Settings to update")
-        self._subtitle_label.setStyleSheet("font-size: 11px; color: #8b949e; background: transparent; border: none;")
-        text_layout.addWidget(self._subtitle_label)
-
-        layout.addWidget(text_widget)
-        layout.addStretch()
-
-        # Close button
-        close_btn = QPushButton("×")
-        close_btn.setFixedSize(20, 20)
-        close_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        close_btn.setStyleSheet("""
-            QPushButton {
-                background-color: transparent;
-                color: #6e7681;
-                border: none;
-                font-size: 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                color: #ffffff;
-            }
-        """)
-        close_btn.clicked.connect(self.close_immediately)
-        layout.addWidget(close_btn)
-
-    def show_update(self, version: str, duration_ms: int = 15000):
-        """Show the toast with update info"""
-        self._title_label.setText(f"Update available: v{version}")
-        self._opacity = 1.0
-        self._fading_out = False
-        self.setWindowOpacity(1.0)
-        self.show()
-        self.raise_()
-        self._auto_hide_timer.start(duration_ms)
-
-    def close_immediately(self):
-        """Close the toast immediately without animation"""
-        self._auto_hide_timer.stop()
-        self._fade_timer.stop()
-        self.hide()
-
-    def _fade_out(self):
-        """Start fade out animation"""
-        self._auto_hide_timer.stop()
-        self._fading_out = True
-        self._fade_timer.start(30)  # 30ms interval for smooth fade
-
-    def _do_fade(self):
-        """Perform fade animation step"""
-        self._opacity -= 0.05
-        if self._opacity <= 0:
-            self._fade_timer.stop()
-            self.hide()
-            self._opacity = 1.0
-        else:
-            self.setWindowOpacity(self._opacity)
-
-    def mousePressEvent(self, event):
-        if not self._fading_out:
-            self.clicked.emit()
-            self.close_immediately()
+# Import pages (for future use - can be gradually adopted)
+from .pages import BasePage, HomePage, VanillaPage, ModdedPage, InfoPage
 
 
 class PyCraftGUI(QMainWindow):
     """Main PyCraft Application Window"""
 
+    # Core signals
     log_signal = Signal(str, str, str)
     progress_signal = Signal(int)
     status_signal = Signal(str, str)
+
     # Java modal signals (thread-safe)
     java_status_signal = Signal(str)
     java_progress_signal = Signal(int, int)  # value, maximum
     java_console_signal = Signal(str, str)  # text, color
     java_complete_signal = Signal(bool)  # success
-    modpack_results_signal = Signal(object)  # modpack search results
-    mp_icon_signal = Signal(str, object)  # project_id, QPixmap
-    mp_pagination_signal = Signal(int)  # total results
-    client_mp_results_signal = Signal(object)  # client modpack search results
-    client_mp_pagination_signal = Signal(int)  # client total results
-    version_loaded_signal = Signal(object, object)  # versions list, callback function
+
+    # Server crash signal
     server_crashed_signal = Signal(str)  # server path for crash modal
-    vanilla_server_stopped_signal = Signal(bool)  # success (True = normal stop, False = crash)
-    modpack_server_stopped_signal = Signal(bool)  # success (True = normal stop, False = crash)
-    vanilla_server_started_signal = Signal(bool)  # success
-    modpack_server_started_signal = Signal(bool)  # success
+
     # Modal signals (thread-safe)
     vanilla_install_success_signal = Signal(str, str)  # version, folder
     server_modpack_install_success_signal = Signal(str, str, str)  # name, mc_version, loader
-    mp_server_install_done_signal = Signal()  # triggered when missing server install completes
+
+    # Update signals
     update_check_complete_signal = Signal(object)  # update_info dict or None
     update_download_progress_signal = Signal(int, float, float)  # progress%, downloaded_mb, total_mb
     update_download_complete_signal = Signal(str)  # installer_path or empty string if failed
@@ -485,7 +116,6 @@ class PyCraftGUI(QMainWindow):
         # Managers
         self.api_handler = MinecraftAPIHandler()
         self.downloader = ServerDownloader()
-        self.server_manager: Optional[ServerManager] = None
         self.modpack_manager = ModpackManager()
         self.java_manager = JavaManager()
         self.api_config = APIConfig()
@@ -495,54 +125,11 @@ class PyCraftGUI(QMainWindow):
         if cf_key:
             self.modpack_manager.set_curseforge_api_key(cf_key)
 
-        # State
-        self.versions_list = []
-        self.filtered_versions = []
-        self.selected_version = None
-        self.server_folder = None
-        self.is_server_configured = False
-        self.detected_mc_version = None
-
-        self.modpack_results = []
+        # Provider selection state (kept for _select_mp_provider)
+        self.mp_selected_provider = "modrinth"
         self.selected_modpack = None
-        self.modpack_folder = None
-        self.mp_current_page = 1
-        self.mp_total_results = 0
-        self.mp_search_query = ""
-        self.mp_icon_cache = {}  # Cache for modpack icons
 
-        # Client modpack browsing state
-        self.client_mp_results = []
-        self.client_mp_current_page = 1
-        self.client_mp_total_results = 0
-        self.client_mp_search_query = ""
-
-        # Debounce timers for real-time search (300ms delay)
-        self.mp_search_timer = QTimer()
-        self.mp_search_timer.setSingleShot(True)
-        self.mp_search_timer.setInterval(350)
-        self.mp_search_timer.timeout.connect(self._search_modpacks)
-
-        self.client_mp_search_timer = QTimer()
-        self.client_mp_search_timer.setSingleShot(True)
-        self.client_mp_search_timer.setInterval(350)
-        self.client_mp_search_timer.timeout.connect(self._search_client_modpacks)
-
-        # Version selection state
-        self.selected_mp_version = None  # For server install
-
-        # Provider selection state
-        self.mp_selected_provider = "modrinth"  # For server modpack install
-        self.client_mp_selected_provider = "modrinth"  # For client modpack install
-
-        # Popular modpacks mode (shows popular modpacks when no search query)
-        self.mp_is_popular_search = False
-        self.client_mp_is_popular_search = False
-
-        self.modpack_server_manager: Optional[ServerManager] = None
-        self.modpack_server_path = None
-        self.is_modpack_configured = False
-
+        # RAM settings
         self.vanilla_ram = 2048
         self.modpack_ram = 4096
 
@@ -551,7 +138,6 @@ class PyCraftGUI(QMainWindow):
         self._setup_window()
         self._build_ui()
         self._connect_signals()
-        self._load_versions()
 
     def _setup_window(self):
         """Configure window properties"""
@@ -581,17 +167,7 @@ class PyCraftGUI(QMainWindow):
         self.log_signal.connect(self._on_log)
         self.progress_signal.connect(self._on_progress)
         self.status_signal.connect(self._on_status)
-        self.modpack_results_signal.connect(self._show_mp_results)
-        self.mp_icon_signal.connect(self._on_mp_icon_loaded)
-        self.mp_pagination_signal.connect(self._update_mp_pagination)
-        self.client_mp_results_signal.connect(self._show_client_mp_results)
-        self.client_mp_pagination_signal.connect(self._update_client_mp_pagination)
-        self.version_loaded_signal.connect(self._on_versions_loaded)
         self.server_crashed_signal.connect(self._show_server_crash_dialog)
-        self.vanilla_server_stopped_signal.connect(self._on_vanilla_server_stopped)
-        self.modpack_server_stopped_signal.connect(self._on_modpack_server_stopped)
-        self.vanilla_server_started_signal.connect(self._on_vanilla_server_started)
-        self.modpack_server_started_signal.connect(self._on_modpack_server_started)
         # Modal signals - use lambdas with QTimer to avoid blocking
         self.vanilla_install_success_signal.connect(
             lambda v, f: QTimer.singleShot(100, lambda: self._show_vanilla_install_success(v, f))
@@ -702,11 +278,70 @@ class PyCraftGUI(QMainWindow):
         self.page_stack.addWidget(self._build_modded_page())        # 2
         self.page_stack.addWidget(self._build_info_page())          # 3
         self.page_stack.addWidget(self._build_settings_page())      # 4
-        self.page_stack.addWidget(self._build_vanilla_create())     # 5
-        self.page_stack.addWidget(self._build_vanilla_run())        # 6
-        self.page_stack.addWidget(self._build_modpack_install())    # 7
-        self.page_stack.addWidget(self._build_modpack_run())        # 8
-        self.page_stack.addWidget(self._build_client_install())     # 9
+        
+        # Use extracted controllers for vanilla/modpack pages
+        self.vanilla_install_ctrl = VanillaInstallController(
+            colors=self.colors,
+            api_handler=self.api_handler,
+            downloader=self.downloader,
+            java_manager=self.java_manager,
+            navigate_callback=self._go_to,
+            log_signal=self.log_signal,
+            progress_signal=self.progress_signal,
+            check_java_callback=self._check_and_get_java,
+        )
+        self.vanilla_install_ctrl.install_success.connect(self._show_vanilla_install_success, Qt.ConnectionType.QueuedConnection)
+        self.page_stack.addWidget(self.vanilla_install_ctrl)        # 5
+        
+        self.vanilla_run_ctrl = VanillaRunController(
+            colors=self.colors,
+            java_manager=self.java_manager,
+            navigate_callback=self._go_to,
+            log_signal=self.log_signal,
+            check_java_callback=self._check_and_get_java,
+            open_config_callback=self._open_config_dialog,
+            server_crashed_signal=self.server_crashed_signal,
+        )
+        self.vanilla_run_ctrl.server_started.connect(self.vanilla_run_ctrl.on_server_started, Qt.ConnectionType.QueuedConnection)
+        self.vanilla_run_ctrl.server_stopped.connect(self.vanilla_run_ctrl.on_server_stopped, Qt.ConnectionType.QueuedConnection)
+        self.vanilla_run_ctrl.server_ready.connect(lambda: self._show_server_ready_notification("v_run"))
+        self.page_stack.addWidget(self.vanilla_run_ctrl)            # 6
+        
+        self.modpack_install_ctrl = ModpackInstallController(
+            colors=self.colors,
+            modpack_manager=self.modpack_manager,
+            navigate_callback=self._go_to,
+            log_signal=self.log_signal,
+            check_java_callback=self._check_and_get_java,
+            warn_dangerous_folder=self._warn_dangerous_folder,
+            warn_existing_server=self._warn_existing_server,
+        )
+        self.modpack_install_ctrl.install_success.connect(self._show_server_install_notice, Qt.ConnectionType.QueuedConnection)
+        self.page_stack.addWidget(self.modpack_install_ctrl)        # 7
+        
+        self.modpack_run_ctrl = ModpackRunController(
+            colors=self.colors,
+            java_manager=self.java_manager,
+            navigate_callback=self._go_to,
+            log_signal=self.log_signal,
+            check_java_callback=self._check_and_get_java,
+            open_config_callback=self._open_config_dialog,
+            server_crashed_signal=self.server_crashed_signal,
+        )
+        self.modpack_run_ctrl.server_started.connect(self.modpack_run_ctrl.on_server_started, Qt.ConnectionType.QueuedConnection)
+        self.modpack_run_ctrl.server_stopped.connect(self.modpack_run_ctrl.on_server_stopped, Qt.ConnectionType.QueuedConnection)
+        self.modpack_run_ctrl.server_install_done.connect(self.modpack_run_ctrl.on_server_install_done, Qt.ConnectionType.QueuedConnection)
+        self.modpack_run_ctrl.server_ready.connect(lambda: self._show_server_ready_notification("m_run"))
+        self.page_stack.addWidget(self.modpack_run_ctrl)            # 8
+
+        self.client_install_ctrl = ClientInstallController(
+            colors=self.colors,
+            modpack_manager=self.modpack_manager,
+            navigate_callback=self._go_to,
+            log_signal=self.log_signal,
+        )
+        self.page_stack.addWidget(self.client_install_ctrl)         # 9
+
         self.page_stack.addWidget(self._build_java_management())    # 10
 
         # Footer (will be shown/hidden based on current page)
@@ -1375,475 +1010,6 @@ class PyCraftGUI(QMainWindow):
 
         return page
 
-    def _build_vanilla_create(self) -> QWidget:
-        """Build vanilla server creation page"""
-        page = QWidget()
-        page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(self._scroll_style())
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(40, 25, 40, 25)
-        layout.setSpacing(18)
-
-        back = self._text_button("< Back")
-        back.clicked.connect(lambda: self._go_to("vanilla"))
-        layout.addWidget(back)
-
-        title = QLabel("Create New Server")
-        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        layout.addWidget(title)
-
-        # Version
-        ver_frame = self._section_frame("Minecraft Version")
-        ver_layout = ver_frame.layout()
-
-        self.ver_search = self._input("Search version...", 400)
-        self.ver_search.textChanged.connect(self._filter_versions)
-        self.ver_search.mousePressEvent = lambda e: self._show_version_dropdown()
-        # Also show dropdown on focus (for keyboard navigation)
-        original_focus_in = self.ver_search.focusInEvent
-        def on_focus_in(event):
-            self._show_version_dropdown()
-            original_focus_in(event)
-        self.ver_search.focusInEvent = on_focus_in
-        ver_layout.addWidget(self.ver_search)
-
-        self.ver_scroll = NonPropagatingScrollArea()
-        self.ver_scroll.setFixedHeight(140)
-        self.ver_scroll.setWidgetResizable(True)
-        self.ver_scroll.setStyleSheet(f"""
-            QScrollArea {{
-                background: transparent;
-                border: none;
-            }}
-            QScrollArea > QWidget > QWidget {{
-                background: transparent;
-            }}
-            QScrollBar:vertical {{
-                background-color: {self.colors['bg_card']};
-                width: 12px;
-                border-radius: 6px;
-                border: none;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: #4a4a4a;
-                border-radius: 6px;
-                border: none;
-                min-height: 30px;
-            }}
-            QScrollBar::handle:vertical:hover {{
-                background-color: #5a5a5a;
-            }}
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-                height: 0px;
-                border: none;
-            }}
-            QScrollBar:horizontal {{
-                height: 0px;
-            }}
-        """)
-
-        self.ver_list = QWidget()
-        self.ver_list_layout = QVBoxLayout(self.ver_list)
-        self.ver_list_layout.setSpacing(4)
-        self.ver_list_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.ver_scroll.setWidget(self.ver_list)
-        ver_layout.addWidget(self.ver_scroll)
-
-        self.ver_selected = QLabel("No version selected")
-        self.ver_selected.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600; border: none;")
-        ver_layout.addWidget(self.ver_selected)
-
-        layout.addWidget(ver_frame)
-
-        # Folder
-        folder_frame = self._section_frame("Destination Folder")
-        folder_layout = folder_frame.layout()
-
-        folder_btn = self._styled_button("Select Folder", self.colors['bg_input'], self.colors['text'], 180)
-        folder_btn.clicked.connect(self._select_create_folder)
-        folder_layout.addWidget(folder_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        self.create_folder_label = QLabel("No folder selected")
-        self.create_folder_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-        folder_layout.addWidget(self.create_folder_label)
-
-        layout.addWidget(folder_frame)
-
-        # Download
-        self.download_btn = self._styled_button("Download and Install", self.colors['accent'], "#000000", 280)
-        self.download_btn.setEnabled(False)
-        self.download_btn.clicked.connect(self._download_server)
-        layout.addWidget(self.download_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        # Console
-        console_frame = self._section_frame("Console")
-        self.vanilla_create_console = self._console()
-        console_frame.layout().addWidget(self.vanilla_create_console)
-        layout.addWidget(console_frame)
-
-        # Progress tracking attributes (not displayed)
-        self.create_progress = None
-        self.create_progress_label = None
-
-        self.create_status = QLabel("")
-        self.create_status.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-        layout.addWidget(self.create_status)
-
-        layout.addStretch()
-        scroll.setWidget(content)
-
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
-
-        self._log(self.vanilla_create_console, "Ready to create a new server.\n", "info")
-
-        return page
-
-    def _build_vanilla_run(self) -> QWidget:
-        """Build vanilla server run page"""
-        page = QWidget()
-        page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(self._scroll_style())
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(40, 25, 40, 25)
-        layout.setSpacing(18)
-
-        back = self._text_button("< Back")
-        back.clicked.connect(lambda: self._go_to("vanilla"))
-        layout.addWidget(back)
-
-        title = QLabel("Run Existing Server")
-        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        layout.addWidget(title)
-
-        # Select
-        select_frame = self._section_frame("Server Folder")
-        select_layout = select_frame.layout()
-
-        select_btn = self._styled_button("Select Folder", self.colors['bg_input'], self.colors['text'], 180)
-        select_btn.clicked.connect(self._select_run_folder)
-        select_layout.addWidget(select_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        self.run_folder_label = QLabel("No folder selected")
-        self.run_folder_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-        select_layout.addWidget(self.run_folder_label)
-
-        layout.addWidget(select_frame)
-
-        # Console
-        console_frame = self._section_frame("Console")
-        console_layout = console_frame.layout()
-
-        self.vanilla_run_console = self._console()
-        console_layout.addWidget(self.vanilla_run_console)
-
-        # Command
-        cmd_row = QWidget()
-        cmd_row.setStyleSheet("background: transparent;")
-        cmd_layout = QHBoxLayout(cmd_row)
-        cmd_layout.setContentsMargins(0, 10, 0, 0)
-
-        self.run_cmd = self._input("/command", 500)
-        self.run_cmd.returnPressed.connect(self._send_vanilla_cmd)
-        cmd_layout.addWidget(self.run_cmd)
-
-        self.run_cmd_btn = self._styled_button("Send", self.colors['accent'], "#000000", 80)
-        self.run_cmd_btn.setEnabled(False)
-        self.run_cmd_btn.clicked.connect(self._send_vanilla_cmd)
-        cmd_layout.addWidget(self.run_cmd_btn)
-
-        console_layout.addWidget(cmd_row)
-
-        # Controls
-        ctrl_row = QWidget()
-        ctrl_row.setStyleSheet("background: transparent;")
-        ctrl_layout = QHBoxLayout(ctrl_row)
-        ctrl_layout.setContentsMargins(0, 10, 0, 0)
-        ctrl_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        ctrl_layout.setSpacing(12)
-
-        self.run_start = self._styled_button("Start", self.colors['accent'], "#000000", 120)
-        self.run_start.setEnabled(False)
-        self.run_start.clicked.connect(self._start_vanilla)
-        ctrl_layout.addWidget(self.run_start)
-
-        self.run_stop = self._styled_button("Stop", self.colors['red'], "#ffffff", 120)
-        self.run_stop.setEnabled(False)
-        self.run_stop.clicked.connect(self._stop_vanilla)
-        ctrl_layout.addWidget(self.run_stop)
-
-        self.run_config = self._styled_button("Config", self.colors['yellow'], "#000000", 120)
-        self.run_config.setEnabled(False)
-        self.run_config.clicked.connect(self._config_vanilla)
-        ctrl_layout.addWidget(self.run_config)
-
-        console_layout.addWidget(ctrl_row)
-
-        # Status bar (below controls)
-        self.run_status = QLabel("")
-        self.run_status.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px; font-weight: 600;")
-        console_layout.addWidget(self.run_status)
-
-        # Server info footer
-        self.vanilla_server_info = QLabel("")
-        self.vanilla_server_info.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px; margin-top: 8px;")
-        self.vanilla_server_info.setVisible(False)
-        console_layout.addWidget(self.vanilla_server_info)
-
-        layout.addWidget(console_frame)
-
-        layout.addStretch()
-        scroll.setWidget(content)
-
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
-
-        self._log(self.vanilla_run_console, "Select a server folder to begin.\n", "info")
-
-        return page
-
-    def _build_modpack_install(self) -> QWidget:
-        """Build modpack installation page with provider selection"""
-        page = QWidget()
-        page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
-
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Stacked widget for provider selection / search UI
-        self.mp_stack = QStackedWidget()
-        self.mp_stack.setStyleSheet("background: transparent;")
-
-        # === Page 0: Provider Selection (no scroll) ===
-        provider_page = QWidget()
-        provider_page.setStyleSheet(f"background-color: {self.colors['bg_content']};")
-        provider_page_layout = QVBoxLayout(provider_page)
-        provider_page_layout.setContentsMargins(40, 25, 40, 25)
-        provider_page_layout.setSpacing(18)
-
-        back_provider = self._text_button("< Back")
-        back_provider.clicked.connect(lambda: self._go_to("modded"))
-        provider_page_layout.addWidget(back_provider)
-
-        title_provider = QLabel("Install Modpack")
-        title_provider.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        provider_page_layout.addWidget(title_provider)
-
-        # Center content vertically (2:3 ratio to account for header)
-        provider_page_layout.addStretch(2)
-
-        provider_title = QLabel("Choose a modpack provider:")
-        provider_title.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 15px;")
-        provider_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        provider_page_layout.addWidget(provider_title)
-
-        # Provider buttons container
-        providers_container = QWidget()
-        providers_container.setStyleSheet("background: transparent;")
-        providers_h = QHBoxLayout(providers_container)
-        providers_h.setSpacing(24)
-        providers_h.setContentsMargins(0, 0, 0, 0)
-        providers_h.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        modrinth_btn = self._create_provider_button(
-            "Modrinth",
-            "Open-source modding platform",
-            "#1bd96a",
-            "fa5s.leaf"
-        )
-        modrinth_btn.clicked.connect(lambda: self._select_mp_provider("modrinth"))
-        providers_h.addWidget(modrinth_btn)
-
-        curseforge_btn = self._create_provider_button(
-            "CurseForge",
-            "Largest mod collection",
-            "#f16436",
-            "fa5s.fire"
-        )
-        curseforge_btn.clicked.connect(lambda: self._select_mp_provider("curseforge"))
-        providers_h.addWidget(curseforge_btn)
-
-        provider_page_layout.addWidget(providers_container)
-
-        # Recommendation message
-        recommendation_label = QLabel("We recommend CurseForge for better stability")
-        recommendation_label.setStyleSheet(f"""
-            color: #f0c040;
-            font-size: 13px;
-            font-style: italic;
-        """)
-        recommendation_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        provider_page_layout.addWidget(recommendation_label)
-
-        provider_page_layout.addStretch(3)
-
-        self.mp_stack.addWidget(provider_page)
-
-        # === Page 1: Search UI (with scroll) ===
-        search_scroll = QScrollArea()
-        search_scroll.setWidgetResizable(True)
-        search_scroll.setStyleSheet(self._scroll_style())
-
-        search_content = QWidget()
-        search_content.setStyleSheet(f"background-color: {self.colors['bg_content']};")
-        search_page_layout = QVBoxLayout(search_content)
-        search_page_layout.setContentsMargins(40, 25, 40, 25)
-        search_page_layout.setSpacing(18)
-
-        back_search = self._text_button("< Back")
-        back_search.clicked.connect(lambda: self._go_to("modded"))
-        search_page_layout.addWidget(back_search)
-
-        title_search = QLabel("Install Modpack")
-        title_search.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        search_page_layout.addWidget(title_search)
-
-        # Provider indicator with change button
-        provider_row = QWidget()
-        provider_row.setStyleSheet("background: transparent;")
-        provider_row_layout = QHBoxLayout(provider_row)
-        provider_row_layout.setContentsMargins(0, 0, 0, 8)
-
-        self.mp_provider_label = QLabel("Searching on: Modrinth")
-        self.mp_provider_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px;")
-        provider_row_layout.addWidget(self.mp_provider_label)
-
-        change_provider_btn = self._text_button("Change")
-        change_provider_btn.clicked.connect(lambda: self.mp_stack.setCurrentIndex(0))
-        provider_row_layout.addWidget(change_provider_btn)
-        provider_row_layout.addStretch()
-
-        search_page_layout.addWidget(provider_row)
-
-        # Search frame
-        search_frame = self._section_frame("Search Modpacks")
-        search_layout = search_frame.layout()
-
-        search_row = QWidget()
-        search_row.setStyleSheet("background: transparent;")
-        search_h = QHBoxLayout(search_row)
-        search_h.setContentsMargins(0, 0, 0, 0)
-
-        self.mp_search = self._input("Search modpacks...", 560)
-        self.mp_search.textChanged.connect(self._on_mp_search_changed)
-        search_h.addWidget(self.mp_search)
-
-        search_layout.addWidget(search_row)
-
-        results_label = QLabel("Results:")
-        results_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px; font-weight: 600;")
-        search_layout.addWidget(results_label)
-
-        self.mp_results_scroll = NonPropagatingScrollArea()
-        self.mp_results_scroll.setFixedHeight(280)
-        self.mp_results_scroll.setWidgetResizable(True)
-        self.mp_results_scroll.setStyleSheet(self._scroll_style())
-
-        self.mp_results = QWidget()
-        self.mp_results_layout = QVBoxLayout(self.mp_results)
-        self.mp_results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.mp_results_layout.setSpacing(8)
-        self.mp_results_scroll.setWidget(self.mp_results)
-
-        search_layout.addWidget(self.mp_results_scroll)
-
-        # Pagination controls
-        self.mp_pagination_widget = QWidget()
-        self.mp_pagination_widget.setStyleSheet("background: transparent;")
-        self.mp_pagination_widget.setVisible(False)
-        pag_layout = QHBoxLayout(self.mp_pagination_widget)
-        pag_layout.setContentsMargins(0, 5, 0, 5)
-        pag_layout.setSpacing(5)
-
-        self.mp_page_info = QLabel("")
-        self.mp_page_info.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-        pag_layout.addWidget(self.mp_page_info)
-
-        pag_layout.addStretch()
-
-        self.mp_prev_btn = QPushButton("<")
-        self.mp_prev_btn.setFixedSize(32, 32)
-        self.mp_prev_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.mp_prev_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.colors['bg_input']};
-                color: {self.colors['text']};
-                border: 1px solid {self.colors['border']};
-                border-radius: 6px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{ background-color: {self.colors['bg_card']}; }}
-            QPushButton:disabled {{ color: {self.colors['text_muted']}; }}
-        """)
-        self.mp_prev_btn.clicked.connect(lambda: self._mp_go_page(self.mp_current_page - 1))
-        pag_layout.addWidget(self.mp_prev_btn)
-
-        self.mp_page_btns_layout = QHBoxLayout()
-        self.mp_page_btns_layout.setSpacing(3)
-        pag_layout.addLayout(self.mp_page_btns_layout)
-
-        self.mp_next_btn = QPushButton(">")
-        self.mp_next_btn.setFixedSize(32, 32)
-        self.mp_next_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.mp_next_btn.setStyleSheet(self.mp_prev_btn.styleSheet())
-        self.mp_next_btn.clicked.connect(lambda: self._mp_go_page(self.mp_current_page + 1))
-        pag_layout.addWidget(self.mp_next_btn)
-
-        search_layout.addWidget(self.mp_pagination_widget)
-
-        self.mp_selected = QLabel("No modpack selected")
-        self.mp_selected.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600; border: none;")
-        search_layout.addWidget(self.mp_selected)
-
-        search_page_layout.addWidget(search_frame)
-
-        # Folder
-        folder_frame = self._section_frame("Destination Folder")
-        folder_layout = folder_frame.layout()
-
-        folder_btn = self._styled_button("Select Folder", self.colors['bg_input'], self.colors['text'], 180)
-        folder_btn.clicked.connect(self._select_mp_folder)
-        folder_layout.addWidget(folder_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        self.mp_folder_label = QLabel("No folder selected")
-        self.mp_folder_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-        folder_layout.addWidget(self.mp_folder_label)
-
-        search_page_layout.addWidget(folder_frame)
-
-        # Install button
-        self.mp_install_btn = self._styled_button("Download and Install", self.colors['accent'], "#000000", 280)
-        self.mp_install_btn.setEnabled(False)
-        self.mp_install_btn.clicked.connect(self._install_modpack)
-        search_page_layout.addWidget(self.mp_install_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        # Console
-        console_frame = self._section_frame("Console")
-        self.modpack_install_console = self._console()
-        console_frame.layout().addWidget(self.modpack_install_console)
-        search_page_layout.addWidget(console_frame)
-
-        search_page_layout.addStretch()
-        search_scroll.setWidget(search_content)
-
-        self.mp_stack.addWidget(search_scroll)
-
-        page_layout.addWidget(self.mp_stack)
-
-        return page
-
     def _create_provider_button(self, name: str, description: str, color: str, icon: str) -> QPushButton:
         """Create a styled provider selection button"""
         btn = QPushButton()
@@ -1904,331 +1070,9 @@ class PyCraftGUI(QMainWindow):
         # Load popular modpacks automatically
         self._search_modpacks(page=1, popular=True)
 
-    def _build_modpack_run(self) -> QWidget:
-        """Build modpack run page"""
-        page = QWidget()
-        page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
-
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setStyleSheet(self._scroll_style())
-
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(40, 25, 40, 25)
-        layout.setSpacing(18)
-
-        back = self._text_button("< Back")
-        back.clicked.connect(lambda: self._go_to("modded"))
-        layout.addWidget(back)
-
-        title = QLabel("Run Modded Server")
-        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        layout.addWidget(title)
-
-        # Select
-        select_frame = self._section_frame("Server Folder")
-        select_layout = select_frame.layout()
-
-        select_btn = self._styled_button("Select Folder", self.colors['bg_input'], self.colors['text'], 180)
-        select_btn.clicked.connect(self._select_mp_run_folder)
-        select_layout.addWidget(select_btn, alignment=Qt.AlignmentFlag.AlignLeft)
-
-        self.mp_run_folder_label = QLabel("No folder selected")
-        self.mp_run_folder_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-        select_layout.addWidget(self.mp_run_folder_label)
-
-        self.mp_run_status = QLabel("")
-        self.mp_run_status.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px; font-weight: 600;")
-        select_layout.addWidget(self.mp_run_status)
-
-        layout.addWidget(select_frame)
-
-        # Console
-        console_frame = self._section_frame("Console")
-        console_layout = console_frame.layout()
-
-        self.modpack_run_console = self._console()
-        console_layout.addWidget(self.modpack_run_console)
-
-        # Command
-        cmd_row = QWidget()
-        cmd_row.setStyleSheet("background: transparent;")
-        cmd_layout = QHBoxLayout(cmd_row)
-        cmd_layout.setContentsMargins(0, 10, 0, 0)
-
-        self.mp_run_cmd = self._input("/command", 500)
-        self.mp_run_cmd.returnPressed.connect(self._send_mp_cmd)
-        cmd_layout.addWidget(self.mp_run_cmd)
-
-        self.mp_cmd_btn = self._styled_button("Send", self.colors['accent'], "#000000", 80)
-        self.mp_cmd_btn.setEnabled(False)
-        self.mp_cmd_btn.clicked.connect(self._send_mp_cmd)
-        cmd_layout.addWidget(self.mp_cmd_btn)
-
-        console_layout.addWidget(cmd_row)
-
-        # Controls
-        ctrl_row = QWidget()
-        ctrl_row.setStyleSheet("background: transparent;")
-        ctrl_layout = QHBoxLayout(ctrl_row)
-        ctrl_layout.setContentsMargins(0, 10, 0, 0)
-        ctrl_layout.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        ctrl_layout.setSpacing(12)
-
-        self.mp_start = self._styled_button("Start", self.colors['accent'], "#000000", 120)
-        self.mp_start.setEnabled(False)
-        self.mp_start.clicked.connect(self._start_mp)
-        ctrl_layout.addWidget(self.mp_start)
-
-        self.mp_stop = self._styled_button("Stop", self.colors['red'], "#ffffff", 120)
-        self.mp_stop.setEnabled(False)
-        self.mp_stop.clicked.connect(self._stop_mp)
-        ctrl_layout.addWidget(self.mp_stop)
-
-        self.mp_config = self._styled_button("Config", self.colors['yellow'], "#000000", 120)
-        self.mp_config.setEnabled(False)
-        self.mp_config.clicked.connect(self._config_mp)
-        ctrl_layout.addWidget(self.mp_config)
-
-        # Install Server button (shown when server is missing but mods exist)
-        self.mp_install_server = self._styled_button("Install Server", self.colors['blue'], "#ffffff", 140)
-        self.mp_install_server.setEnabled(False)
-        self.mp_install_server.setVisible(False)
-        self.mp_install_server.clicked.connect(self._install_missing_server_mp)
-        ctrl_layout.addWidget(self.mp_install_server)
-
-        console_layout.addWidget(ctrl_row)
-
-        # Server info footer (MC version + loader)
-        self.modpack_server_info = QLabel("")
-        self.modpack_server_info.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px; margin-top: 8px;")
-        self.modpack_server_info.setVisible(False)
-        console_layout.addWidget(self.modpack_server_info)
-
-        layout.addWidget(console_frame)
-
-        layout.addStretch()
-        scroll.setWidget(content)
-
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-        page_layout.addWidget(scroll)
-
-        self._log(self.modpack_run_console, "Select a server folder to begin.\n", "info")
-
-        return page
-
-    def _build_client_install(self) -> QWidget:
-        """Build client modpack installation page with provider selection"""
-        page = QWidget()
-        page.setStyleSheet(f"background-color: {self.colors['bg_content']}; border: none;")
-
-        page_layout = QVBoxLayout(page)
-        page_layout.setContentsMargins(0, 0, 0, 0)
-
-        # Stacked widget for provider selection / search UI
-        self.client_mp_stack = QStackedWidget()
-        self.client_mp_stack.setStyleSheet("background: transparent;")
-
-        # === Page 0: Provider Selection (no scroll) ===
-        provider_page = QWidget()
-        provider_page.setStyleSheet(f"background-color: {self.colors['bg_content']};")
-        provider_page_layout = QVBoxLayout(provider_page)
-        provider_page_layout.setContentsMargins(40, 25, 40, 25)
-        provider_page_layout.setSpacing(18)
-
-        back_provider = self._text_button("< Back")
-        back_provider.clicked.connect(lambda: self._go_to("modded"))
-        provider_page_layout.addWidget(back_provider)
-
-        title_provider = QLabel("Browse Modpacks (Client)")
-        title_provider.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        provider_page_layout.addWidget(title_provider)
-
-        # Center content vertically (2:3 ratio to account for header)
-        provider_page_layout.addStretch(2)
-
-        provider_title = QLabel("Choose a modpack provider:")
-        provider_title.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 15px;")
-        provider_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        provider_page_layout.addWidget(provider_title)
-
-        # Provider buttons container
-        providers_container = QWidget()
-        providers_container.setStyleSheet("background: transparent;")
-        providers_h = QHBoxLayout(providers_container)
-        providers_h.setSpacing(24)
-        providers_h.setContentsMargins(0, 0, 0, 0)
-        providers_h.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        modrinth_btn = self._create_provider_button(
-            "Modrinth",
-            "Open-source modding platform",
-            "#1bd96a",
-            "fa5s.leaf"
-        )
-        modrinth_btn.clicked.connect(lambda: self._select_client_mp_provider("modrinth"))
-        providers_h.addWidget(modrinth_btn)
-
-        curseforge_btn = self._create_provider_button(
-            "CurseForge",
-            "Largest mod collection",
-            "#f16436",
-            "fa5s.fire"
-        )
-        curseforge_btn.clicked.connect(lambda: self._select_client_mp_provider("curseforge"))
-        providers_h.addWidget(curseforge_btn)
-
-        provider_page_layout.addWidget(providers_container)
-
-        provider_page_layout.addStretch(3)
-
-        self.client_mp_stack.addWidget(provider_page)
-
-        # === Page 1: Search UI (with scroll) ===
-        search_scroll = QScrollArea()
-        search_scroll.setWidgetResizable(True)
-        search_scroll.setStyleSheet(self._scroll_style())
-
-        search_content = QWidget()
-        search_content.setStyleSheet(f"background-color: {self.colors['bg_content']};")
-        search_page_layout = QVBoxLayout(search_content)
-        search_page_layout.setContentsMargins(40, 25, 40, 25)
-        search_page_layout.setSpacing(18)
-
-        back_search = self._text_button("< Back")
-        back_search.clicked.connect(lambda: self.client_mp_stack.setCurrentIndex(0))
-        search_page_layout.addWidget(back_search)
-
-        title_search = QLabel("Browse Modpacks (Client)")
-        title_search.setStyleSheet(f"color: {self.colors['text']}; font-size: 22px; font-weight: bold;")
-        search_page_layout.addWidget(title_search)
-
-        # Provider indicator with change button
-        provider_row = QWidget()
-        provider_row.setStyleSheet("background: transparent;")
-        provider_row_layout = QHBoxLayout(provider_row)
-        provider_row_layout.setContentsMargins(0, 0, 0, 8)
-
-        self.client_mp_provider_label = QLabel("Searching on: Modrinth")
-        self.client_mp_provider_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px;")
-        provider_row_layout.addWidget(self.client_mp_provider_label)
-
-        change_provider_btn = self._text_button("Change")
-        change_provider_btn.clicked.connect(lambda: self.client_mp_stack.setCurrentIndex(0))
-        provider_row_layout.addWidget(change_provider_btn)
-        provider_row_layout.addStretch()
-
-        search_page_layout.addWidget(provider_row)
-
-        # Search frame
-        search_frame = self._section_frame("Search Modpacks")
-        search_layout = search_frame.layout()
-
-        search_row = QWidget()
-        search_row.setStyleSheet("background: transparent;")
-        search_h = QHBoxLayout(search_row)
-        search_h.setContentsMargins(0, 0, 0, 0)
-
-        self.client_mp_search = self._input("Search modpacks...", 560)
-        self.client_mp_search.textChanged.connect(self._on_client_mp_search_changed)
-        search_h.addWidget(self.client_mp_search)
-
-        search_layout.addWidget(search_row)
-
-        results_label = QLabel("Results:")
-        results_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 13px; font-weight: 600;")
-        search_layout.addWidget(results_label)
-
-        self.client_mp_results_scroll = NonPropagatingScrollArea()
-        self.client_mp_results_scroll.setFixedHeight(280)
-        self.client_mp_results_scroll.setWidgetResizable(True)
-        self.client_mp_results_scroll.setStyleSheet(self._scroll_style())
-
-        self.client_mp_results = QWidget()
-        self.client_mp_results_layout = QVBoxLayout(self.client_mp_results)
-        self.client_mp_results_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.client_mp_results_layout.setSpacing(8)
-        self.client_mp_results_scroll.setWidget(self.client_mp_results)
-
-        search_layout.addWidget(self.client_mp_results_scroll)
-
-        # Pagination controls
-        self.client_mp_pagination_widget = QWidget()
-        self.client_mp_pagination_widget.setStyleSheet("background: transparent;")
-        self.client_mp_pagination_widget.setVisible(False)
-        cpag_layout = QHBoxLayout(self.client_mp_pagination_widget)
-        cpag_layout.setContentsMargins(0, 5, 0, 5)
-        cpag_layout.setSpacing(5)
-
-        self.client_mp_page_info = QLabel("")
-        self.client_mp_page_info.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 12px;")
-        cpag_layout.addWidget(self.client_mp_page_info)
-
-        cpag_layout.addStretch()
-
-        self.client_mp_prev_btn = QPushButton("<")
-        self.client_mp_prev_btn.setFixedSize(32, 32)
-        self.client_mp_prev_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.client_mp_prev_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.colors['bg_input']};
-                color: {self.colors['text']};
-                border: 1px solid {self.colors['border']};
-                border-radius: 6px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{ background-color: {self.colors['bg_card']}; }}
-            QPushButton:disabled {{ color: {self.colors['text_muted']}; }}
-        """)
-        self.client_mp_prev_btn.clicked.connect(lambda: self._client_mp_go_page(self.client_mp_current_page - 1))
-        cpag_layout.addWidget(self.client_mp_prev_btn)
-
-        self.client_mp_page_btns_layout = QHBoxLayout()
-        self.client_mp_page_btns_layout.setSpacing(3)
-        cpag_layout.addLayout(self.client_mp_page_btns_layout)
-
-        self.client_mp_next_btn = QPushButton(">")
-        self.client_mp_next_btn.setFixedSize(32, 32)
-        self.client_mp_next_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        self.client_mp_next_btn.setStyleSheet(self.client_mp_prev_btn.styleSheet())
-        self.client_mp_next_btn.clicked.connect(lambda: self._client_mp_go_page(self.client_mp_current_page + 1))
-        cpag_layout.addWidget(self.client_mp_next_btn)
-
-        search_layout.addWidget(self.client_mp_pagination_widget)
-
-        search_page_layout.addWidget(search_frame)
-
-        search_page_layout.addStretch()
-        search_scroll.setWidget(search_content)
-
-        self.client_mp_stack.addWidget(search_scroll)
-
-        page_layout.addWidget(self.client_mp_stack)
-
-        return page
-
-    def _select_client_mp_provider(self, provider: str):
-        """Handle provider selection for client modpack browsing"""
-        self.client_mp_selected_provider = provider
-        provider_display = "Modrinth" if provider == "modrinth" else "CurseForge"
-        self.client_mp_provider_label.setText(f"Searching on: {provider_display}")
-
-        # Clear previous results
-        self._clear_layout(self.client_mp_results_layout)
-        self.client_mp_search.clear()
-        self.client_mp_pagination_widget.setVisible(False)
-
-        # Switch to search UI
-        self.client_mp_stack.setCurrentIndex(1)
-
-        # Load popular modpacks automatically
-        self._search_client_modpacks(page=1, popular=True)
-
-    def _open_url(self, url: str):
-        """Open URL in browser without blocking UI"""
-        threading.Thread(target=lambda: webbrowser.open(url), daemon=True).start()
+    # ============================================================
+    # UI Helper Methods
+    # ============================================================
 
     def _clear_layout(self, layout):
         """Clear all widgets from a layout"""
@@ -2237,27 +1081,28 @@ class PyCraftGUI(QMainWindow):
             if child.widget():
                 child.widget().deleteLater()
 
-    # UI Helpers
     def _section_frame(self, title: str) -> QFrame:
+        """Create a styled section frame"""
         frame = QFrame()
         frame.setStyleSheet(f"""
             QFrame {{
                 background-color: {self.colors['bg_card']};
-                border-radius: 12px;
                 border: 1px solid {self.colors['border']};
+                border-radius: 12px;
             }}
         """)
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setContentsMargins(18, 14, 18, 14)
         layout.setSpacing(10)
 
-        lbl = QLabel(title)
-        lbl.setStyleSheet(f"color: {self.colors['text']}; font-size: 15px; font-weight: 600; background: transparent;")
-        layout.addWidget(lbl)
+        label = QLabel(title)
+        label.setStyleSheet(f"color: {self.colors['text']}; font-size: 15px; font-weight: 600; border: none;")
+        layout.addWidget(label)
 
         return frame
 
     def _styled_button(self, text: str, bg: str, fg: str = "#ffffff", width: int = 200) -> QPushButton:
+        """Create a styled button"""
         btn = QPushButton(text)
         btn.setFixedSize(width, 42)
         btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
@@ -2266,21 +1111,22 @@ class PyCraftGUI(QMainWindow):
                 background-color: {bg};
                 color: {fg};
                 border: none;
-                border-radius: 10px;
-                font-size: 14px;
+                border-radius: 8px;
+                font-size: 13px;
                 font-weight: 600;
             }}
             QPushButton:hover {{
                 opacity: 0.9;
             }}
             QPushButton:disabled {{
-                background-color: #3a3a3a;
-                color: #666666;
+                background-color: {self.colors['bg_input']};
+                color: {self.colors['text_muted']};
             }}
         """)
         return btn
 
     def _text_button(self, text: str) -> QPushButton:
+        """Create a text-only button"""
         btn = QPushButton(text)
         btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         btn.setStyleSheet(f"""
@@ -2289,25 +1135,28 @@ class PyCraftGUI(QMainWindow):
                 color: {self.colors['accent']};
                 border: none;
                 font-size: 13px;
+                font-weight: 500;
                 text-align: left;
                 padding: 0;
             }}
             QPushButton:hover {{
-                color: {self.colors['accent_hover']};
+                text-decoration: underline;
             }}
         """)
         return btn
 
     def _input(self, placeholder: str, width: int = 400) -> QLineEdit:
+        """Create a styled input field"""
         inp = QLineEdit()
         inp.setPlaceholderText(placeholder)
-        inp.setFixedSize(width, 42)
+        inp.setFixedWidth(width)
+        inp.setFixedHeight(42)
         inp.setStyleSheet(f"""
             QLineEdit {{
                 background-color: {self.colors['bg_input']};
                 color: {self.colors['text']};
                 border: 1px solid {self.colors['border']};
-                border-radius: 10px;
+                border-radius: 8px;
                 padding: 0 14px;
                 font-size: 13px;
             }}
@@ -2321,32 +1170,25 @@ class PyCraftGUI(QMainWindow):
         return inp
 
     def _console(self) -> NonPropagatingTextEdit:
+        """Create a console output widget"""
         console = NonPropagatingTextEdit()
-        console.setFixedHeight(250)
         console.setReadOnly(True)
+        console.setFixedHeight(180)
         console.setStyleSheet(f"""
             QTextEdit {{
-                background-color: #0a0a0a;
+                background-color: #0d0d0d;
                 color: {self.colors['text']};
                 border: 1px solid {self.colors['border']};
-                border-radius: 10px;
-                padding: 12px;
-                font-family: 'Consolas', 'Courier New', monospace;
+                border-radius: 8px;
+                padding: 10px;
+                font-family: Consolas, Monaco, monospace;
                 font-size: 12px;
-            }}
-            QScrollBar:vertical {{
-                background-color: #1a1a1a;
-                width: 10px;
-                border-radius: 5px;
-            }}
-            QScrollBar::handle:vertical {{
-                background-color: #3a3a3a;
-                border-radius: 5px;
             }}
         """)
         return console
 
     def _scroll_style(self) -> str:
+        """Return scroll area stylesheet"""
         return f"""
             QScrollArea {{
                 background: transparent;
@@ -2357,14 +1199,18 @@ class PyCraftGUI(QMainWindow):
             }}
             QScrollBar:vertical {{
                 background-color: {self.colors['bg_card']};
-                width: 10px;
-                border-radius: 5px;
+                width: 12px;
+                border-radius: 6px;
                 border: none;
             }}
             QScrollBar::handle:vertical {{
-                background-color: #3a3a3a;
-                border-radius: 5px;
+                background-color: #4a4a4a;
+                border-radius: 6px;
                 border: none;
+                min-height: 30px;
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background-color: #5a5a5a;
             }}
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
                 height: 0px;
@@ -2376,51 +1222,50 @@ class PyCraftGUI(QMainWindow):
         """
 
     def _progress_style(self) -> str:
+        """Return progress bar stylesheet"""
         return f"""
             QProgressBar {{
                 background-color: {self.colors['bg_input']};
                 border: none;
-                border-radius: 6px;
+                border-radius: 4px;
+                height: 8px;
             }}
             QProgressBar::chunk {{
                 background-color: {self.colors['accent']};
-                border-radius: 6px;
+                border-radius: 4px;
             }}
         """
 
     def _log(self, console: QTextEdit, msg: str, level: str = "normal", max_lines: int = 500):
+        """Log message to console with color coding"""
         colors = {
-            "normal": "#ffffff", "info": "#60a5fa",
-            "success": "#4ade80", "warning": "#fbbf24", "error": "#f87171"
+            "normal": self.colors['text'],
+            "info": self.colors['blue'],
+            "success": self.colors['accent'],
+            "warning": self.colors['yellow'],
+            "error": self.colors['red'],
         }
-        color = colors.get(level, "#ffffff")
-
-        cursor = console.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
+        color = colors.get(level, self.colors['text'])
 
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(color))
+
+        cursor = console.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
         cursor.insertText(msg, fmt)
-
-        # Limit console to max_lines to prevent memory issues
-        doc = console.document()
-        line_count = doc.blockCount()
-        if line_count > max_lines:
-            # Remove excess lines from the beginning
-            excess = line_count - max_lines
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            for _ in range(excess):
-                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
-            cursor.removeSelectedText()
-            # Move back to end
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-
         console.setTextCursor(cursor)
         console.ensureCursorVisible()
 
-    # Navigation
+        # Limit lines
+        doc = console.document()
+        if doc.blockCount() > max_lines:
+            cursor = console.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor, doc.blockCount() - max_lines)
+            cursor.removeSelectedText()
+
     def _go_to(self, page: str):
+        """Navigate to a page"""
         pages = {
             "home": 0, "vanilla": 1, "modded": 2, "info": 3, "settings": 4,
             "vanilla_create": 5, "vanilla_run": 6, "modpack_install": 7, "modpack_run": 8,
@@ -2451,1122 +1296,90 @@ class PyCraftGUI(QMainWindow):
         for k, btn in self.sidebar_buttons.items():
             btn.setChecked(k == sidebar_map.get(page, ""))
 
-    # Logic
-    def _load_versions(self):
-        def load():
-            versions = self.api_handler.get_version_names()
-            if versions:
-                self.versions_list = versions
-                self.filtered_versions = versions.copy()
-                QTimer.singleShot(0, lambda: self._show_versions(versions))
+    # ============================================================
+    # Folder Validation Helpers
+    # ============================================================
 
-        threading.Thread(target=load, daemon=True).start()
-
-    def _show_versions(self, versions: list):
-        while self.ver_list_layout.count():
-            child = self.ver_list_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        for v in versions[:50]:
-            btn = QPushButton(v)
-            btn.setFixedHeight(34)
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    color: {self.colors['text']};
-                    border: none;
-                    border-radius: 6px;
-                    text-align: left;
-                    padding-left: 12px;
-                    font-size: 13px;
-                }}
-                QPushButton:hover {{
-                    background-color: {self.colors['bg_input']};
-                }}
-            """)
-            btn.clicked.connect(lambda _, ver=v: self._pick_version(ver))
-            self.ver_list_layout.addWidget(btn)
-
-    def _show_version_dropdown(self):
-        """Show version dropdown and focus input"""
-        # Show all versions when dropdown opens
-        if self.versions_list:
-            self._show_versions(self.versions_list)
-        self.ver_scroll.show()
-        self.ver_search.setFocus()
-        # Restore placeholder if a version was selected
-        if self.selected_version:
-            self.ver_search.setPlaceholderText("Search version...")
-
-    def _collapse_version_dropdown(self, ver: str):
-        """Collapse version dropdown after selection"""
-        # Disconnect textChanged to prevent dropdown from re-showing when we clear text
-        self.ver_search.textChanged.disconnect(self._filter_versions)
-        self.ver_scroll.hide()
-        self.ver_search.setText("")
-        self.ver_search.setPlaceholderText(f"✓ {ver} (click to change)")
-        self.ver_search.clearFocus()
-        # Reconnect textChanged
-        self.ver_search.textChanged.connect(self._filter_versions)
-
-    def _filter_versions(self, text: str):
-        # Show dropdown when typing
-        if not self.ver_scroll.isVisible():
-            self.ver_scroll.show()
-        if not text:
-            self.filtered_versions = self.versions_list.copy()
-        else:
-            self.filtered_versions = [v for v in self.versions_list if text.lower() in v.lower()]
-        self._show_versions(self.filtered_versions)
-
-    def _pick_version(self, ver: str):
-        self.selected_version = ver
-        self.ver_selected.setText(f"✓ Selected: {ver}")
-        self.ver_selected.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
-        self._update_download_btn()
-        # Collapse version list after selection - use timer to ensure it happens after click
-        QTimer.singleShot(50, lambda: self._collapse_version_dropdown(ver))
-
-    def _is_dangerous_folder(self, folder_path: str) -> tuple[bool, str]:
-        """
-        Check if a folder is a dangerous/important system location.
-
-        Returns:
-            Tuple of (is_dangerous, warning_message)
-        """
+    def _is_dangerous_folder(self, folder_path: str) -> tuple:
+        """Check if a folder is a dangerous/important system location"""
         if not folder_path:
             return False, ""
-
         path = Path(folder_path).resolve()
-        path_str = str(path).lower()
         path_name = path.name.lower()
 
-        # Check if it's a drive root (C:\, D:\, etc.)
-        if path.parent == path:  # Root of a drive
-            return True, "You selected a drive root. This will create server files directly in your drive, which can cause clutter and issues."
+        if path.parent == path:
+            return True, "You selected a drive root."
 
-        # Dangerous folder names (case-insensitive)
         dangerous_names = {
-            "downloads": "Downloads folder",
-            "descargas": "Downloads folder",
-            "desktop": "Desktop",
-            "escritorio": "Desktop",
-            "documents": "Documents folder",
-            "documentos": "Documents folder",
-            "my documents": "Documents folder",
-            "mis documentos": "Documents folder",
-            "program files": "Program Files",
-            "program files (x86)": "Program Files",
-            "archivos de programa": "Program Files",
-            "windows": "Windows system folder",
-            "system32": "Windows system folder",
-            "users": "Users folder",
-            "appdata": "AppData folder",
+            "downloads": "Downloads folder", "descargas": "Downloads folder",
+            "desktop": "Desktop", "escritorio": "Desktop",
+            "documents": "Documents folder", "documentos": "Documents folder",
+            "program files": "Program Files", "program files (x86)": "Program Files",
+            "windows": "Windows system folder", "system32": "Windows system folder",
+            "users": "Users folder", "appdata": "AppData folder",
         }
-
-        # Check folder name
         if path_name in dangerous_names:
-            location = dangerous_names[path_name]
-            return True, f"You selected your {location}. Creating a Minecraft server here is not recommended as it may cause data loss or clutter."
-
-        # Check if path contains dangerous folders at top level
-        for part in path.parts:
-            part_lower = part.lower()
-            if part_lower in ["program files", "program files (x86)", "windows", "system32"]:
-                return True, f"You selected a folder inside '{part}'. This is a system location and is not recommended for Minecraft servers."
-
+            return True, f"You selected your {dangerous_names[path_name]}."
+        if path == Path.home():
+            return True, "You selected your user folder directly."
         return False, ""
 
     def _is_existing_server(self, folder_path: str) -> bool:
-        """
-        Check if folder already contains a Minecraft server.
-        Returns True if server files are detected.
-        """
-        path = Path(folder_path)
-
-        # Check for exact files
-        if (path / "server.jar").exists():
-            return True
-        if (path / "server.properties").exists():
-            return True
-
-        # Check for pattern-based files (forge, fabric, paper, spigot)
-        for pattern in ["forge-*.jar", "fabric-server-*.jar", "paper-*.jar", "spigot-*.jar"]:
-            if list(path.glob(pattern)):
-                return True
-
-        return False
+        """Check if folder already contains a server"""
+        import os
+        server_files = ["server.jar", "server.properties", "eula.txt"]
+        return any(os.path.exists(os.path.join(folder_path, f)) for f in server_files)
 
     def _warn_existing_server(self, folder_path: str) -> bool:
-        """
-        Show error if folder already contains a server. Returns True if folder is clean, False to cancel.
-        """
+        """Warn if folder already contains server files"""
         if not self._is_existing_server(folder_path):
             return True
-
         msg = QMessageBox(self)
         msg.setWindowTitle("Server Already Exists")
         msg.setIcon(QMessageBox.Icon.Warning)
-        msg.setText("This folder already contains a Minecraft server!")
-        msg.setInformativeText("Please select an empty folder or create a new one to avoid conflicts with existing server files.")
-        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-        msg.exec()
-
-        return False
+        msg.setText("This folder already contains a Minecraft server.")
+        msg.setInformativeText("Installing here will overwrite existing server files. Continue?")
+        msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg.setDefaultButton(QMessageBox.StandardButton.No)
+        return msg.exec() == QMessageBox.StandardButton.Yes
 
     def _warn_dangerous_folder(self, folder_path: str) -> bool:
-        """
-        Show warning if folder is dangerous. Returns True if user wants to continue, False to cancel.
-        """
+        """Show warning for dangerous folder locations"""
         is_dangerous, warning = self._is_dangerous_folder(folder_path)
         if not is_dangerous:
             return True
-
         msg = QMessageBox(self)
         msg.setWindowTitle("Warning: Folder Location")
         msg.setIcon(QMessageBox.Icon.Warning)
         msg.setText("Are you sure you want to use this folder?")
-        msg.setInformativeText(f"{warning}\n\nIt's recommended to create a dedicated folder for your server (e.g., 'MinecraftServers/MyServer').")
+        msg.setInformativeText(f"{warning}\n\nIt's recommended to create a dedicated folder for your server.")
         msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         msg.setDefaultButton(QMessageBox.StandardButton.No)
-
         return msg.exec() == QMessageBox.StandardButton.Yes
 
-    def _select_create_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
-        if folder:
-            if not self._warn_dangerous_folder(folder):
-                return  # User cancelled
-            if not self._warn_existing_server(folder):
-                return  # Server already exists
-            self.server_folder = folder
-            self.create_folder_label.setText(f"Folder: {folder}")
-            self._update_download_btn()
-
-    def _update_download_btn(self):
-        self.download_btn.setEnabled(bool(self.selected_version and self.server_folder))
-
-    def _download_server(self):
-        if not self.selected_version or not self.server_folder:
-            return
-
-        # Check Java compatibility using smart detection
-        # This will: 1) Use system Java if compatible, 2) Use PyCraft Java if available, 3) Prompt to install
-        java_executable = self._check_and_get_java(self.selected_version)
-        if not java_executable:
-            # User cancelled or installation failed
-            return
-
-        # Proceed with download
-        self.download_btn.setEnabled(False)
-        self.active_progress = self.create_progress
-        self.active_progress_label = self.create_progress_label
-        self.active_status = self.create_status
-
-        # Capture java path for the thread
-        java_to_use = java_executable
-
-        def process():
-            nonlocal java_to_use
-            try:
-                self.log_signal.emit(f"\nDownloading Minecraft {self.selected_version}...\n", "info", "v_create")
-
-                url = self.api_handler.get_server_jar_url(self.selected_version)
-                if not url:
-                    self.log_signal.emit("Error: Could not get URL\n", "error", "v_create")
-                    return
-
-                server_path = self.downloader.download_server(
-                    url, self.server_folder, self.selected_version,
-                    progress_callback=lambda p: self.progress_signal.emit(p)
-                )
-
-                if not server_path:
-                    self.log_signal.emit("Download failed\n", "error", "v_create")
-                    return
-
-                self.log_signal.emit("Download complete\n", "success", "v_create")
-
-                # Use pre-installed Java if available, otherwise find it quietly
-                if java_to_use:
-                    java = java_to_use
-                    self.log_signal.emit(f"Using Java: {java}\n", "info", "v_create")
-                else:
-                    # Simplified callback - only show key messages
-                    def quiet_log(msg):
-                        msg_lower = msg.lower()
-                        if any(x in msg_lower for x in ["✓", "✗", "error"]):
-                            self.log_signal.emit(msg, "normal", "v_create")
-
-                    java = self.java_manager.ensure_java_installed(
-                        self.selected_version,
-                        log_callback=quiet_log
-                    )
-
-                if not java:
-                    self.log_signal.emit("Java not available\n", "error", "v_create")
-                    return
-
-                self.log_signal.emit("\nConfiguring server...\n", "info", "v_create")
-
-                self.server_manager = ServerManager(self.server_folder, java_executable=java)
-                success = self.server_manager.run_server_first_time(
-                    log_callback=lambda m: self.log_signal.emit(m, "normal", "v_create")
-                )
-
-                if success:
-                    self.log_signal.emit("\n" + "="*50 + "\n", "success", "v_create")
-                    self.log_signal.emit("SERVER CREATED SUCCESSFULLY\n", "success", "v_create")
-                    self.log_signal.emit("="*50 + "\n", "success", "v_create")
-
-                    # Show success modal via signal (thread-safe)
-                    self.vanilla_install_success_signal.emit(self.selected_version, self.server_folder)
-
-            except Exception as e:
-                self.log_signal.emit(f"Error: {e}\n", "error", "v_create")
-
-            finally:
-                QTimer.singleShot(0, lambda: self.download_btn.setEnabled(True))
-
-        threading.Thread(target=process, daemon=True).start()
+    # ============================================================
+    # Success Callbacks for Controllers
+    # ============================================================
 
     def _show_vanilla_install_success(self, mc_version: str, folder: str):
-        """Show success modal after vanilla server installation"""
+        """Show success message after vanilla server creation"""
         msg = QMessageBox(self)
-        msg.setWindowTitle("Server Created Successfully")
+        msg.setWindowTitle("Server Created")
         msg.setIcon(QMessageBox.Icon.Information)
-        msg.setText(f"Vanilla server Minecraft {mc_version} has been created!")
-        msg.setInformativeText(
-            f"Location: {folder}\n\n"
-            f"Go to 'Vanilla' > 'Run' tab to start your server."
-        )
-        msg.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {self.colors['bg_card']};
-            }}
-            QMessageBox QLabel {{
-                color: {self.colors['text']};
-                font-size: 13px;
-            }}
-            QPushButton {{
-                background-color: {self.colors['accent']};
-                color: #000000;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 6px;
-                font-weight: 600;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {self.colors['accent_hover']};
-            }}
-        """)
+        msg.setText(f"Minecraft {mc_version} server created successfully!")
+        msg.setInformativeText(f"Location: {folder}\n\nYou can now run the server from the 'Run Existing Server' page.")
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.exec()
 
-    def _select_run_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Server Folder")
-        if folder:
-            # Clear previous state
-            self.vanilla_run_console.clear()
-            self.run_cmd.clear()
-            self.run_cmd_btn.setEnabled(False)
-            self._log(self.vanilla_run_console, "Loading server folder...\n", "info")
-
-            if os.path.exists(os.path.join(folder, "server.jar")):
-                self.server_folder = folder
-                self.run_folder_label.setText(f"Folder: {folder}")
-
-                self.server_manager = ServerManager(folder)
-                self.is_server_configured = True
-
-                # Detect Minecraft version
-                mc_version = self.server_manager.detect_minecraft_version()
-                self.detected_mc_version = mc_version  # Store for later use
-
-                if mc_version:
-                    self.run_status.setText(f"Minecraft {mc_version}")
-                    self._log(self.vanilla_run_console, f"\nServer found: {folder}\n", "success")
-                    self._log(self.vanilla_run_console, f"Detected version: Minecraft {mc_version}\n", "info")
-                    # Show server info footer
-                    self.vanilla_server_info.setText(f"Minecraft {mc_version}")
-                    self.vanilla_server_info.setVisible(True)
-                else:
-                    self.run_status.setText("Server found (version unknown)")
-                    self._log(self.vanilla_run_console, f"\nServer found: {folder}\n", "success")
-                    self._log(self.vanilla_run_console, "Could not detect Minecraft version\n", "warning")
-                    self.vanilla_server_info.setVisible(False)
-
-                self.run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
-                self.run_start.setEnabled(True)
-
-                # Enable config only if server.properties exists
-                has_properties = os.path.exists(os.path.join(folder, "server.properties"))
-                self.run_config.setEnabled(has_properties)
-                if not has_properties:
-                    self._log(self.vanilla_run_console, "Run server once to generate server.properties\n", "warning")
-
-                self.run_stop.setEnabled(False)
-            else:
-                self.server_folder = None
-                self.run_folder_label.setText(f"Folder: {folder}")
-                self.run_status.setText("server.jar not found")
-                self.run_status.setStyleSheet(f"color: {self.colors['red']}; font-size: 13px; font-weight: 600; border: none;")
-                self.vanilla_server_info.setVisible(False)
-                self.run_start.setEnabled(False)
-                self.run_config.setEnabled(False)
-                self.run_stop.setEnabled(False)
-                self.run_cmd_btn.setEnabled(False)
-                self.server_manager = None
-                self.is_server_configured = False
-                self.detected_mc_version = None
-
-    def _start_vanilla(self):
-        if not self.server_manager:
-            return
-
-        # Get Minecraft version (from detection or default to 1.20)
-        mc_version = self.detected_mc_version or self.server_manager.detect_minecraft_version()
-        if not mc_version:
-            mc_version = "1.20"  # Default assumption for unknown versions
-            self._log(self.vanilla_run_console, "\nCould not detect version, assuming Java 17+ required\n", "warning")
-
-        # Check Java compatibility using smart detection
-        # This will: 1) Use system Java if compatible, 2) Use PyCraft Java if available, 3) Prompt to install
-        java_executable = self._check_and_get_java(mc_version)
-        if not java_executable:
-            # User cancelled or installation failed
-            return
-
-        # Update server manager with the selected Java
-        self.server_manager.java_executable = java_executable
-        java_source = "system" if java_executable == "java" else "PyCraft"
-        self._log(self.vanilla_run_console, f"\nUsing {java_source} Java: {java_executable}\n", "info")
-
-        # Configure online-mode=false automatically for LAN/Hamachi play
-        self.server_manager.set_online_mode(False)
-
-        self._log(self.vanilla_run_console, "\n=== STARTING SERVER ===\n", "info")
-        self.run_start.setEnabled(False)
-        self.run_config.setEnabled(False)
-        self.run_stop.setEnabled(True)
-
-        # Track if server started successfully
-        self._vanilla_server_started_successfully = False
-
-        def on_server_stopped():
-            """Called when server process ends (crash or normal stop)"""
-            # Emit signal to update UI from main thread
-            self.vanilla_server_stopped_signal.emit(self._vanilla_server_started_successfully)
-
-        def log_callback(line: str):
-            """Monitor server output"""
-            # Check for successful start
-            if "Done" in line and "!" in line:
-                self._vanilla_server_started_successfully = True
-            # Forward to UI
-            self.log_signal.emit(line, "normal", "v_run")
-
-        def start():
-            success = self.server_manager.start_server(
-                ram_mb=self.vanilla_ram,
-                log_callback=log_callback,
-                detached=True,
-                on_stopped=on_server_stopped
-            )
-            # Emit signal to update UI from main thread
-            self.vanilla_server_started_signal.emit(success)
-
-        threading.Thread(target=start, daemon=True).start()
-
-    def _on_vanilla_server_started(self, success: bool):
-        """Handle vanilla server started (called from main thread via signal)"""
-        if success:
-            self.run_cmd_btn.setEnabled(True)
-        else:
-            # Re-enable start button if failed
-            self.run_start.setEnabled(True)
-            self.run_config.setEnabled(True)
-            self.run_stop.setEnabled(False)
-
-    def _on_vanilla_server_stopped(self, started_successfully: bool):
-        """Handle vanilla server stopped (called from main thread via signal)"""
-        # Re-enable UI elements
-        self.run_start.setEnabled(True)
-
-        # Enable config only if server.properties exists (may have been generated on first run)
-        if self.server_folder:
-            has_properties = os.path.exists(os.path.join(self.server_folder, "server.properties"))
-            self.run_config.setEnabled(has_properties)
-        else:
-            self.run_config.setEnabled(False)
-
-        self.run_stop.setEnabled(False)
-        self.run_cmd_btn.setEnabled(False)
-
-        if started_successfully:
-            self.log_signal.emit("\n[Server stopped - Ready to restart]\n", "info", "v_run")
-        else:
-            # Server crashed before "Done"
-            self.log_signal.emit("\n[Server crashed - Ready to restart]\n", "error", "v_run")
-            # Show crash dialog after a brief delay to ensure UI is updated
-            QTimer.singleShot(100, lambda: self.server_crashed_signal.emit(self.server_folder))
-
-    def _stop_vanilla(self):
-        if not self.server_manager:
-            return
-
-        # Check if server is actually running
-        if not self.server_manager.is_server_running():
-            self._log(self.vanilla_run_console, "\nServer is not running\n", "warning")
-            return
-
-        # Disable all buttons immediately to prevent double-clicks
-        self.run_stop.setEnabled(False)
-        self.run_start.setEnabled(False)
-        self.run_config.setEnabled(False)
-        self.run_cmd_btn.setEnabled(False)
-        self._log(self.vanilla_run_console, "\nStopping server...\n", "warning")
-
-        def stop():
-            try:
-                self.server_manager.stop_server()
-
-                # stop_server() is blocking, so when it returns the server is stopped
-                # Re-enable buttons on main thread
-                def enable_buttons():
-                    self._log(self.vanilla_run_console, "Server stopped - Ready to restart\n", "success")
-                    self.run_start.setEnabled(True)
-                    self.run_config.setEnabled(True)
-                    self.run_stop.setEnabled(False)
-                    self.run_cmd_btn.setEnabled(False)
-
-                QTimer.singleShot(0, enable_buttons)
-            except Exception as e:
-                # If stop_server() fails, still re-enable buttons
-                def enable_buttons_on_error():
-                    self._log(self.vanilla_run_console, f"Error stopping server: {e}\n", "error")
-                    self.run_start.setEnabled(True)
-                    self.run_config.setEnabled(True)
-                    self.run_stop.setEnabled(False)
-                    self.run_cmd_btn.setEnabled(False)
-
-                QTimer.singleShot(0, enable_buttons_on_error)
-
-        threading.Thread(target=stop, daemon=True).start()
-
-    def _blink_send_button(self, btn: QPushButton, manager):
-        """Blink the send button for visual feedback when sending a command."""
-        blink_count = [0]  # Use list to modify in nested function
-
-        def toggle():
-            if blink_count[0] >= 2:  # 2 full blinks (on-off-on-off)
-                btn.setEnabled(manager is not None and manager.is_server_running())
-                return
-
-            # Toggle enabled state
-            btn.setEnabled(not btn.isEnabled())
-            blink_count[0] += 1
-            QTimer.singleShot(400, toggle)  # 400ms = half of 0.8s cycle
-
-        btn.setEnabled(False)
-        QTimer.singleShot(400, toggle)
-
-    def _send_vanilla_cmd(self):
-        cmd = self.run_cmd.text().strip()
-        if cmd and self.server_manager:
-            if not cmd.startswith("/"):
-                self._log(self.vanilla_run_console, "Commands must start with /\n", "warning")
-                return
-            # Remove "/" prefix for server console (server doesn't use /)
-            server_cmd = cmd[1:]
-            self._log(self.vanilla_run_console, f"> {cmd}\n", "info")
-            self.server_manager.send_command(server_cmd)
-            self.run_cmd.clear()
-
-            # Blink button for visual feedback
-            self._blink_send_button(self.run_cmd_btn, self.server_manager)
-
-    def _config_vanilla(self):
-        if self.server_manager and self.server_manager.is_server_running():
-            QMessageBox.warning(self, "Warning", "Stop server first")
-            return
-
-        self._open_config_dialog("vanilla")
-
-    def _open_config_dialog(self, server_type: str):
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Server Configuration")
-        # Vanilla needs more height for pause-when-empty option
-        dialog_height = 720 if server_type == "vanilla" else 620
-        dialog.setFixedSize(420, dialog_height)
-        dialog.setStyleSheet(f"background-color: {self.colors['bg_card']};")
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(24, 24, 24, 24)
-        layout.setSpacing(12)
-
-        # Get manager
-        manager = self.server_manager if server_type == "vanilla" else self.modpack_server_manager
-
-        # Get total system RAM
-        total_ram = system_utils.get_total_ram()
-        if total_ram == -1:
-            total_ram = 8192  # Default fallback if can't detect
-
-        # Combo style
-        combo_style = f"""
-            QComboBox {{
-                background-color: {self.colors['bg_input']};
-                color: {self.colors['text']};
-                border: 1px solid {self.colors['border']};
-                border-radius: 8px;
-                padding: 10px 14px;
-                padding-right: 35px;
-                font-size: 13px;
-            }}
-            QComboBox:hover {{
-                border: 1px solid {self.colors['accent']};
-            }}
-            QComboBox:on {{
-                border: 1px solid {self.colors['accent']};
-            }}
-            QComboBox::drop-down {{
-                subcontrol-origin: padding;
-                subcontrol-position: center right;
-                width: 30px;
-                border: none;
-            }}
-            QComboBox::down-arrow {{
-                width: 12px;
-                height: 12px;
-                image: none;
-            }}
-            QComboBox QAbstractItemView {{
-                background-color: {self.colors['bg_input']};
-                color: {self.colors['text']};
-                selection-background-color: {self.colors['accent']};
-                selection-color: #000000;
-                border: 1px solid {self.colors['border']};
-                border-radius: 8px;
-                padding: 4px;
-            }}
-            QComboBox QAbstractItemView::item {{
-                padding: 8px 12px;
-                border-radius: 4px;
-            }}
-            QComboBox QAbstractItemView::item:hover {{
-                background-color: rgba(74, 222, 128, 0.2);
-            }}
-        """
-
-        # Helper to create combo with icon
-        def create_combo_with_arrow(items, current_value):
-            container = QWidget()
-            container.setStyleSheet("background: transparent;")
-            h_layout = QHBoxLayout(container)
-            h_layout.setContentsMargins(0, 0, 0, 0)
-            h_layout.setSpacing(0)
-
-            combo = QComboBox()
-            combo.addItems(items)
-            combo.setCurrentText(current_value)
-            combo.setStyleSheet(combo_style)
-            combo.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-
-            # Add arrow label
-            arrow_label = QLabel("▼")
-            arrow_label.setFixedWidth(30)
-            arrow_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            arrow_label.setStyleSheet(f"""
-                color: {self.colors['text_secondary']};
-                font-size: 10px;
-                background: transparent;
-                margin-right: 10px;
-            """)
-
-            # Update arrow on popup show/hide
-            def on_show():
-                arrow_label.setText("▲")
-                arrow_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 10px; background: transparent; margin-right: 10px;")
-
-            def on_hide():
-                arrow_label.setText("▼")
-                arrow_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 10px; background: transparent; margin-right: 10px;")
-
-            combo.showPopup = lambda orig=combo.showPopup: (on_show(), orig())[-1]
-            combo.hidePopup = lambda orig=combo.hidePopup: (on_hide(), orig())[-1]
-
-            h_layout.addWidget(combo, 1)
-            h_layout.addWidget(arrow_label)
-
-            return container, combo
-
-        slider_style = f"""
-            QSlider::groove:horizontal {{
-                background: {self.colors['bg_input']};
-                height: 8px;
-                border-radius: 4px;
-            }}
-            QSlider::handle:horizontal {{
-                background: {self.colors['accent']};
-                width: 18px;
-                height: 18px;
-                margin: -5px 0;
-                border-radius: 9px;
-            }}
-            QSlider::sub-page:horizontal {{
-                background: {self.colors['accent']};
-                border-radius: 4px;
-            }}
-        """
-
-        # === RAM Section ===
-        ram_section = QLabel("RAM Allocation")
-        ram_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
-        layout.addWidget(ram_section)
-
-        ram = self.vanilla_ram if server_type == "vanilla" else self.modpack_ram
-        ram_label = QLabel(f"{ram} MB ({ram / 1024:.1f} GB)")
-        ram_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 500;")
-        layout.addWidget(ram_label)
-
-        ram_slider = QSlider(Qt.Orientation.Horizontal)
-        min_ram = 1024 if server_type == "vanilla" else 2048
-        max_ram = min(total_ram - 1024, 32768)
-        max_ram = max(max_ram, min_ram + 1024)
-
-        ram_slider.setMinimum(min_ram)
-        ram_slider.setMaximum(max_ram)
-        ram_slider.setSingleStep(512)
-        ram_slider.setValue(ram)
-        ram_slider.setStyleSheet(slider_style)
-        ram_slider.valueChanged.connect(lambda v: ram_label.setText(f"{v} MB ({v / 1024:.1f} GB)"))
-        layout.addWidget(ram_slider)
-
-        ram_info = QLabel(f"System: {total_ram / 1024:.1f} GB | Max: {max_ram / 1024:.1f} GB")
-        ram_info.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-        layout.addWidget(ram_info)
-
-        layout.addSpacing(4)
-
-        # === Gamemode Section ===
-        gamemode_section = QLabel("Gamemode")
-        gamemode_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
-        layout.addWidget(gamemode_section)
-
-        current_gamemode = "survival"
-        if manager:
-            saved_gm = manager.get_property("gamemode")
-            if saved_gm:
-                current_gamemode = saved_gm
-
-        gamemode_container, gamemode_combo = create_combo_with_arrow(
-            ["survival", "creative", "adventure", "spectator"],
-            current_gamemode
-        )
-        layout.addWidget(gamemode_container)
-
-        layout.addSpacing(4)
-
-        # === Difficulty Section ===
-        diff_section = QLabel("Difficulty")
-        diff_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
-        layout.addWidget(diff_section)
-
-        current_difficulty = "normal"
-        if manager:
-            saved_diff = manager.get_property("difficulty")
-            if saved_diff:
-                current_difficulty = saved_diff
-
-        diff_container, diff_combo = create_combo_with_arrow(
-            ["peaceful", "easy", "normal", "hard"],
-            current_difficulty
-        )
-        layout.addWidget(diff_container)
-
-        layout.addSpacing(4)
-
-        # === Max Players Section ===
-        players_section = QLabel("Max Players")
-        players_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
-        layout.addWidget(players_section)
-
-        current_max_players = 20
-        if manager:
-            saved_players = manager.get_property("max-players")
-            if saved_players:
-                try:
-                    current_max_players = int(saved_players)
-                except ValueError:
-                    pass
-
-        players_label = QLabel(f"{current_max_players} players")
-        players_label.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 500;")
-        layout.addWidget(players_label)
-
-        players_slider = QSlider(Qt.Orientation.Horizontal)
-        players_slider.setMinimum(1)
-        players_slider.setMaximum(100)
-        players_slider.setValue(current_max_players)
-        players_slider.setStyleSheet(slider_style)
-        players_slider.valueChanged.connect(lambda v: players_label.setText(f"{v} players"))
-        layout.addWidget(players_slider)
-
-        layout.addSpacing(4)
-
-        # === Online Mode Section ===
-        online_section = QLabel("Online Mode")
-        online_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
-        layout.addWidget(online_section)
-
-        online_hint = QLabel("Set to OFF to allow non-premium players (LAN/Hamachi)")
-        online_hint.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-        online_hint.setWordWrap(True)
-        layout.addWidget(online_hint)
-
-        # Get current value (default to false for easier LAN play)
-        current_online_mode = "false"
-        if manager:
-            saved_online = manager.get_property("online-mode")
-            if saved_online:
-                current_online_mode = saved_online.lower()
-
-        online_container, online_combo = create_combo_with_arrow(
-            ["false", "true"],
-            current_online_mode
-        )
-        layout.addWidget(online_container)
-
-        layout.addSpacing(4)
-
-        # === Pause When Empty Section (only for vanilla) ===
-        pause_spinbox = None  # Will be set only for vanilla
-        if server_type == "vanilla":
-            pause_section = QLabel("Pause When Empty")
-            pause_section.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600;")
-            layout.addWidget(pause_section)
-
-            pause_hint = QLabel("Server pauses when no players connected (saves resources)")
-            pause_hint.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-            pause_hint.setWordWrap(True)
-            layout.addWidget(pause_hint)
-
-            # Get current value
-            current_pause = 0  # 0 = disabled
-            if manager:
-                saved_pause = manager.get_property("pause-when-empty-seconds")
-                if saved_pause:
-                    try:
-                        current_pause = int(saved_pause)
-                    except ValueError:
-                        pass
-
-            # Container for input
-            pause_container = QWidget()
-            pause_container.setStyleSheet("background: transparent;")
-            pause_h_layout = QHBoxLayout(pause_container)
-            pause_h_layout.setContentsMargins(0, 4, 0, 0)
-            pause_h_layout.setSpacing(8)
-
-            # Spinbox for seconds (0-7200 = up to 2 hours)
-            pause_spinbox = QSpinBox()
-            pause_spinbox.setMinimum(0)
-            pause_spinbox.setMaximum(7200)
-            pause_spinbox.setValue(current_pause)
-            pause_spinbox.setSingleStep(60)
-            pause_spinbox.setSpecialValueText("Disabled")
-            # Fix input validation for high values
-            pause_spinbox.setKeyboardTracking(False)
-            pause_spinbox.lineEdit().setMaxLength(4)
-            pause_spinbox.setCorrectionMode(QSpinBox.CorrectionMode.CorrectToNearestValue)
-            pause_spinbox.setStyleSheet(f"""
-                QSpinBox {{
-                    background-color: {self.colors['bg_input']};
-                    color: {self.colors['text']};
-                    border: 1px solid {self.colors['border']};
-                    border-radius: 8px;
-                    padding: 8px 12px;
-                    font-size: 13px;
-                    min-width: 100px;
-                }}
-                QSpinBox:hover {{
-                    border: 1px solid {self.colors['accent']};
-                }}
-                QSpinBox::up-button, QSpinBox::down-button {{
-                    width: 20px;
-                    border: none;
-                    background: transparent;
-                }}
-            """)
-
-            # Label showing human-readable time
-            pause_time_label = QLabel()
-            pause_time_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 12px;")
-
-            def update_pause_label(value):
-                if value == 0:
-                    pause_time_label.setText("")
-                elif value < 60:
-                    pause_time_label.setText(f"= {value} sec")
-                elif value < 3600:
-                    mins = value // 60
-                    secs = value % 60
-                    if secs == 0:
-                        pause_time_label.setText(f"= {mins} min")
-                    else:
-                        pause_time_label.setText(f"= {mins}m {secs}s")
-                else:
-                    hours = value // 3600
-                    mins = (value % 3600) // 60
-                    if mins == 0:
-                        pause_time_label.setText(f"= {hours}h")
-                    else:
-                        pause_time_label.setText(f"= {hours}h {mins}m")
-
-            update_pause_label(current_pause)
-            pause_spinbox.valueChanged.connect(update_pause_label)
-
-            # Quick presets
-            preset_5m = QPushButton("5m")
-            preset_5m.setFixedSize(36, 28)
-            preset_5m.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            preset_5m.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {self.colors['bg_input']};
-                    color: {self.colors['text_secondary']};
-                    border: 1px solid {self.colors['border']};
-                    border-radius: 6px;
-                    font-size: 11px;
-                }}
-                QPushButton:hover {{
-                    background-color: {self.colors['accent']};
-                    color: #000000;
-                }}
-            """)
-            preset_5m.clicked.connect(lambda: pause_spinbox.setValue(300))
-
-            preset_30m = QPushButton("30m")
-            preset_30m.setFixedSize(36, 28)
-            preset_30m.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            preset_30m.setStyleSheet(preset_5m.styleSheet())
-            preset_30m.clicked.connect(lambda: pause_spinbox.setValue(1800))
-
-            preset_1h = QPushButton("1h")
-            preset_1h.setFixedSize(36, 28)
-            preset_1h.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            preset_1h.setStyleSheet(preset_5m.styleSheet())
-            preset_1h.clicked.connect(lambda: pause_spinbox.setValue(3600))
-
-            pause_h_layout.addWidget(pause_spinbox)
-            pause_h_layout.addWidget(pause_time_label)
-            pause_h_layout.addStretch()
-            pause_h_layout.addWidget(preset_5m)
-            pause_h_layout.addWidget(preset_30m)
-            pause_h_layout.addWidget(preset_1h)
-
-            layout.addWidget(pause_container)
-
-        layout.addStretch()
-
-        # Save button
-        save = self._styled_button("Save", self.colors['accent'], "#000000", 120)
-        save.clicked.connect(lambda: self._save_config(
-            server_type,
-            ram_slider.value(),
-            diff_combo.currentText(),
-            gamemode_combo.currentText(),
-            players_slider.value(),
-            online_combo.currentText(),
-            pause_spinbox.value() if pause_spinbox else None,
-            dialog
-        ))
-        layout.addWidget(save, alignment=Qt.AlignmentFlag.AlignCenter)
-
-        # Footer with version info
-        layout.addSpacing(12)
-        footer_line = QFrame()
-        footer_line.setFrameShape(QFrame.Shape.HLine)
-        footer_line.setStyleSheet(f"background-color: {self.colors['border']}; max-height: 1px;")
-        layout.addWidget(footer_line)
-
-        # Get version info
-        mc_version = ""
-        loader_info = ""
-
-        if server_type == "vanilla":
-            if self.server_manager:
-                mc_version = self.server_manager.detect_minecraft_version() or ""
-            loader_info = "Vanilla"
-        else:
-            if self.modpack_server_path:
-                # Try ServerManager first, then fallback to our detection
-                if self.modpack_server_manager:
-                    mc_version = self.modpack_server_manager.detect_minecraft_version() or ""
-                if not mc_version:
-                    mc_version = self._detect_modpack_mc_version(self.modpack_server_path)
-                loader_info = self._detect_modpack_loader(self.modpack_server_path) or "Modded"
-
-        version_text = ""
-        if mc_version:
-            version_text = f"Minecraft {mc_version}"
-        if loader_info:
-            if version_text:
-                version_text += f" | {loader_info}"
-            else:
-                version_text = loader_info
-
-        if version_text:
-            footer_label = QLabel(version_text)
-            footer_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            footer_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-            layout.addWidget(footer_label)
-
-        dialog.exec()
-
-    def _save_config(self, server_type: str, ram: int, difficulty: str, gamemode: str, max_players: int, online_mode: str, pause_when_empty: Optional[int], dialog: QDialog):
-        if server_type == "vanilla":
-            self.vanilla_ram = ram
-            if self.server_manager:
-                self.server_manager.configure_server_properties(difficulty=difficulty)
-                self.server_manager.update_property("gamemode", gamemode)
-                self.server_manager.update_property("max-players", str(max_players))
-                self.server_manager.update_property("online-mode", online_mode)
-                if pause_when_empty is not None:
-                    self.server_manager.update_property("pause-when-empty-seconds", str(pause_when_empty))
-        else:
-            self.modpack_ram = ram
-            if self.modpack_server_manager:
-                self.modpack_server_manager.configure_server_properties(difficulty=difficulty)
-                self.modpack_server_manager.update_property("gamemode", gamemode)
-                self.modpack_server_manager.update_property("max-players", str(max_players))
-                self.modpack_server_manager.update_property("online-mode", online_mode)
-        dialog.accept()
-
-    # Modpack search with debounce
-    def _on_mp_search_changed(self, text: str):
-        """Handle text changes with debounce for real-time search"""
-        # Clear results if text is too short
-        if len(text.strip()) < 3:
-            # Clear previous results
-            while self.mp_results_layout.count():
-                child = self.mp_results_layout.takeAt(0)
-                if child.widget():
-                    child.widget().deleteLater()
-            self.mp_pagination_widget.setVisible(False)
-            self.mp_search_timer.stop()
-
-            # If search is empty, reload popular modpacks
-            if len(text.strip()) == 0:
-                self._search_modpacks(page=1, popular=True)
-            return
-
-        # When user types, switch from popular to search mode
-        self.mp_is_popular_search = False
-
-        # Restart debounce timer
-        self.mp_search_timer.stop()
-        self.mp_search_timer.start()
-
-    def _search_modpacks(self, page: int = 1, popular: bool = False):
-        query = self.mp_search.text().strip()
-
-        # Allow empty query for popular modpacks, otherwise require 3+ chars
-        if not popular and len(query) < 3:
-            return
-
-        self.mp_search_query = query if not popular else ""
-        self.mp_current_page = page
-        self.mp_is_popular_search = popular
-
-        # Clear previous results
-        while self.mp_results_layout.count():
-            child = self.mp_results_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        def search():
-            try:
-                offset = (page - 1) * 10
-                search_query = "" if popular else query
-                # Filter for server-compatible modpacks only
-                results, total = self.modpack_manager.search_modpacks(
-                    search_query,
-                    platform=self.mp_selected_provider,
-                    limit=10,
-                    offset=offset,
-                    side_filter="server"
-                )
-                self.modpack_results = results
-
-                if results:
-                    self.mp_pagination_signal.emit(total)
-                    self.modpack_results_signal.emit(results)
-                else:
-                    self.mp_pagination_signal.emit(0)
-
-            except Exception as e:
-                self.log_signal.emit(f"Error: {e}\n", "error", "m_install")
-
-        threading.Thread(target=search, daemon=True).start()
-
-    def _mp_go_page(self, page: int):
-        """Navigate to a specific page"""
-        total_pages = (self.mp_total_results + 9) // 10
-        if 1 <= page <= total_pages:
-            # Preserve popular search mode during pagination
-            is_popular = getattr(self, 'mp_is_popular_search', False)
-            self._search_modpacks(page, popular=is_popular)
-
-    def _update_mp_pagination(self, total: int):
-        """Update pagination UI"""
-        self.mp_total_results = total
-        total_pages = (total + 9) // 10
-
-        if total_pages <= 1:
-            self.mp_pagination_widget.setVisible(False)
-            return
-
-        self.mp_pagination_widget.setVisible(True)
-        self.mp_page_info.setText(f"{total} results")
-
-        # Clear existing page buttons
-        while self.mp_page_btns_layout.count():
-            child = self.mp_page_btns_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        # Create page buttons (show max 5 pages)
-        start_page = max(1, self.mp_current_page - 2)
-        end_page = min(total_pages, start_page + 4)
-        start_page = max(1, end_page - 4)
-
-        for p in range(start_page, end_page + 1):
-            btn = QPushButton(str(p))
-            btn.setFixedSize(32, 32)
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            is_current = p == self.mp_current_page
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {self.colors['accent'] if is_current else self.colors['bg_input']};
-                    color: {'#000000' if is_current else self.colors['text']};
-                    border: 1px solid {self.colors['accent'] if is_current else self.colors['border']};
-                    border-radius: 6px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{ background-color: {self.colors['accent_hover'] if is_current else self.colors['bg_card']}; }}
-            """)
-            btn.clicked.connect(lambda checked, page=p: self._mp_go_page(page))
-            self.mp_page_btns_layout.addWidget(btn)
-
-        self.mp_prev_btn.setEnabled(self.mp_current_page > 1)
-        self.mp_next_btn.setEnabled(self.mp_current_page < total_pages)
-
-    def _show_mp_results(self, results: list):
-        for mp in results:
-            self._create_mp_item(mp)
+    def _show_server_install_notice(self, mp_name: str, mc_version: str, loader_type: str):
+        """Show notification after server modpack installation"""
+        msg = QMessageBox(self)
+        msg.setWindowTitle("Modpack Installed")
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setText(f"{mp_name} installed successfully!")
+        msg.setInformativeText(f"Minecraft {mc_version} | {loader_type}\n\nYou can now run the server from the 'Run Modpack Server' page.")
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.exec()
 
     def _format_downloads(self, count: int) -> str:
         """Format download count (e.g., 1.2M, 50K)"""
@@ -3576,1397 +1389,50 @@ class PyCraftGUI(QMainWindow):
             return f"{count / 1_000:.0f}K"
         return str(count)
 
-    def _create_mp_item(self, mp: dict):
-        frame = QFrame()
-        frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.colors['bg_input']};
-                border-radius: 10px;
-                border: 1px solid {self.colors['border']};
-            }}
-            QFrame:hover {{
-                border: 1px solid {self.colors['accent']};
-            }}
-        """)
-        layout = QHBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(12)
+    def _open_config_dialog(self, server_type: str):
+        """Open server configuration dialog"""
+        if server_type == "vanilla":
+            manager = self.vanilla_run_ctrl.get_server_manager()
+            current_ram = self.vanilla_ram
+            mc_version = self.vanilla_run_ctrl.detected_mc_version or ""
+            loader_info = "Vanilla"
+        else:
+            manager = self.modpack_run_ctrl.get_server_manager()
+            current_ram = self.modpack_ram
+            mc_version = self.modpack_run_ctrl.detected_mc_version or ""
+            loader_info = self.modpack_run_ctrl.detected_loader or "Modded"
 
-        # Icon placeholder
-        icon_label = QLabel()
-        icon_label.setFixedSize(56, 56)
-        icon_label.setStyleSheet(f"""
-            background-color: {self.colors['bg_card']};
-            border-radius: 8px;
-            border: none;
-        """)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        project_id = mp.get("project_id", "")
-        icon_label.setObjectName(f"mp_icon_{project_id}")
-
-        # Check cache first and set directly, otherwise load async
-        icon_url = mp.get("icon_url", "")
-        if project_id in self.mp_icon_cache:
-            icon_label.setPixmap(self.mp_icon_cache[project_id])
-        elif icon_url and project_id:
-            self._load_mp_icon(icon_url, project_id)
-
-        layout.addWidget(icon_label)
-
-        # Info section
-        info = QWidget()
-        info.setStyleSheet("background: transparent;")
-        info_layout = QVBoxLayout(info)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(3)
-
-        # Title
-        name = QLabel(mp.get("title", "Unknown"))
-        name.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600; border: none;")
-        info_layout.addWidget(name)
-
-        # Description
-        desc_text = mp.get("description", "")[:80]
-        if len(mp.get("description", "")) > 80:
-            desc_text += "..."
-        desc = QLabel(desc_text)
-        desc.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px; border: none;")
-        desc.setWordWrap(True)
-        info_layout.addWidget(desc)
-
-        # Meta info row (loader, MC version, downloads)
-        meta_widget = QWidget()
-        meta_widget.setStyleSheet("background: transparent;")
-        meta_layout = QHBoxLayout(meta_widget)
-        meta_layout.setContentsMargins(0, 2, 0, 0)
-        meta_layout.setSpacing(8)
-
-        # Get categories to detect loader
-        categories = mp.get("categories", [])
-        loader = "Unknown"
-        loader_color = self.colors['text_muted']
-        if "forge" in categories:
-            loader = "Forge"
-            loader_color = "#FF6B35"
-        elif "neoforge" in categories:
-            loader = "NeoForge"
-            loader_color = "#D64541"
-        elif "fabric" in categories:
-            loader = "Fabric"
-            loader_color = "#C6BCA7"
-        elif "quilt" in categories:
-            loader = "Quilt"
-            loader_color = "#8B5CF6"
-
-        loader_label = QLabel(loader)
-        loader_label.setStyleSheet(f"""
-            color: {loader_color};
-            font-size: 11px;
-            font-weight: 600;
-            background-color: {self.colors['bg_card']};
-            padding: 2px 6px;
-            border-radius: 4px;
-        """)
-        meta_layout.addWidget(loader_label)
-
-        # MC versions
-        versions = mp.get("versions", [])
-        if versions:
-            mc_ver = versions[0] if len(versions) == 1 else f"{versions[-1]}-{versions[0]}"
-            mc_label = QLabel(f"MC {mc_ver}")
-            mc_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 11px; border: none;")
-            meta_layout.addWidget(mc_label)
-
-        # Downloads
-        downloads = mp.get("downloads", 0)
-        dl_label = QLabel(f"{self._format_downloads(downloads)} downloads")
-        dl_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px; border: none;")
-        meta_layout.addWidget(dl_label)
-
-        meta_layout.addStretch()
-
-        # Link to provider
-        slug = mp.get("slug", "")
-        source = mp.get("source", "modrinth")
-        if slug:
-            link_btn = QPushButton()
-            link_btn.setIcon(qta.icon("fa5s.external-link-alt", color=self.colors['text_muted']))
-            link_btn.setFixedSize(24, 24)
-            link_btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            if source == "curseforge":
-                link_btn.setToolTip("Open in CurseForge")
-                link_url = f"https://www.curseforge.com/minecraft/modpacks/{slug}"
+        def on_save(ram, difficulty, gamemode, max_players, online_mode, pause_when_empty):
+            if server_type == "vanilla":
+                self.vanilla_ram = ram
+                self.vanilla_run_ctrl.set_ram(ram)
             else:
-                link_btn.setToolTip("Open in Modrinth")
-                link_url = f"https://modrinth.com/modpack/{slug}"
-            link_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: transparent;
-                    border: none;
-                }}
-                QPushButton:hover {{
-                    background-color: {self.colors['bg_card']};
-                    border-radius: 4px;
-                }}
-            """)
-            link_btn.clicked.connect(lambda _, url=link_url: QDesktopServices.openUrl(QUrl(url)))
-            meta_layout.addWidget(link_btn)
+                self.modpack_ram = ram
+                self.modpack_run_ctrl.set_ram(ram)
 
-        info_layout.addWidget(meta_widget)
-        layout.addWidget(info, 1)
+            if manager:
+                manager.configure_server_properties(difficulty=difficulty)
+                manager.update_property("gamemode", gamemode)
+                manager.update_property("max-players", str(max_players))
+                manager.update_property("online-mode", online_mode)
+                if pause_when_empty is not None:
+                    manager.update_property("pause-when-empty-seconds", str(pause_when_empty))
 
-        # Select button
-        select = self._styled_button("Select", self.colors['accent'], "#000000", 80)
-        select.setFixedHeight(36)
-        select.clicked.connect(lambda: self._pick_mp(mp))
-        layout.addWidget(select)
-
-        self.mp_results_layout.addWidget(frame)
-
-    def _load_mp_icon(self, url: str, project_id: str):
-        """Load modpack icon asynchronously"""
-        # Skip if already in cache (will be set directly)
-        if project_id in self.mp_icon_cache:
-            return
-
-        def load():
-            try:
-                import requests
-                response = requests.get(url, timeout=5)
-                if response.status_code == 200:
-                    pixmap = QPixmap()
-                    pixmap.loadFromData(response.content)
-                    if not pixmap.isNull():
-                        scaled = pixmap.scaled(56, 56, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                        self.mp_icon_cache[project_id] = scaled
-                        self.mp_icon_signal.emit(project_id, scaled)
-            except Exception:
-                pass
-
-        threading.Thread(target=load, daemon=True).start()
-
-    def _on_mp_icon_loaded(self, project_id: str, pixmap):
-        """Handle loaded icon"""
-        icon_label = self.findChild(QLabel, f"mp_icon_{project_id}")
-        if icon_label and pixmap:
-            icon_label.setPixmap(pixmap)
-
-    def _on_versions_loaded(self, versions, callback):
-        """Handle versions loaded from thread"""
-        if callback:
-            callback(versions)
-
-    def _pick_mp(self, mp: dict):
-        """Show version selector dialog for server install"""
-        self._show_version_selector(mp)
-
-    def _show_version_selector(self, mp: dict):
-        """Show dialog to select modpack version for server install"""
-        project_id = mp.get("project_id", "")
-        mp_name = mp.get("title", "Unknown")
-
-        # Create dialog
-        dialog = QDialog(self)
-        dialog.setWindowTitle(f"Select Version - {mp_name}")
-        dialog.setFixedSize(500, 400)
-        dialog.setStyleSheet(f"""
-            QDialog {{
-                background-color: {self.colors['bg_main']};
-            }}
-        """)
-
-        layout = QVBoxLayout(dialog)
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-
-        # Title
-        title = QLabel(f"Select version for {mp_name}")
-        title.setStyleSheet(f"color: {self.colors['text']}; font-size: 16px; font-weight: bold; border: none;")
-        layout.addWidget(title)
-
-        # Loading label
-        loading = QLabel("Loading versions...")
-        loading.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 13px; border: none;")
-        loading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(loading)
-
-        # Versions list (hidden initially)
-        versions_scroll = QScrollArea()
-        versions_scroll.setWidgetResizable(True)
-        versions_scroll.setStyleSheet(self._scroll_style())
-        versions_scroll.setVisible(False)
-
-        versions_widget = QWidget()
-        versions_layout = QVBoxLayout(versions_widget)
-        versions_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        versions_layout.setSpacing(8)
-        versions_scroll.setWidget(versions_widget)
-
-        layout.addWidget(versions_scroll, 1)
-
-        # Selected version info
-        selected_info = QLabel("")
-        selected_info.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
-        selected_info.setVisible(False)
-        layout.addWidget(selected_info)
-
-        # Buttons
-        btn_row = QWidget()
-        btn_row.setStyleSheet("background: transparent;")
-        btn_layout = QHBoxLayout(btn_row)
-        btn_layout.setContentsMargins(0, 0, 0, 0)
-        btn_layout.addStretch()
-
-        cancel_btn = self._styled_button("Cancel", self.colors['bg_input'], self.colors['text'], 100)
-        cancel_btn.clicked.connect(dialog.reject)
-        btn_layout.addWidget(cancel_btn)
-
-        confirm_btn = self._styled_button("Select", self.colors['accent'], "#000000", 100)
-        confirm_btn.setEnabled(False)
-        btn_layout.addWidget(confirm_btn)
-
-        layout.addWidget(btn_row)
-
-        # Store selected version in dialog
-        dialog.selected_version = None
-
-        def on_version_selected(version_data):
-            dialog.selected_version = version_data
-            v_name = version_data.get("name", version_data.get("version_number", ""))
-            loaders = version_data.get("loaders", [])
-            game_vers = version_data.get("game_versions", [])
-            loader = loaders[0].capitalize() if loaders else "Unknown"
-            mc_ver = game_vers[0] if game_vers else "Unknown"
-            # Clear format: version name (Loader, MC version)
-            selected_info.setText(f"Selected: {v_name} ({loader}, MC {mc_ver})")
-            selected_info.setVisible(True)
-            confirm_btn.setEnabled(True)
-
-        def load_versions():
-            try:
-                source = mp.get("source", "modrinth")
-                if source == "curseforge":
-                    # Use CurseForge API
-                    curseforge_id = mp.get("_curseforge_id")
-                    if not curseforge_id:
-                        curseforge_id = int(project_id)
-
-                    if self.modpack_manager.curseforge_api is None:
-                        from ..core.api import CurseForgeAPI
-                        self.modpack_manager.curseforge_api = CurseForgeAPI()
-
-                    files = self.modpack_manager.curseforge_api.get_modpack_files(curseforge_id)
-                    if files:
-                        # Normalize CurseForge files to Modrinth-like format
-                        # IMPORTANT: For server modpacks, only show versions that have a server pack
-                        versions = []
-                        for f in files:
-                            # Skip versions without server pack (for server installation)
-                            server_pack_file_id = f.get("serverPackFileId")
-                            if not server_pack_file_id:
-                                continue  # Skip this version - no server pack available
-
-                            # Get loader from file name or gameVersions
-                            loader = "unknown"
-                            file_name = f.get("fileName", "").lower()
-                            game_versions_raw = f.get("gameVersions", [])
-
-                            # Separate MC versions from loaders
-                            mc_versions = []
-                            for gv in game_versions_raw:
-                                gv_lower = gv.lower()
-                                if gv_lower in ("forge", "neoforge", "fabric", "quilt"):
-                                    loader = gv_lower
-                                elif gv and gv[0].isdigit():
-                                    mc_versions.append(gv)
-
-                            # Also check file name for loader
-                            if loader == "unknown":
-                                if "forge" in file_name and "neoforge" not in file_name:
-                                    loader = "forge"
-                                elif "neoforge" in file_name:
-                                    loader = "neoforge"
-                                elif "fabric" in file_name:
-                                    loader = "fabric"
-                                elif "quilt" in file_name:
-                                    loader = "quilt"
-
-                            versions.append({
-                                "id": str(f.get("id", "")),
-                                "name": f.get("displayName", f.get("fileName", "Unknown")),
-                                "version_number": f.get("displayName", ""),
-                                "loaders": [loader],
-                                "game_versions": mc_versions if mc_versions else game_versions_raw,
-                                "downloads": f.get("downloadCount", 0),
-                                "source": "curseforge",
-                                "_curseforge_file": f,
-                                "_server_pack_file_id": server_pack_file_id  # Store for later use
-                            })
-
-                        if not versions:
-                            self.version_loaded_signal.emit(None, lambda v: loading.setText("No server pack versions available"))
-                        else:
-                            self.version_loaded_signal.emit(versions, show_versions)
-                    else:
-                        self.version_loaded_signal.emit(None, lambda v: loading.setText("No versions found"))
-                else:
-                    # Use Modrinth API
-                    versions = self.modpack_manager.modrinth_api.get_modpack_versions(project_id)
-                    if versions:
-                        self.version_loaded_signal.emit(versions, show_versions)
-                    else:
-                        self.version_loaded_signal.emit(None, lambda v: loading.setText("No versions found"))
-            except Exception as e:
-                self.version_loaded_signal.emit(None, lambda v: loading.setText(f"Error: {e}"))
-
-        def show_versions(versions):
-            loading.setVisible(False)
-            versions_scroll.setVisible(True)
-
-            for i, v in enumerate(versions[:20]):  # Show max 20 versions
-                v_frame = QFrame()
-                v_frame.setStyleSheet(f"""
-                    QFrame {{
-                        background-color: {self.colors['bg_input']};
-                        border-radius: 8px;
-                        border: 1px solid {self.colors['border']};
-                    }}
-                    QFrame:hover {{
-                        border: 1px solid {self.colors['accent']};
-                    }}
-                """)
-                v_frame.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-
-                v_layout = QHBoxLayout(v_frame)
-                v_layout.setContentsMargins(12, 10, 12, 10)
-
-                # Version info
-                v_info = QWidget()
-                v_info.setStyleSheet("background: transparent;")
-                v_info_layout = QVBoxLayout(v_info)
-                v_info_layout.setContentsMargins(0, 0, 0, 0)
-                v_info_layout.setSpacing(2)
-
-                v_name = v.get("name", v.get("version_number", "Unknown"))
-                if i == 0:
-                    v_name += " (Latest)"
-                name_label = QLabel(v_name)
-                name_label.setStyleSheet(f"color: {self.colors['text']}; font-size: 13px; font-weight: 600; border: none;")
-                v_info_layout.addWidget(name_label)
-
-                # Loader and MC version
-                loaders = v.get("loaders", [])
-                game_vers = v.get("game_versions", [])
-                loader = loaders[0].capitalize() if loaders else "Unknown"
-                mc_ver = game_vers[0] if game_vers else "Unknown"
-
-                # Loader color
-                loader_color = self.colors['text_muted']
-                if loader.lower() == "forge":
-                    loader_color = "#FF6B35"
-                elif loader.lower() == "neoforge":
-                    loader_color = "#D64541"
-                elif loader.lower() == "fabric":
-                    loader_color = "#C6BCA7"
-                elif loader.lower() == "quilt":
-                    loader_color = "#8B5CF6"
-
-                meta_label = QLabel(f"{loader} • MC {mc_ver}")
-                meta_label.setStyleSheet(f"color: {loader_color}; font-size: 11px; border: none;")
-                v_info_layout.addWidget(meta_label)
-
-                v_layout.addWidget(v_info, 1)
-
-                # Downloads
-                downloads = v.get("downloads", 0)
-                dl_label = QLabel(f"{self._format_downloads(downloads)}")
-                dl_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px; border: none;")
-                v_layout.addWidget(dl_label)
-
-                # Make frame clickable
-                v_frame.mousePressEvent = lambda e, ver=v: on_version_selected(ver)
-
-                versions_layout.addWidget(v_frame)
-
-        def on_confirm():
-            if dialog.selected_version:
-                self.selected_modpack = mp
-                self.selected_mp_version = dialog.selected_version
-                v_name = dialog.selected_version.get("name", "")
-                self.mp_selected.setText(f"Selected: {mp_name} ({v_name})")
-                self.mp_selected.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600;")
-                self._update_mp_btn()
-                dialog.accept()
-
-        confirm_btn.clicked.connect(on_confirm)
-
-        # Load versions in thread
-        threading.Thread(target=load_versions, daemon=True).start()
-
+        dialog = ServerConfigDialog(
+            colors=self.colors,
+            server_type=server_type,
+            server_manager=manager,
+            current_ram=current_ram,
+            on_save=on_save,
+            mc_version=mc_version,
+            loader_info=loader_info,
+            parent=self
+        )
         dialog.exec()
 
-    def _select_mp_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Folder")
-        if folder:
-            if not self._warn_dangerous_folder(folder):
-                return  # User cancelled
-            if not self._warn_existing_server(folder):
-                return  # Server already exists
-            self.modpack_folder = folder
-            self.mp_folder_label.setText(f"Folder: {folder}")
-            self._update_mp_btn()
-
-    def _update_mp_btn(self):
-        self.mp_install_btn.setEnabled(bool(self.selected_modpack and self.modpack_folder))
-
-    def _install_modpack(self):
-        if not self.selected_modpack or not self.modpack_folder:
-            return
-
-        self.mp_install_btn.setEnabled(False)
-        project_id = self.selected_modpack.get("project_id", "")
-        version_id = self.selected_mp_version.get("id", "") if self.selected_mp_version else None
-        mp_name = self.selected_modpack.get("title", "Unknown")
-        source = self.selected_modpack.get("source", "modrinth")
-
-        # Get version info for post-install message
-        version_info = self.selected_mp_version or {}
-        game_versions = version_info.get("game_versions", [])
-        # Filter to get only MC versions (start with digit), exclude loader names
-        mc_versions = [v for v in game_versions if v and v[0].isdigit()]
-        mc_version = mc_versions[0] if mc_versions else (game_versions[0] if game_versions else "Unknown")
-        loaders = version_info.get("loaders", ["Unknown"])
-        loader_type = loaders[0] if loaders else "Unknown"
-
-        # Check Java compatibility BEFORE installing (if we know the MC version)
-        # This uses smart detection: system Java -> PyCraft Java -> prompt to install
-        if mc_version and mc_version != "Unknown":
-            java_executable = self._check_and_get_java(mc_version)
-            if not java_executable:
-                # User cancelled or installation failed
-                self.mp_install_btn.setEnabled(True)
-                return
-
-        def install():
-            try:
-                self.log_signal.emit(f"\nInstalling {mp_name}...\n", "info", "m_install")
-
-                if source == "curseforge":
-                    # CurseForge installation
-                    curseforge_id = self.selected_modpack.get("_curseforge_id")
-                    if not curseforge_id:
-                        curseforge_id = int(project_id)
-
-                    # Get file_id from the selected version
-                    curseforge_file = version_info.get("_curseforge_file", {})
-                    file_id = curseforge_file.get("id") if curseforge_file else int(version_id)
-
-                    # Initialize CurseForge API if needed
-                    if self.modpack_manager.curseforge_api is None:
-                        from ..core.api import CurseForgeAPI
-                        self.modpack_manager.curseforge_api = CurseForgeAPI()
-
-                    success = self.modpack_manager.install_curseforge_modpack(
-                        curseforge_id,
-                        file_id,
-                        self.modpack_folder,
-                        log_callback=lambda m: self.log_signal.emit(m, "normal", "m_install")
-                    )
-                else:
-                    # Modrinth installation
-                    success = self.modpack_manager.install_modrinth_modpack(
-                        project_id,
-                        version_id,
-                        self.modpack_folder,
-                        log_callback=lambda m: self.log_signal.emit(m, "normal", "m_install")
-                    )
-
-                if success:
-                    self.log_signal.emit("\n" + "="*50 + "\n", "success", "m_install")
-                    self.log_signal.emit("SERVER MODPACK INSTALLED\n", "success", "m_install")
-                    self.log_signal.emit("="*50 + "\n", "success", "m_install")
-
-                    # Show success modal via signal (thread-safe)
-                    self.server_modpack_install_success_signal.emit(mp_name, mc_version, loader_type)
-
-            except Exception as e:
-                self.log_signal.emit(f"Error: {e}\n", "error", "m_install")
-
-            finally:
-                QTimer.singleShot(0, lambda: self.mp_install_btn.setEnabled(True))
-
-        threading.Thread(target=install, daemon=True).start()
-
-    def _show_server_install_notice(self, mp_name: str, mc_version: str, loader_type: str):
-        """Show notification after server modpack installation"""
-        try:
-            loader_display = loader_type.capitalize() if loader_type else "Unknown"
-        except:
-            loader_display = "Unknown"
-
-        msg = QMessageBox(self)
-        msg.setWindowTitle("Server Installed Successfully")
-        msg.setIcon(QMessageBox.Icon.Information)
-        msg.setText(f"Server modpack '{mp_name}' has been installed!")
-        msg.setInformativeText(
-            f"Minecraft: {mc_version}\n"
-            f"Loader: {loader_display}\n\n"
-            f"IMPORTANT: To play on this server, you need to\n"
-            f"install the same modpack on your client.\n\n"
-            f"Go to 'Client Modpacks' in the sidebar to find\n"
-            f"the modpack and install it via CurseForge or Modrinth."
-        )
-
-        msg.setStyleSheet(f"""
-            QMessageBox {{
-                background-color: {self.colors['bg_card']};
-            }}
-            QMessageBox QLabel {{
-                color: {self.colors['text']};
-                font-size: 13px;
-            }}
-            QPushButton {{
-                background-color: {self.colors['accent']};
-                color: #000000;
-                border: none;
-                padding: 8px 20px;
-                border-radius: 6px;
-                font-weight: 600;
-                min-width: 80px;
-            }}
-            QPushButton:hover {{
-                background-color: {self.colors['accent_hover']};
-            }}
-        """)
-
-        msg.addButton("OK", QMessageBox.ButtonRole.AcceptRole)
-        client_btn = msg.addButton("Client Modpacks", QMessageBox.ButtonRole.ActionRole)
-
-        msg.exec()
-
-        if msg.clickedButton() == client_btn:
-            self._go_to("client_modpacks")
-
-    # Client Modpack Installation with debounce
-    def _on_client_mp_search_changed(self, text: str):
-        """Handle text changes with debounce for real-time search (client)"""
-        # Clear results if text is too short
-        if len(text.strip()) < 3:
-            # Clear previous results
-            while self.client_mp_results_layout.count():
-                child = self.client_mp_results_layout.takeAt(0)
-                if child.widget():
-                    child.widget().deleteLater()
-            self.client_mp_pagination_widget.setVisible(False)
-            self.client_mp_search_timer.stop()
-
-            # If search is empty, reload popular modpacks
-            if len(text.strip()) == 0:
-                self._search_client_modpacks(page=1, popular=True)
-            return
-
-        # When user types, switch from popular to search mode
-        self.client_mp_is_popular_search = False
-
-        # Restart debounce timer
-        self.client_mp_search_timer.stop()
-        self.client_mp_search_timer.start()
-
-    def _search_client_modpacks(self, page: int = 1, popular: bool = False):
-        query = self.client_mp_search.text().strip()
-
-        # Allow empty query for popular modpacks, otherwise require 3+ chars
-        if not popular and len(query) < 3:
-            return
-
-        self.client_mp_search_query = query if not popular else ""
-        self.client_mp_current_page = page
-        self.client_mp_is_popular_search = popular
-
-        # Clear previous results
-        while self.client_mp_results_layout.count():
-            child = self.client_mp_results_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        def search():
-            try:
-                offset = (page - 1) * 10
-                search_query = "" if popular else query
-                # Filter for client-compatible modpacks
-                results, total = self.modpack_manager.search_modpacks(
-                    search_query,
-                    platform=self.client_mp_selected_provider,
-                    limit=10,
-                    offset=offset,
-                    side_filter="client"
-                )
-                self.client_mp_results = results
-
-                if results:
-                    self.client_mp_pagination_signal.emit(total)
-                    self.client_mp_results_signal.emit(results)
-                else:
-                    self.client_mp_pagination_signal.emit(0)
-
-            except Exception as e:
-                self.log_signal.emit(f"Error: {e}\n", "error", "c_install")
-
-        threading.Thread(target=search, daemon=True).start()
-
-    def _client_mp_go_page(self, page: int):
-        """Navigate to a specific page (client)"""
-        total_pages = (self.client_mp_total_results + 9) // 10
-        if 1 <= page <= total_pages:
-            # Preserve popular search mode during pagination
-            is_popular = getattr(self, 'client_mp_is_popular_search', False)
-            self._search_client_modpacks(page, popular=is_popular)
-
-    def _update_client_mp_pagination(self, total: int):
-        """Update pagination UI (client)"""
-        self.client_mp_total_results = total
-        total_pages = (total + 9) // 10
-
-        if total_pages <= 1:
-            self.client_mp_pagination_widget.setVisible(False)
-            return
-
-        self.client_mp_pagination_widget.setVisible(True)
-        self.client_mp_page_info.setText(f"{total} results")
-
-        # Clear existing page buttons
-        while self.client_mp_page_btns_layout.count():
-            child = self.client_mp_page_btns_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        # Create page buttons (show max 5 pages)
-        start_page = max(1, self.client_mp_current_page - 2)
-        end_page = min(total_pages, start_page + 4)
-        start_page = max(1, end_page - 4)
-
-        for p in range(start_page, end_page + 1):
-            btn = QPushButton(str(p))
-            btn.setFixedSize(32, 32)
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            is_current = p == self.client_mp_current_page
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {self.colors['accent'] if is_current else self.colors['bg_input']};
-                    color: {'#000000' if is_current else self.colors['text']};
-                    border: 1px solid {self.colors['accent'] if is_current else self.colors['border']};
-                    border-radius: 6px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{ background-color: {self.colors['accent_hover'] if is_current else self.colors['bg_card']}; }}
-            """)
-            btn.clicked.connect(lambda checked, page=p: self._client_mp_go_page(page))
-            self.client_mp_page_btns_layout.addWidget(btn)
-
-        self.client_mp_prev_btn.setEnabled(self.client_mp_current_page > 1)
-        self.client_mp_next_btn.setEnabled(self.client_mp_current_page < total_pages)
-
-    def _show_client_mp_results(self, results: list):
-        for mp in results:
-            self._create_client_mp_item(mp)
-
-    def _create_client_mp_item(self, mp: dict):
-        frame = QFrame()
-        frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.colors['bg_input']};
-                border-radius: 10px;
-                border: 1px solid {self.colors['border']};
-            }}
-            QFrame:hover {{
-                border: 1px solid {self.colors['accent']};
-            }}
-        """)
-        layout = QHBoxLayout(frame)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(12)
-
-        # Icon placeholder
-        icon_label = QLabel()
-        icon_label.setFixedSize(56, 56)
-        icon_label.setStyleSheet(f"""
-            background-color: {self.colors['bg_card']};
-            border-radius: 8px;
-            border: none;
-        """)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        project_id = mp.get("project_id", "")
-        icon_label.setObjectName(f"mp_icon_{project_id}")
-
-        # Check cache first and set directly, otherwise load async
-        icon_url = mp.get("icon_url", "")
-        if project_id in self.mp_icon_cache:
-            icon_label.setPixmap(self.mp_icon_cache[project_id])
-        elif icon_url and project_id:
-            self._load_mp_icon(icon_url, project_id)
-
-        layout.addWidget(icon_label)
-
-        # Info section
-        info = QWidget()
-        info.setStyleSheet("background: transparent;")
-        info_layout = QVBoxLayout(info)
-        info_layout.setContentsMargins(0, 0, 0, 0)
-        info_layout.setSpacing(3)
-
-        # Title
-        name = QLabel(mp.get("title", "Unknown"))
-        name.setStyleSheet(f"color: {self.colors['text']}; font-size: 14px; font-weight: 600; border: none;")
-        info_layout.addWidget(name)
-
-        # Description
-        desc_text = mp.get("description", "")[:80]
-        if len(mp.get("description", "")) > 80:
-            desc_text += "..."
-        desc = QLabel(desc_text)
-        desc.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px; border: none;")
-        desc.setWordWrap(True)
-        info_layout.addWidget(desc)
-
-        # Meta info row
-        meta_widget = QWidget()
-        meta_widget.setStyleSheet("background: transparent;")
-        meta_layout = QHBoxLayout(meta_widget)
-        meta_layout.setContentsMargins(0, 2, 0, 0)
-        meta_layout.setSpacing(8)
-
-        categories = mp.get("categories", [])
-        loader = "Unknown"
-        loader_color = self.colors['text_muted']
-        if "forge" in categories:
-            loader = "Forge"
-            loader_color = "#FF6B35"
-        elif "neoforge" in categories:
-            loader = "NeoForge"
-            loader_color = "#D64541"
-        elif "fabric" in categories:
-            loader = "Fabric"
-            loader_color = "#C6BCA7"
-        elif "quilt" in categories:
-            loader = "Quilt"
-            loader_color = "#8B5CF6"
-
-        loader_label = QLabel(loader)
-        loader_label.setStyleSheet(f"""
-            color: {loader_color};
-            font-size: 11px;
-            font-weight: 600;
-            background-color: {self.colors['bg_card']};
-            padding: 2px 6px;
-            border-radius: 4px;
-        """)
-        meta_layout.addWidget(loader_label)
-
-        versions = mp.get("versions", [])
-        if versions:
-            mc_ver = versions[0] if len(versions) == 1 else f"{versions[-1]}-{versions[0]}"
-            mc_label = QLabel(f"MC {mc_ver}")
-            mc_label.setStyleSheet(f"color: {self.colors['text_secondary']}; font-size: 11px;")
-            meta_layout.addWidget(mc_label)
-
-        downloads = mp.get("downloads", 0)
-        dl_label = QLabel(f"{self._format_downloads(downloads)} downloads")
-        dl_label.setStyleSheet(f"color: {self.colors['text_muted']}; font-size: 11px;")
-        meta_layout.addWidget(dl_label)
-
-        meta_layout.addStretch()
-
-        info_layout.addWidget(meta_widget)
-        layout.addWidget(info, 1)
-
-        # Open button - opens modpack page in browser
-        slug = mp.get("slug", "")
-        source = mp.get("source", "modrinth")
-        if source == "curseforge":
-            link_url = f"https://www.curseforge.com/minecraft/modpacks/{slug}"
-        else:
-            link_url = f"https://modrinth.com/modpack/{slug}"
-
-        open_btn = self._styled_button("Open", self.colors['accent'], "#000000", 80)
-        open_btn.setFixedHeight(36)
-        open_btn.clicked.connect(lambda _, url=link_url: QDesktopServices.openUrl(QUrl(url)))
-        layout.addWidget(open_btn)
-
-        self.client_mp_results_layout.addWidget(frame)
-
-    def _select_mp_run_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Server Folder")
-        if folder:
-            # Clear previous state
-            self.modpack_run_console.clear()
-            self.mp_run_cmd.clear()
-            self.mp_cmd_btn.setEnabled(False)
-            self._log(self.modpack_run_console, "Loading server folder...\n", "info")
-
-            if self._has_server(folder):
-                self.modpack_server_path = folder
-                self.mp_run_folder_label.setText(f"Folder: {folder}")
-                self.mp_run_status.setText("Server found")
-                self.mp_run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
-
-                self.modpack_server_manager = ServerManager(folder)
-                self.is_modpack_configured = True
-
-                self.mp_start.setEnabled(True)
-
-                # Enable config only if server.properties exists
-                has_properties = os.path.exists(os.path.join(folder, "server.properties"))
-                self.mp_config.setEnabled(has_properties)
-                if not has_properties:
-                    self._log(self.modpack_run_console, "Run server once to generate server.properties\n", "warning")
-
-                self.mp_stop.setEnabled(False)
-
-                self._log(self.modpack_run_console, f"\nServer found: {folder}\n", "success")
-
-                # Detect loader and MC version for modpack server
-                loader_info = self._detect_modpack_loader(folder)
-                mc_version = self.modpack_server_manager.detect_minecraft_version()
-                # Fallback to our detection for modded servers
-                if not mc_version:
-                    mc_version = self._detect_modpack_mc_version(folder)
-
-                info_parts = []
-                if mc_version:
-                    info_parts.append(f"Minecraft {mc_version}")
-                if loader_info:
-                    info_parts.append(loader_info)
-
-                if info_parts:
-                    self.modpack_server_info.setText(" | ".join(info_parts))
-                    self.modpack_server_info.setVisible(True)
-                    self._log(self.modpack_run_console, f"Detected: {' | '.join(info_parts)}\n", "info")
-                else:
-                    self.modpack_server_info.setVisible(False)
-            else:
-                self.modpack_server_path = None
-                self.mp_run_folder_label.setText(f"Folder: {folder}")
-                self.mp_start.setEnabled(False)
-                self.mp_config.setEnabled(False)
-                self.mp_stop.setEnabled(False)
-                self.mp_cmd_btn.setEnabled(False)
-                self.is_modpack_configured = False
-
-                # Check if we can detect version/loader from mods to offer auto-install
-                temp_sm = ServerManager(folder)
-                detected_version = temp_sm.detect_version_from_mods()
-                detected_loader = temp_sm.detect_loader_from_mods()
-
-                if detected_version and detected_loader:
-                    self.mp_run_status.setText(f"Server not found - Can install {detected_loader.title()} {detected_version}")
-                    self.mp_run_status.setStyleSheet(f"color: {self.colors['yellow']}; font-size: 13px; font-weight: 600; border: none;")
-                    self.mp_install_server.setEnabled(True)
-                    self.mp_install_server.setVisible(True)
-                    self.modpack_server_manager = temp_sm
-                    self.modpack_server_info.setText(f"Detected: MC {detected_version} | {detected_loader.title()}")
-                    self.modpack_server_info.setVisible(True)
-                    self._log(self.modpack_run_console, f"Server not found, but detected: MC {detected_version} | {detected_loader.title()}\n", "warning")
-                    self._log(self.modpack_run_console, f"Click 'Install Server' to auto-install {detected_loader.title()}\n", "info")
-                else:
-                    self.mp_run_status.setText("Server not found")
-                    self.mp_run_status.setStyleSheet(f"color: {self.colors['red']}; font-size: 13px; font-weight: 600; border: none;")
-                    self.mp_install_server.setEnabled(False)
-                    self.mp_install_server.setVisible(False)
-                    self.modpack_server_manager = None
-                    self.modpack_server_info.setVisible(False)
-
-    def _has_server(self, folder: str) -> bool:
-        """Check if folder contains a Minecraft server (vanilla or modded)"""
-        import glob
-
-        # Check for common server jar patterns
-        jar_patterns = [
-            "server.jar",
-            "forge-*.jar",
-            "neoforge-*.jar",
-            "fabric-server-*.jar",
-            "quilt-server-*.jar",
-            "minecraft_server*.jar"
-        ]
-
-        for p in jar_patterns:
-            if glob.glob(os.path.join(folder, p)):
-                return True
-
-        # Check for run scripts (common in modded servers)
-        if os.path.exists(os.path.join(folder, "run.bat")) or os.path.exists(os.path.join(folder, "run.sh")):
-            return True
-
-        # Check for start scripts
-        if os.path.exists(os.path.join(folder, "start.bat")) or os.path.exists(os.path.join(folder, "start.sh")):
-            return True
-
-        # Check for startserver scripts (ATM and similar modpacks)
-        if os.path.exists(os.path.join(folder, "startserver.bat")) or os.path.exists(os.path.join(folder, "startserver.sh")):
-            return True
-
-        # Check for libraries folder with forge/neoforge (modern Forge structure)
-        libraries_path = os.path.join(folder, "libraries", "net", "minecraftforge")
-        if os.path.exists(libraries_path):
-            return True
-
-        neoforge_path = os.path.join(folder, "libraries", "net", "neoforged")
-        if os.path.exists(neoforge_path):
-            return True
-
-        return False
-
-    def _detect_modpack_mc_version(self, folder: str) -> str:
-        """Detect Minecraft version from modded server folder"""
-        import glob
-        import re
-
-        # First check modpack_info.json (created by PyCraft during install)
-        info_file = os.path.join(folder, "modpack_info.json")
-        if os.path.exists(info_file):
-            try:
-                with open(info_file, 'r', encoding='utf-8') as f:
-                    info = json.load(f)
-                mc_ver = info.get("minecraft_version")
-                if mc_ver:
-                    return mc_ver
-            except Exception:
-                pass
-
-        # Check libraries folder for forge (has MC version in folder name)
-        forge_libs = os.path.join(folder, "libraries", "net", "minecraftforge", "forge")
-        if os.path.exists(forge_libs):
-            try:
-                versions = os.listdir(forge_libs)
-                if versions:
-                    # Folder name is like "1.20.1-47.2.0"
-                    version_folder = versions[0]
-                    if '-' in version_folder:
-                        mc_ver = version_folder.split('-')[0]
-                        return mc_ver
-            except Exception:
-                pass
-
-        # Check for forge jar name
-        forge_jars = glob.glob(os.path.join(folder, "forge-*.jar"))
-        if forge_jars:
-            jar_name = os.path.basename(forge_jars[0])
-            match = re.search(r'forge-([\d.]+)-', jar_name)
-            if match:
-                return match.group(1)
-
-        # Check for neoforge libs
-        neoforge_libs = os.path.join(folder, "libraries", "net", "neoforged", "neoforge")
-        if os.path.exists(neoforge_libs):
-            try:
-                # NeoForge version starts with MC version (e.g., 21.1.77 for MC 1.21.1)
-                versions = os.listdir(neoforge_libs)
-                if versions:
-                    # Parse NeoForge version to get MC version
-                    # Format: MAJOR.MINOR.PATCH where MAJOR.MINOR maps to MC 1.MAJOR.MINOR
-                    version = versions[0]
-                    match = re.match(r'(\d+)\.(\d+)\.', version)
-                    if match:
-                        major, minor = match.groups()
-                        return f"1.{major}.{minor}" if minor != "0" else f"1.{major}"
-            except Exception:
-                pass
-
-        # Check variables.txt (ServerPackCreator format by Griefed)
-        variables_path = os.path.join(folder, "variables.txt")
-        if os.path.exists(variables_path):
-            try:
-                with open(variables_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                    # Parse MINECRAFT_VERSION=1.20.1
-                    match = re.search(r'^MINECRAFT_VERSION=(.+)$', content, re.MULTILINE)
-                    if match:
-                        return match.group(1).strip()
-            except Exception:
-                pass
-
-        # Check run.bat/run.sh and startserver.bat/sh for version info
-        for script in ["run.bat", "run.sh", "startserver.bat", "startserver.sh"]:
-            script_path = os.path.join(folder, script)
-            if os.path.exists(script_path):
-                try:
-                    with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        script_content = f.read()
-                        # Look for NEOFORGE_VERSION (ATM modpacks format)
-                        neoforge_match = re.search(r'NEOFORGE_VERSION[=\s]+(\d+)\.(\d+)\.(\d+)', script_content)
-                        if neoforge_match:
-                            major, minor, patch = neoforge_match.groups()
-                            if minor == "0":
-                                return f"1.{major}"
-                            else:
-                                return f"1.{major}.{minor}"
-                        # Look for MC version pattern
-                        match = re.search(r'minecraft[_-]?server[_-]?([\d.]+)', script_content, re.IGNORECASE)
-                        if match:
-                            return match.group(1)
-                        match = re.search(r'forge[/-]([\d.]+)-[\d.]+', script_content, re.IGNORECASE)
-                        if match:
-                            return match.group(1)
-                except Exception:
-                    pass
-
-        return ""
-
-    def _detect_modpack_loader(self, folder: str) -> str:
-        """Detect modpack loader type and version from server folder"""
-        import glob
-        import re
-
-        # Check variables.txt (ServerPackCreator format by Griefed)
-        variables_path = os.path.join(folder, "variables.txt")
-        if os.path.exists(variables_path):
-            try:
-                with open(variables_path, 'r', encoding='utf-8', errors='ignore') as f:
-                    content = f.read()
-                    loader_match = re.search(r'^MODLOADER=(.+)$', content, re.MULTILINE)
-                    version_match = re.search(r'^MODLOADER_VERSION=(.+)$', content, re.MULTILINE)
-                    if loader_match:
-                        loader = loader_match.group(1).strip()
-                        version = version_match.group(1).strip() if version_match else ""
-                        if version:
-                            return f"{loader} {version}"
-                        return loader
-            except Exception:
-                pass
-
-        # Check for Forge
-        forge_jars = glob.glob(os.path.join(folder, "forge-*.jar"))
-        if forge_jars:
-            jar_name = os.path.basename(forge_jars[0])
-            # Extract version from forge-1.20.1-47.2.0.jar
-            match = re.search(r'forge-[\d.]+-(\d+\.\d+\.\d+)', jar_name)
-            if match:
-                return f"Forge {match.group(1)}"
-            return "Forge"
-
-        # Check for NeoForge jars
-        neoforge_jars = glob.glob(os.path.join(folder, "neoforge-*.jar"))
-        if neoforge_jars:
-            jar_name = os.path.basename(neoforge_jars[0])
-            match = re.search(r'neoforge-([\d.]+)', jar_name)
-            if match:
-                return f"NeoForge {match.group(1)}"
-            return "NeoForge"
-
-        # Check for NeoForge from startserver.bat/sh (ATM modpacks)
-        for script in ["startserver.bat", "startserver.sh"]:
-            script_path = os.path.join(folder, script)
-            if os.path.exists(script_path):
-                try:
-                    with open(script_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        script_content = f.read()
-                        if 'neoforge' in script_content.lower():
-                            neoforge_match = re.search(r'NEOFORGE_VERSION[=\s]+(\d+\.\d+\.\d+)', script_content)
-                            if neoforge_match:
-                                return f"NeoForge {neoforge_match.group(1)}"
-                            return "NeoForge"
-                except Exception:
-                    pass
-
-        # Check for Fabric - multiple detection methods
-        # Check both launcher names (modern: fabric-server-launcher.jar, old: fabric-server-launch.jar)
-        fabric_launcher_jar = os.path.join(folder, "fabric-server-launcher.jar")
-        fabric_launch_jar = os.path.join(folder, "fabric-server-launch.jar")
-        fabric_jars = glob.glob(os.path.join(folder, "fabric-server-*.jar"))
-
-        if os.path.exists(fabric_launcher_jar) or os.path.exists(fabric_launch_jar) or fabric_jars:
-            # Method 1: Check .fabric/server/version.json (created by Fabric installer)
-            fabric_version_file = os.path.join(folder, ".fabric", "server", "version.json")
-            if os.path.exists(fabric_version_file):
-                try:
-                    with open(fabric_version_file, 'r', encoding='utf-8') as f:
-                        data = json.load(f)
-                        loader_version = data.get("loader", {}).get("version")
-                        if loader_version:
-                            return f"Fabric Loader {loader_version}"
-                except:
-                    pass
-
-            # Method 2: Try to get version from libraries folder
-            fabric_loader_libs = os.path.join(folder, "libraries", "net", "fabricmc", "fabric-loader")
-            if os.path.exists(fabric_loader_libs):
-                try:
-                    versions = os.listdir(fabric_loader_libs)
-                    if versions:
-                        return f"Fabric Loader {versions[0]}"
-                except:
-                    pass
-
-            # Method 3: Try to get version from server log
-            logs_path = os.path.join(folder, "logs", "latest.log")
-            if os.path.exists(logs_path):
-                try:
-                    with open(logs_path, 'r', encoding='utf-8', errors='ignore') as f:
-                        for i, line in enumerate(f):
-                            if i > 50:
-                                break
-                            # Look for "Fabric Loader 0.16.14"
-                            if 'fabric loader' in line.lower():
-                                match = re.search(r'fabric\s+loader\s+([\d.]+)', line, re.IGNORECASE)
-                                if match:
-                                    return f"Fabric Loader {match.group(1)}"
-                except:
-                    pass
-
-            # Method 4: Fallback - try old naming pattern from jar name
-            if fabric_jars:
-                jar_name = os.path.basename(fabric_jars[0])
-                match = re.search(r'fabric-server-mc\.[\d.]+-(\d+\.\d+\.\d+)', jar_name)
-                if match:
-                    return f"Fabric Loader {match.group(1)}"
-
-            return "Fabric"
-
-        # Check for Quilt
-        quilt_jars = glob.glob(os.path.join(folder, "quilt-server-*.jar"))
-        if quilt_jars:
-            jar_name = os.path.basename(quilt_jars[0])
-            match = re.search(r'quilt-server-[\d.]+-([\d.]+)', jar_name)
-            if match:
-                return f"Quilt {match.group(1)}"
-            return "Quilt"
-
-        # Check libraries folder structure (modern Forge/NeoForge)
-        forge_libs = os.path.join(folder, "libraries", "net", "minecraftforge", "forge")
-        if os.path.exists(forge_libs):
-            try:
-                versions = os.listdir(forge_libs)
-                if versions:
-                    # Get first version folder (e.g., "1.20.1-47.2.0")
-                    version_folder = versions[0]
-                    # Extract just the forge version part
-                    if '-' in version_folder:
-                        forge_ver = version_folder.split('-')[-1]
-                        return f"Forge {forge_ver}"
-                    return f"Forge {version_folder}"
-            except Exception:
-                pass
-
-        neoforge_libs = os.path.join(folder, "libraries", "net", "neoforged", "neoforge")
-        if os.path.exists(neoforge_libs):
-            try:
-                versions = os.listdir(neoforge_libs)
-                if versions:
-                    return f"NeoForge {versions[0]}"
-            except Exception:
-                pass
-
-        # Check for run scripts that might indicate loader (fallback)
-        if os.path.exists(os.path.join(folder, "run.bat")) or os.path.exists(os.path.join(folder, "run.sh")):
-            # Try to detect from run script content
-            for script in ["run.bat", "run.sh"]:
-                script_path = os.path.join(folder, script)
-                if os.path.exists(script_path):
-                    try:
-                        with open(script_path, 'r') as f:
-                            content = f.read()
-                            # Look for forge version in script
-                            match = re.search(r'forge[/-]([\d.]+)-([\d.]+)', content, re.IGNORECASE)
-                            if match:
-                                return f"Forge {match.group(2)}"
-                            match = re.search(r'neoforge[/-]([\d.]+)', content, re.IGNORECASE)
-                            if match:
-                                return f"NeoForge {match.group(1)}"
-                            # Generic detection
-                            content_lower = content.lower()
-                            if 'neoforge' in content_lower:
-                                return "NeoForge"
-                            elif 'forge' in content_lower:
-                                return "Forge"
-                            elif 'fabric' in content_lower:
-                                return "Fabric"
-                            elif 'quilt' in content_lower:
-                                return "Quilt"
-                    except Exception:
-                        pass
-
-        return ""
-
-    def _install_missing_server_mp(self):
-        """Install missing server for modpack"""
-        if not self.modpack_server_manager:
-            return
-
-        folder = self.modpack_server_manager.server_folder
-
-        # Get Java executable
-        mc_version = self.modpack_server_manager.detect_version_from_mods()
-        java_exe = "java"
-        if mc_version:
-            java_check = self.java_manager.get_best_java_for_version(mc_version)
-            if java_check.get("java_path"):
-                java_exe = java_check["java_path"]
-            elif java_check.get("needs_install"):
-                required_ver = java_check.get("required_java_version", 17)
-                reply = QMessageBox.question(
-                    self, "Java Required",
-                    f"Minecraft {mc_version} requires Java {required_ver}.\n\nDo you want to install it now?",
-                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-                )
-                if reply == QMessageBox.StandardButton.Yes:
-                    self._install_java_for_version(mc_version)
-                    return
-                else:
-                    return
-
-        # Disable buttons during install
-        self.mp_install_server.setEnabled(False)
-        self.mp_install_server.setText("Installing...")
-
-        def install_thread():
-            def log_cb(msg):
-                self.log_signal.emit(msg, "info", "modpack_run")
-
-            success, message = self.modpack_server_manager.install_missing_server(
-                java_executable=java_exe,
-                log_callback=log_cb
-            )
-            self.mp_server_install_done_signal.emit()
-
-        def on_install_done():
-            self.mp_install_server.setText("Install Server")
-
-            if self.modpack_server_manager.is_server_installed():
-                self.log_signal.emit("\n[SUCCESS] Server installed successfully!\n", "success", "modpack_run")
-                self.mp_install_server.setVisible(False)
-                self.mp_start.setEnabled(True)
-                self.modpack_server_path = folder
-                self.is_modpack_configured = True
-                self.mp_run_status.setText("Ready")
-                self.mp_run_status.setStyleSheet(f"color: {self.colors['accent']}; font-size: 13px; font-weight: 600; border: none;")
-
-                mc_ver = self._detect_modpack_mc_version(folder)
-                loader = self._detect_modpack_loader(folder)
-                info_parts = []
-                if mc_ver:
-                    info_parts.append(f"MC {mc_ver}")
-                if loader:
-                    info_parts.append(loader)
-                if info_parts:
-                    self.modpack_server_info.setText(" | ".join(info_parts))
-
-                props_path = os.path.join(folder, "server.properties")
-                self.mp_config.setEnabled(os.path.exists(props_path))
-            else:
-                self.log_signal.emit("\n[ERROR] Server installation failed\n", "error", "modpack_run")
-                self.mp_install_server.setEnabled(True)
-
-        self.mp_server_install_done_signal.connect(on_install_done)
-
-        import threading
-        thread = threading.Thread(target=install_thread, daemon=True)
-        thread.start()
-
-    def _start_mp(self):
-        """Start modded server"""
-        if not self.modpack_server_manager:
-            return
-
-        # Get Minecraft version (from our detection)
-        mc_version = None
-        if self.modpack_server_path:
-            mc_version = self._detect_modpack_mc_version(self.modpack_server_path)
-
-        if not mc_version:
-            mc_version = "1.20"  # Default assumption for unknown versions
-            self._log(self.modpack_run_console, "\nCould not detect MC version, assuming Java 17+ required\n", "warning")
-
-        # Check Java compatibility using smart detection
-        # This will: 1) Use system Java if compatible, 2) Use PyCraft Java if available, 3) Prompt to install
-        java_executable = self._check_and_get_java(mc_version)
-        if not java_executable:
-            # User cancelled or installation failed
-            return
-
-        # Update server manager with the selected Java
-        self.modpack_server_manager.java_executable = java_executable
-        java_source = "system" if java_executable == "java" else "PyCraft"
-        self._log(self.modpack_run_console, f"\nUsing {java_source} Java: {java_executable}\n", "info")
-
-        # Check and accept EULA if needed
-        eula_path = os.path.join(self.modpack_server_path, "eula.txt")
-        if os.path.exists(eula_path):
-            try:
-                with open(eula_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                if 'eula=false' in content:
-                    self._log(self.modpack_run_console, "Accepting EULA automatically...\n", "info")
-                    self.modpack_server_manager.accept_eula()
-            except Exception:
-                pass
-
-        # Configure online-mode=false automatically for LAN/Hamachi play
-        self.modpack_server_manager.set_online_mode(False)
-
-        # Detect server type (forge/fabric) for proper startup
-        server_type = self.modpack_server_manager.detect_server_type()
-        if server_type == "unknown":
-            self._log(self.modpack_run_console, "Could not detect server type (Forge/Fabric).", "error")
-            return
-
-        java_exe = self.modpack_server_manager.java_executable
-
-        self._log(self.modpack_run_console, "\n=== STARTING SERVER ===\n", "info")
-
-        # Track if server started successfully
-        self._server_started_successfully = False
-
-        def on_stopped():
-            """Called when server process ends (crash or normal stop)"""
-            # Emit signal to update UI from main thread
-            self.modpack_server_stopped_signal.emit(self._server_started_successfully)
-
-        def log_callback(line: str):
-            """Forward server output to UI"""
-            # Check for successful start
-            if "Done" in line and "!" in line:
-                self._server_started_successfully = True
-
-            # Forward to UI
-            self.log_signal.emit(line, "normal", "m_run")
-
-        # Disable start, enable stop
-        self.mp_start.setEnabled(False)
-        self.mp_config.setEnabled(False)
-        self.mp_stop.setEnabled(True)
-
-        def start():
-            # Use start_modded_server which handles the server type properly
-            if server_type in ("forge", "fabric", "neoforge", "quilt"):
-                success = self.modpack_server_manager.start_modded_server(
-                    server_type=server_type,
-                    ram_mb=self.modpack_ram,
-                    java_executable=java_exe,
-                    log_callback=log_callback,
-                    detached=True,
-                    on_stopped=on_stopped
-                )
-            else:
-                # Fallback to generic start_server for unknown types
-                success = self.modpack_server_manager.start_server(
-                    ram_mb=self.modpack_ram,
-                    log_callback=log_callback,
-                    detached=True,
-                    on_stopped=on_stopped
-                )
-
-            # Emit signal to update UI from main thread
-            self.modpack_server_started_signal.emit(success)
-
-        threading.Thread(target=start, daemon=True).start()
-
-    def _on_modpack_server_started(self, success: bool):
-        """Handle modpack server started (called from main thread via signal)"""
-        if success:
-            self.mp_cmd_btn.setEnabled(True)
-        else:
-            # Re-enable start button if failed
-            self._on_server_stopped_normal()
+    # ============================================================
+    # Dialogs and Modals
+    # ============================================================
 
     def _show_server_crash_dialog(self, server_path: str):
         """Displays a simple modal dialog when server crashes."""
@@ -5058,102 +1524,6 @@ class PyCraftGUI(QMainWindow):
 
         dialog.exec()
 
-    def _on_server_stopped_normal(self):
-        """Reset UI state when server stops normally"""
-        self.mp_start.setEnabled(True)
-        self.mp_config.setEnabled(True)
-        self.mp_stop.setEnabled(False)
-        self.mp_cmd_btn.setEnabled(False)
-
-    def _on_modpack_server_stopped(self, started_successfully: bool):
-        """Handle modpack server stopped (called from main thread via signal)"""
-        # Re-enable UI elements
-        self.mp_start.setEnabled(True)
-
-        # Enable config only if server.properties exists (may have been generated on first run)
-        if self.modpack_server_path:
-            has_properties = os.path.exists(os.path.join(self.modpack_server_path, "server.properties"))
-            self.mp_config.setEnabled(has_properties)
-        else:
-            self.mp_config.setEnabled(False)
-
-        self.mp_stop.setEnabled(False)
-        self.mp_cmd_btn.setEnabled(False)
-
-        if started_successfully:
-            self.log_signal.emit("\n[Server stopped - Ready to restart]\n", "info", "m_run")
-        else:
-            # Server crashed before "Done"
-            self.log_signal.emit("\n[Server crashed - Ready to restart]\n", "error", "m_run")
-            # Show crash dialog after a brief delay to ensure UI is updated
-            QTimer.singleShot(100, lambda: self.server_crashed_signal.emit(self.modpack_server_path))
-
-    def _stop_mp(self):
-        if not self.modpack_server_manager:
-            return
-
-        # Check if server is actually running
-        if not self.modpack_server_manager.is_server_running():
-            self._log(self.modpack_run_console, "\nServer is not running\n", "warning")
-            return
-
-        # Disable all buttons immediately to prevent double-clicks
-        self.mp_stop.setEnabled(False)
-        self.mp_start.setEnabled(False)
-        self.mp_config.setEnabled(False)
-        self.mp_cmd_btn.setEnabled(False)
-        self._log(self.modpack_run_console, "\nStopping server...\n", "warning")
-
-        def stop():
-            try:
-                self.modpack_server_manager.stop_server()
-
-                # stop_server() is blocking, so when it returns the server is stopped
-                # Re-enable buttons on main thread
-                def enable_buttons():
-                    self._log(self.modpack_run_console, "Server stopped - Ready to restart\n", "success")
-                    self.mp_start.setEnabled(True)
-                    self.mp_config.setEnabled(True)
-                    self.mp_stop.setEnabled(False)
-                    self.mp_cmd_btn.setEnabled(False)
-
-                QTimer.singleShot(0, enable_buttons)
-            except Exception as e:
-                # If stop_server() fails, still re-enable buttons
-                def enable_buttons_on_error():
-                    self._log(self.modpack_run_console, f"Error stopping server: {e}\n", "error")
-                    self.mp_start.setEnabled(True)
-                    self.mp_config.setEnabled(True)
-                    self.mp_stop.setEnabled(False)
-                    self.mp_cmd_btn.setEnabled(False)
-
-                QTimer.singleShot(0, enable_buttons_on_error)
-
-        threading.Thread(target=stop, daemon=True).start()
-
-    def _send_mp_cmd(self):
-        cmd = self.mp_run_cmd.text().strip()
-        if cmd and self.modpack_server_manager:
-            if not cmd.startswith("/"):
-                self._log(self.modpack_run_console, "Commands must start with /\n", "warning")
-                return
-            # Remove "/" prefix for server console (server doesn't use /)
-            server_cmd = cmd[1:]
-            self._log(self.modpack_run_console, f"> {cmd}\n", "info")
-            self.modpack_server_manager.send_command(server_cmd)
-            self.mp_run_cmd.clear()
-
-            # Blink button for visual feedback
-            self._blink_send_button(self.mp_cmd_btn, self.modpack_server_manager)
-
-    def _config_mp(self):
-        if self.modpack_server_manager and self.modpack_server_manager.is_server_running():
-            QMessageBox.warning(self, "Warning", "Stop server first")
-            return
-
-        self._open_config_dialog("modpack")
-
-    # Settings
     def _check_java(self):
         while self.java_info_layout.count():
             child = self.java_info_layout.takeAt(0)
@@ -5804,15 +2174,19 @@ class PyCraftGUI(QMainWindow):
         """Handle application close - stop all running servers"""
         servers_stopped = []
 
-        # Stop vanilla server if running
-        if self.server_manager and self.server_manager.is_server_running():
-            self.server_manager.stop_server()
-            servers_stopped.append("vanilla")
+        # Stop vanilla server if running (via controller)
+        if hasattr(self, 'vanilla_run_ctrl'):
+            manager = self.vanilla_run_ctrl.get_server_manager()
+            if manager and manager.is_server_running():
+                manager.stop_server()
+                servers_stopped.append("vanilla")
 
-        # Stop modpack server if running
-        if hasattr(self, 'modpack_server_manager') and self.modpack_server_manager and self.modpack_server_manager.is_server_running():
-            self.modpack_server_manager.stop_server()
-            servers_stopped.append("modpack")
+        # Stop modpack server if running (via controller)
+        if hasattr(self, 'modpack_run_ctrl'):
+            manager = self.modpack_run_ctrl.get_server_manager()
+            if manager and manager.is_server_running():
+                manager.stop_server()
+                servers_stopped.append("modpack")
 
         if servers_stopped:
             print(f"Stopped servers on exit: {', '.join(servers_stopped)}")
