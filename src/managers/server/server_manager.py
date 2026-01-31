@@ -3,6 +3,7 @@ import os
 import time
 import json
 import zipfile
+import queue
 from typing import Optional, Callable, Tuple
 import threading
 
@@ -1143,22 +1144,69 @@ max-world-size=29999984
                 creationflags=creation_flags
             )
 
-            # Esperar el timeout o que termine el proceso
+            # Use a thread-safe queue for output
+            output_queue = queue.Queue()
+            stop_reader = threading.Event()
+
+            def read_output():
+                """Read output in a separate thread to avoid blocking"""
+                try:
+                    while not stop_reader.is_set():
+                        if process.stdout:
+                            line = process.stdout.readline()
+                            if line:
+                                output_queue.put(line)
+                            elif process.poll() is not None:
+                                # Process ended and no more output
+                                break
+                        else:
+                            break
+                except Exception:
+                    pass
+
+            reader_thread = threading.Thread(target=read_output, daemon=True)
+            reader_thread.start()
+
+            # Wait for timeout or process completion
             start_time = time.time()
             file_found = False
 
             while True:
-                # Si el proceso terminó
+                # Process any pending output (non-blocking)
+                try:
+                    while True:
+                        line = output_queue.get_nowait()
+                        if log_callback:
+                            log_callback(line)
+                except queue.Empty:
+                    pass
+
+                # Check if process ended
                 if process.poll() is not None:
                     break
 
-                # Si encontramos el archivo que buscamos, terminamos
+                # Check for target file
                 if check_for and not file_found:
                     check_path = os.path.join(self.server_folder, check_for)
                     if os.path.exists(check_path):
+                        # Wait for file to have valid content
+                        file_ready = False
+                        for _ in range(10):  # Try for up to 5 seconds
+                            time.sleep(0.5)
+                            try:
+                                file_size = os.path.getsize(check_path)
+                                if file_size > 50:
+                                    with open(check_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                        content = f.read()
+                                    # For server.properties, check for server-port
+                                    # For eula.txt, check for eula=
+                                    if 'server-port=' in content or 'eula=' in content:
+                                        file_ready = True
+                                        break
+                            except:
+                                pass
+
                         file_found = True
-                        # Dar un poco más de tiempo para que termine de escribir
-                        time.sleep(1)
                         process.terminate()
                         try:
                             process.wait(timeout=3)
@@ -1166,7 +1214,7 @@ max-world-size=29999984
                             process.kill()
                         break
 
-                # Timeout
+                # Timeout check
                 if time.time() - start_time > timeout:
                     process.terminate()
                     try:
@@ -1175,13 +1223,22 @@ max-world-size=29999984
                         process.kill()
                     break
 
-                # Leer salida si hay
-                if process.stdout:
-                    line = process.stdout.readline()
-                    if line and log_callback:
-                        log_callback(line)
-
                 time.sleep(0.1)
+
+            # Stop the reader thread
+            stop_reader.set()
+
+            # Give reader thread a moment to finish, then process remaining output
+            reader_thread.join(timeout=2)
+
+            # Process any remaining output
+            try:
+                while True:
+                    line = output_queue.get_nowait()
+                    if log_callback:
+                        log_callback(line)
+            except queue.Empty:
+                pass
 
         except FileNotFoundError as e:
             if log_callback:
@@ -2053,10 +2110,64 @@ max-world-size=29999984
                     if log_callback:
                         log_callback("Warning: Forge args file not found, trying fallback...\n")
                     import glob
+
+                    # Check if server is installed (libraries folder exists)
+                    libraries_folder = os.path.join(self.server_folder, "libraries")
+                    server_installed = os.path.exists(libraries_folder)
+
                     forge_jars = glob.glob(os.path.join(self.server_folder, "forge-*.jar"))
                     if forge_jars:
                         forge_jar = os.path.basename(forge_jars[0])
-                        command = [java_executable, f"-Xms{ram_mb}M", f"-Xmx{ram_mb}M", "-Djava.awt.headless=true", "-jar", forge_jar, "nogui"]
+
+                        # Check if it's an installer that needs to be run first
+                        if "installer" in forge_jar.lower() and not server_installed:
+                            if log_callback:
+                                log_callback(f"Running Forge installer first...\n")
+
+                            # Run installer with --installServer
+                            install_cmd = [java_executable, "-Djava.awt.headless=true", "-jar", forge_jar, "--installServer"]
+                            try:
+                                import subprocess
+                                creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                                result = subprocess.run(
+                                    install_cmd,
+                                    cwd=self.server_folder,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=300,
+                                    creationflags=creation_flags
+                                )
+                                if log_callback:
+                                    if result.stdout:
+                                        log_callback(result.stdout)
+                                    if result.returncode == 0:
+                                        log_callback("Forge installation completed!\n")
+                                    else:
+                                        log_callback(f"Forge installer returned code {result.returncode}\n")
+                            except Exception as e:
+                                if log_callback:
+                                    log_callback(f"Error running installer: {e}\n")
+                                return False
+
+                            # After installation, use run.bat/run.sh
+                            run_bat = os.path.join(self.server_folder, "run.bat")
+                            run_sh = os.path.join(self.server_folder, "run.sh")
+                            if os.name == 'nt' and os.path.exists(run_bat):
+                                command = ["cmd", "/c", run_bat]
+                            elif os.path.exists(run_sh):
+                                command = ["bash", run_sh]
+                            else:
+                                # Try to find the actual server jar in libraries
+                                args_file = "win_args.txt" if os.name == 'nt' else "unix_args.txt"
+                                for root, dirs, files in os.walk(libraries_folder):
+                                    if args_file in files:
+                                        args_file_path = os.path.join(root, args_file)
+                                        user_jvm = os.path.join(self.server_folder, "user_jvm_args.txt")
+                                        command = [java_executable, f"@{user_jvm}", f"@{args_file_path}"]
+                                        break
+                        else:
+                            # Not an installer or already installed, run directly
+                            command = [java_executable, f"-Xms{ram_mb}M", f"-Xmx{ram_mb}M", "-Djava.awt.headless=true", "-jar", forge_jar, "nogui"]
                     else:
                         # Fallback 2: Check for ServerPackCreator format or other modpack formats
                         # Instead of running their buggy scripts, we run Java directly
@@ -2102,14 +2213,7 @@ max-world-size=29999984
                             if os.path.exists(user_jvm_args):
                                 command.append(f"@user_jvm_args.txt")
 
-                            command.extend(["-jar", jar_to_run])
-
-                            # Add installer args if needed for first run
-                            if modloader_version and mc_version:
-                                installer_url = f"https://files.minecraftforge.net/maven/net/minecraftforge/forge/{mc_version}-{modloader_version}/forge-{mc_version}-{modloader_version}-installer.jar"
-                                command.extend(["--installer-force", "--installer", installer_url])
-
-                            command.append("nogui")
+                            command.extend(["-jar", jar_to_run, "nogui"])
 
                             if log_callback:
                                 log_callback(f"Java: {java_executable}\n")

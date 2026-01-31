@@ -57,13 +57,31 @@ class JavaManager:
         self.java_installs_dir = Path.home() / ".pycraft" / "java"
         self.java_installs_dir.mkdir(parents=True, exist_ok=True)
 
-    def detect_java_version(self) -> Optional[Tuple[str, int]]:
+        # Cache for Java detection results to avoid repeated slow subprocess calls
+        self._java_version_cache = None
+        self._java_version_cache_checked = False
+        self._installations_cache = None
+
+    def invalidate_cache(self):
+        """Invalidate all cached Java information (call after installing/removing Java)"""
+        self._java_version_cache = None
+        self._java_version_cache_checked = False
+        self._installations_cache = None
+
+    def detect_java_version(self, force_refresh: bool = False) -> Optional[Tuple[str, int]]:
         """
         Detects if Java is installed and its version
+
+        Args:
+            force_refresh: If True, bypasses cache and runs detection again
 
         Returns:
             Tuple of (full version, major version) or None if not installed
         """
+        # Return cached result if available (avoids slow subprocess calls)
+        if not force_refresh and self._java_version_cache_checked:
+            return self._java_version_cache
+
         try:
             # Refresh environment variables from registry to detect newly installed Java
             # This is needed because os.environ doesn't auto-update when system vars change
@@ -104,11 +122,17 @@ class JavaManager:
                             # Java 9+ (17.0.9, 21.0.1, etc)
                             major_version = int(version_str.split('.')[0])
 
-                        return (version_str, major_version)
+                        self._java_version_cache = (version_str, major_version)
+                        self._java_version_cache_checked = True
+                        return self._java_version_cache
 
+            self._java_version_cache = None
+            self._java_version_cache_checked = True
             return None
 
         except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+            self._java_version_cache = None
+            self._java_version_cache_checked = True
             return None
 
     def get_required_java_version(self, minecraft_version: str) -> int:
@@ -401,6 +425,7 @@ class JavaManager:
                     if log_callback:
                         log_callback("✓ Java configured in system PATH\n")
                         log_callback("  You can now use 'java' from any terminal\n")
+                    self.invalidate_cache()  # Clear cache after successful install
                     return str(extract_dir)
                 else:
                     # PATH configuration failed - clean up downloaded files
@@ -1555,16 +1580,24 @@ exit /b 0
         except Exception:
             return False
 
-    def get_java_installations(self) -> List[Tuple[int, Path, bool]]:
+    def get_java_installations(self, force_refresh: bool = False) -> List[Tuple[int, Path, bool]]:
         """
         Lists all Java installations managed by PyCraft
+
+        Args:
+            force_refresh: If True, bypasses cache
 
         Returns:
             List of tuples: (version, path, is_in_path)
         """
+        # Return cached result if available
+        if not force_refresh and self._installations_cache is not None:
+            return self._installations_cache
+
         installations = []
 
         if not self.java_installs_dir.exists():
+            self._installations_cache = installations
             return installations
 
         try:
@@ -1596,10 +1629,12 @@ exit /b 0
 
             # Sort by version
             installations.sort(key=lambda x: x[0], reverse=True)
+            self._installations_cache = installations
             return installations
 
         except Exception as e:
             print(f"Error listing Java installations: {e}")
+            self._installations_cache = installations
             return installations
 
     def delete_java_installation(
@@ -1658,6 +1693,7 @@ exit /b 0
             if log_callback:
                 log_callback(f"✓ Java {java_version} deleted successfully\n")
 
+            self.invalidate_cache()  # Clear cache after deletion
             return True
 
         except PermissionError as e:

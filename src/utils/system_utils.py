@@ -64,9 +64,9 @@ def validate_properties_file(properties_path: str) -> bool:
         if not os.path.exists(properties_path):
             return False
 
-        # Check minimum size (must be at least 500 bytes)
+        # Check minimum size (at least 50 bytes - older versions have smaller files)
         file_size = os.path.getsize(properties_path)
-        if file_size < 500:
+        if file_size < 50:
             print(f"⚠️ server.properties too small: {file_size} bytes")
             return False
 
@@ -74,12 +74,10 @@ def validate_properties_file(properties_path: str) -> bool:
         with open(properties_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
-        # Must contain key properties
-        required_props = ['server-port=', 'difficulty=', 'gamemode=']
-        for prop in required_props:
-            if prop not in content:
-                print(f"⚠️ server.properties does not contain '{prop}'")
-                return False
+        # Must contain at least server-port (present in all versions)
+        if 'server-port=' not in content:
+            print("⚠️ server.properties does not contain 'server-port='")
+            return False
 
         return True
 
