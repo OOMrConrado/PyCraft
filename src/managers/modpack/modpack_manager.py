@@ -147,7 +147,8 @@ class ModpackManager:
         project_id: str,
         version_id: str,
         server_folder: str,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        java_executable: Optional[str] = None
     ) -> bool:
         """
         Installs a modpack from Modrinth
@@ -157,6 +158,7 @@ class ModpackManager:
             version_id: Version ID to install
             server_folder: Folder where to install the server
             log_callback: Function to report progress
+            java_executable: Pre-verified Java executable (skips verification if provided)
 
         Returns:
             True if installation was successful
@@ -221,16 +223,21 @@ class ModpackManager:
                 log_callback(f"  -Loader: {loader_type}\n")
                 log_callback(f"  -Loader version: {loader_version or 'latest'}\n\n")
 
-            # Verify/install Java
+            # Verify/install Java (skip if already verified)
             if log_callback:
                 log_callback("Step 4/6: Verifying Java...\n")
 
-            java_exe = self.java_manager.ensure_java_installed(minecraft_version, log_callback)
-
-            if not java_exe:
+            if java_executable:
+                java_exe = java_executable
                 if log_callback:
-                    log_callback("✗ Error: Could not install Java\n")
-                return False
+                    log_callback("Using pre-verified Java\n")
+            else:
+                java_exe = self.java_manager.ensure_java_installed(minecraft_version, log_callback)
+
+                if not java_exe:
+                    if log_callback:
+                        log_callback("✗ Error: Could not install Java\n")
+                    return False
 
             # Download mods and extract environment metadata
             if log_callback:
@@ -380,7 +387,8 @@ class ModpackManager:
         modpack_id: int,
         file_id: int,
         server_folder: str,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        java_executable: Optional[str] = None
     ) -> bool:
         """
         Installs a modpack from CurseForge.
@@ -397,6 +405,7 @@ class ModpackManager:
             file_id: File/version ID (client modpack file)
             server_folder: Folder where to install the server
             log_callback: Function to report progress
+            java_executable: Pre-verified Java executable (skips verification if provided)
 
         Returns:
             True if installation was successful
@@ -428,7 +437,7 @@ class ModpackManager:
 
                 # Use the server pack installation method
                 return self._install_curseforge_server_pack(
-                    modpack_id, server_pack_file_id, server_folder, log_callback
+                    modpack_id, server_pack_file_id, server_folder, log_callback, java_executable
                 )
             else:
                 if log_callback:
@@ -437,7 +446,7 @@ class ModpackManager:
 
                 # Fall back to the old method
                 return self._install_curseforge_modpack_fallback(
-                    modpack_id, file_id, server_folder, log_callback
+                    modpack_id, file_id, server_folder, log_callback, java_executable
                 )
 
         except Exception as e:
@@ -450,7 +459,8 @@ class ModpackManager:
         modpack_id: int,
         server_pack_file_id: int,
         server_folder: str,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        java_executable: Optional[str] = None
     ) -> bool:
         """
         Install a CurseForge server pack directly.
@@ -731,8 +741,11 @@ class ModpackManager:
                     log_callback("⚠ Could not detect Minecraft version from server pack\n")
                     log_callback("    Will attempt to detect when loading the server\n")
 
-            # Check Java compatibility (informational only - actual Java selection happens at server start)
-            if minecraft_version:
+            # Check Java compatibility (skip if already verified)
+            if java_executable:
+                if log_callback:
+                    log_callback("[OK] Using pre-verified Java\n")
+            elif minecraft_version:
                 java_check = self.java_manager.get_best_java_for_version(minecraft_version)
                 if java_check["needs_install"]:
                     required = java_check["required_java_version"]
@@ -755,11 +768,30 @@ class ModpackManager:
             self._create_eula_file(server_folder, log_callback)
 
             # Save modpack info for later detection
+            modpack_name = "Unknown"
+            modpack_slug = ""
             try:
-                modpack_info = self.curseforge_api.get_modpack_info(modpack_id)
-                modpack_name = modpack_info.get("name", "Unknown") if modpack_info else "Unknown"
-                modpack_slug = modpack_info.get("slug", "") if modpack_info else ""
+                # Use timeout for API call to prevent hanging
+                import threading as _threading
+                modpack_info_result = [None]
+                def fetch_info():
+                    try:
+                        modpack_info_result[0] = self.curseforge_api.get_modpack_info(modpack_id)
+                    except Exception:
+                        pass
 
+                info_thread = _threading.Thread(target=fetch_info, daemon=True)
+                info_thread.start()
+                info_thread.join(timeout=10)  # 10 second timeout
+
+                modpack_info = modpack_info_result[0]
+                if modpack_info:
+                    modpack_name = modpack_info.get("name", "Unknown")
+                    modpack_slug = modpack_info.get("slug", "")
+            except Exception:
+                pass
+
+            try:
                 info_file = Path(server_folder) / "modpack_info.json"
                 info_data = {
                     "name": modpack_name,
@@ -783,15 +815,18 @@ class ModpackManager:
                         if loader_version:
                             log_callback(f" {loader_version}")
                     log_callback("\n")
-            except Exception as e:
-                # Non-critical error, continue anyway
-                pass
-
-            # Clean up temporary files
-            try:
-                shutil.rmtree(temp_dir)
             except Exception:
                 pass
+
+            # Clean up temporary files in background (don't block)
+            def cleanup():
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception:
+                    pass
+
+            import threading as _threading
+            _threading.Thread(target=cleanup, daemon=True).start()
 
             if log_callback:
                 log_callback("\n╔════════════════════════════════════════════════╗\n")
@@ -812,7 +847,8 @@ class ModpackManager:
         modpack_id: int,
         file_id: int,
         server_folder: str,
-        log_callback: Optional[Callable[[str], None]] = None
+        log_callback: Optional[Callable[[str], None]] = None,
+        java_executable: Optional[str] = None
     ) -> bool:
         """
         Fallback installation method for CurseForge modpacks that don't have a server pack.
@@ -823,6 +859,7 @@ class ModpackManager:
             file_id: File/version ID
             server_folder: Folder where to install the server
             log_callback: Function to report progress
+            java_executable: Pre-verified Java executable (skips verification if provided)
 
         Returns:
             True if installation was successful
@@ -879,16 +916,21 @@ class ModpackManager:
                 log_callback(f"  - Loader: {loader_type}\n")
                 log_callback(f"  - Loader version: {loader_version or 'latest'}\n\n")
 
-            # Verify/install Java
+            # Verify/install Java (skip if already verified)
             if log_callback:
                 log_callback("    Verifying Java...\n")
 
-            java_exe = self.java_manager.ensure_java_installed(minecraft_version, log_callback)
-
-            if not java_exe:
+            if java_executable:
+                java_exe = java_executable
                 if log_callback:
-                    log_callback("✗ Error: Could not install Java\n")
-                return False
+                    log_callback("Using pre-verified Java\n")
+            else:
+                java_exe = self.java_manager.ensure_java_installed(minecraft_version, log_callback)
+
+                if not java_exe:
+                    if log_callback:
+                        log_callback("✗ Error: Could not install Java\n")
+                    return False
 
             # Download mods
             if log_callback:

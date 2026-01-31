@@ -147,7 +147,7 @@ class LoaderManager:
                 creation_flags = subprocess.CREATE_NO_WINDOW
 
             result = subprocess.run(
-                [java_executable, "-jar", "forge-installer.jar", "--installServer"],
+                [java_executable, "-Djava.awt.headless=true", "-jar", "forge-installer.jar", "--installServer"],
                 cwd=server_folder,
                 capture_output=True,
                 text=True,
