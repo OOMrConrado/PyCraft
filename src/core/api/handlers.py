@@ -708,7 +708,7 @@ class CurseForgeAPI:
             last_progress = 0
 
             with open(dest_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
+                for chunk in response.iter_content(chunk_size=65536):  # 64KB chunks for faster downloads
                     if chunk:
                         f.write(chunk)
                         downloaded += len(chunk)

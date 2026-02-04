@@ -75,14 +75,6 @@ class ModpackInstallController(BasePage):
         self.search_timer.setInterval(350)
         self.search_timer.timeout.connect(self._search_modpacks)
 
-        # Thread-safe log buffer - logs are added from worker threads, processed by timer
-        self._thread_log_buffer = deque()
-        self._log_lock = threading.Lock()
-        self._log_timer = QTimer()
-        self._log_timer.setInterval(100)  # Process logs every 100ms
-        self._log_timer.timeout.connect(self._process_thread_logs)
-        self._log_timer.start()  # Always running to check for new logs
-
         # Connect signals
         self.results_signal.connect(self._show_results)
         self.pagination_signal.connect(self._update_pagination)
@@ -90,61 +82,6 @@ class ModpackInstallController(BasePage):
         self.version_loaded_signal.connect(self._on_versions_loaded)
 
         self._build_ui()
-
-    def _process_thread_logs(self):
-        """Process logs from worker threads - called by timer in main thread"""
-        if not self._thread_log_buffer:
-            return
-
-        # Get all pending logs (thread-safe)
-        logs_to_process = []
-        with self._log_lock:
-            # Take ALL pending logs for batch processing
-            while self._thread_log_buffer and len(logs_to_process) < 100:
-                logs_to_process.append(self._thread_log_buffer.popleft())
-
-        if logs_to_process and hasattr(self, 'console') and self.console:
-            # Batch insert for better performance
-            self._log_batch(self.console, logs_to_process)
-
-    def _log_batch(self, console, logs_batch):
-        """Log multiple messages in a single operation for better performance"""
-        if not logs_batch:
-            return
-
-        from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor
-
-        level_colors = {
-            "normal": "#ffffff",
-            "info": "#60a5fa",
-            "success": "#4ade80",
-            "warning": "#fbbf24",
-            "error": "#f87171"
-        }
-
-        cursor = console.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-
-        # Insert all messages in one go
-        for msg, level in logs_batch:
-            color = level_colors.get(level, "#ffffff")
-            fmt = QTextCharFormat()
-            fmt.setForeground(QColor(color))
-            cursor.insertText(msg, fmt)
-
-        console.setTextCursor(cursor)
-        console.ensureCursorVisible()
-
-        # Limit lines to prevent memory issues
-        max_lines = 1000
-        doc = console.document()
-        if doc.blockCount() > max_lines:
-            cursor = console.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            for _ in range(doc.blockCount() - max_lines):
-                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
-            cursor.removeSelectedText()
-            cursor.deleteChar()
 
     def _build_ui(self):
         """Build the modpack installation page UI"""
@@ -1108,46 +1045,33 @@ class ModpackInstallController(BasePage):
                 return  # User cancelled or Java install failed
 
         self.install_btn.setEnabled(False)
-        print("[DEBUG] Lanzando thread de instalacion...", flush=True)
+        QApplication.processEvents()
 
-        def install():
-            print("[DEBUG] THREAD: Inicio instalacion", flush=True)
-            try:
-                self._emit_log(f"\nInstalling {mp_name}...\n", "info")
+        try:
+            self._emit_log(f"\nInstalling {mp_name}...\n", "info")
 
-                if source == "curseforge":
-                    print("[DEBUG] THREAD: Instalando CurseForge...", flush=True)
-                    success = self._install_curseforge(project_id, version_info, java_executable)
-                else:
-                    print("[DEBUG] THREAD: Instalando Modrinth...", flush=True)
-                    success = self.modpack_manager.install_modrinth_modpack(
-                        project_id, version_id, self.modpack_folder,
-                        log_callback=lambda m: self._emit_log(m, "normal"),
-                        java_executable=java_executable
-                    )
+            if source == "curseforge":
+                success = self._install_curseforge(project_id, version_info, java_executable)
+            else:
+                success = self.modpack_manager.install_modrinth_modpack(
+                    project_id, version_id, self.modpack_folder,
+                    log_callback=lambda m: self._emit_log(m, "normal"),
+                    java_executable=java_executable
+                )
 
-                print(f"[DEBUG] THREAD: Resultado = {success}", flush=True)
-                if success:
-                    self._emit_log("\n" + "="*50 + "\n", "success")
-                    self._emit_log("MODPACK INSTALLED SUCCESSFULLY\n", "success")
-                    self._emit_log("="*50 + "\n", "success")
-                    print("[DEBUG] THREAD: Emitiendo signal...", flush=True)
-                    self.install_success.emit(mp_name, mc_version, loader_type)
-                    print("[DEBUG] THREAD: Signal emitida", flush=True)
-                else:
-                    self._emit_log("Installation failed\n", "error")
+            if success:
+                self._emit_log("\n" + "="*50 + "\n", "success")
+                self._emit_log("MODPACK INSTALLED SUCCESSFULLY\n", "success")
+                self._emit_log("="*50 + "\n", "success")
+                self.install_success.emit(mp_name, mc_version, loader_type)
+            else:
+                self._emit_log("Installation failed\n", "error")
 
-            except Exception as e:
-                print(f"[DEBUG] THREAD: ERROR: {e}", flush=True)
-                self._emit_log(f"Error: {e}\n", "error")
+        except Exception as e:
+            self._emit_log(f"Error: {e}\n", "error")
 
-            finally:
-                print("[DEBUG] THREAD: Finally...", flush=True)
-                QTimer.singleShot(0, lambda: self.install_btn.setEnabled(True))
-                print("[DEBUG] THREAD: FIN", flush=True)
-
-        threading.Thread(target=install, daemon=True).start()
-        print("[DEBUG] Thread lanzado", flush=True)
+        finally:
+            self.install_btn.setEnabled(True)
 
     def _install_curseforge(self, project_id: str, version_info: dict, java_executable: str = None) -> bool:
         """Install CurseForge modpack"""
@@ -1169,9 +1093,10 @@ class ModpackInstallController(BasePage):
         )
 
     def _emit_log(self, msg: str, level: str):
-        """Add log message to thread-safe buffer (processed by timer in main thread)"""
-        with self._log_lock:
-            self._thread_log_buffer.append((msg, level))
+        """Log directly to console (simple, no threading)"""
+        if hasattr(self, 'console') and self.console:
+            self._log(self.console, msg, level)
+            QApplication.processEvents()  # Keep UI responsive
 
     # ============================================================
     # Public Methods

@@ -69,76 +69,7 @@ class VanillaRunController(BasePage):
         self._command_history = []
         self._history_index = -1
 
-        # Thread-safe log buffer - logs are added from worker threads, processed by timer
-        self._thread_log_buffer = deque()
-        self._log_lock = threading.Lock()
-        self._log_timer = QTimer()
-        self._log_timer.setInterval(150)  # Process logs every 150ms - reduced UI load
-        self._log_timer.timeout.connect(self._process_thread_logs)
-        self._log_timer.start()  # Always running to check for new logs
-
         self._build_ui()
-
-    def _process_thread_logs(self):
-        """Process logs from worker threads - called by timer in main thread"""
-        if not self._thread_log_buffer:
-            return
-
-        # Get all pending logs (thread-safe)
-        logs_to_process = []
-        with self._log_lock:
-            # Take ALL pending logs for batch processing
-            while self._thread_log_buffer and len(logs_to_process) < 100:
-                logs_to_process.append(self._thread_log_buffer.popleft())
-
-        if logs_to_process and hasattr(self, 'console') and self.console:
-            # Batch insert for better performance
-            self._log_batch(self.console, logs_to_process)
-
-            # Detect when server is ready
-            for msg, level in logs_to_process:
-                if "Done" in msg and "For help, type" in msg:
-                    self.server_ready.emit()
-                    break
-
-    def _log_batch(self, console, logs_batch):
-        """Log multiple messages in a single operation for better performance"""
-        if not logs_batch:
-            return
-
-        from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor
-
-        level_colors = {
-            "normal": "#ffffff",
-            "info": "#60a5fa",
-            "success": "#4ade80",
-            "warning": "#fbbf24",
-            "error": "#f87171"
-        }
-
-        cursor = console.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-
-        # Insert all messages in one go
-        for msg, level in logs_batch:
-            color = level_colors.get(level, "#ffffff")
-            fmt = QTextCharFormat()
-            fmt.setForeground(QColor(color))
-            cursor.insertText(msg, fmt)
-
-        console.setTextCursor(cursor)
-        console.ensureCursorVisible()
-
-        # Limit lines to prevent memory issues
-        max_lines = 1000
-        doc = console.document()
-        if doc.blockCount() > max_lines:
-            cursor = console.textCursor()
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            for _ in range(doc.blockCount() - max_lines):
-                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
-            cursor.removeSelectedText()
-            cursor.deleteChar()
 
     def _build_ui(self):
         """Build the vanilla server run page UI"""
@@ -565,9 +496,14 @@ class VanillaRunController(BasePage):
     # ============================================================
 
     def _emit_log(self, msg: str, level: str):
-        """Add log message to thread-safe buffer (processed by timer in main thread)"""
-        with self._log_lock:
-            self._thread_log_buffer.append((msg, level))
+        """Log directly to console"""
+        if hasattr(self, 'console') and self.console:
+            self._log(self.console, msg, level)
+            QApplication.processEvents()
+
+            # Detect when server is ready
+            if "Done" in msg and "For help, type" in msg:
+                self.server_ready.emit()
 
     def set_ram(self, ram_mb: int):
         """Set RAM allocation"""
