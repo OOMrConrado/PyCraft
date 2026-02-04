@@ -3,6 +3,7 @@ from typing import List, Dict, Optional, Tuple
 import json
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 
 class MinecraftAPIHandler:
@@ -171,11 +172,33 @@ class ModrinthAPI:
                     filter_ratio = len(filtered_hits) / request_limit
                     total = max(int(total * filter_ratio), len(filtered_hits))
 
-            return hits, total
+            # Normalize Modrinth results to consistent format
+            normalized = self._normalize_modrinth_modpacks(hits)
+            return normalized, total
 
         except Exception as e:
             print(f"Error al buscar modpacks en Modrinth: {e}")
             return None, 0
+
+    def _normalize_modrinth_modpacks(self, modpacks: list) -> List[Dict]:
+        """Normalize Modrinth modpacks to consistent format"""
+        normalized = []
+        for mp in modpacks:
+            normalized.append({
+                "project_id": mp.get("project_id", mp.get("slug", "")),
+                "title": mp.get("title", "Unknown"),
+                "description": mp.get("description", ""),
+                "icon_url": mp.get("icon_url", ""),
+                "downloads": mp.get("downloads", 0),
+                "categories": mp.get("categories", []),
+                "versions": mp.get("versions", []),
+                "slug": mp.get("slug", ""),
+                "author": mp.get("author", "Unknown"),
+                "source": "modrinth",
+                "server_side": mp.get("server_side", "unknown"),
+                "client_side": mp.get("client_side", "unknown"),
+            })
+        return normalized
 
     def get_modpack_versions(self, project_id: str) -> Optional[List[Dict]]:
         """
@@ -635,18 +658,43 @@ class CurseForgeAPI:
             file_data = response.json().get("data")
 
             if not file_data:
+                print(f"Error downloading file: No file data returned from API for mod {modpack_id}, file {file_id}")
                 return None
 
             download_url = file_data.get("downloadUrl")
             filename = file_data.get("fileName")
 
-            if not download_url or not filename:
+            if not filename:
+                print(f"Error downloading file: No filename in file data")
                 return None
+
+            # If no direct download URL, try to construct it using CurseForge CDN pattern
+            # CurseForge CDN URLs follow the pattern: https://edge.forgecdn.net/files/XXXX/YYYY/filename
+            # where file_id is split as XXXX (first 4 digits) and YYYY (remaining digits)
+            if not download_url:
+                print(f"No direct download URL provided, attempting to construct CDN URL...")
+                # Split file_id for CDN URL pattern
+                file_id_str = str(file_id)
+                if len(file_id_str) >= 4:
+                    # Split as: first 4 digits / remaining digits
+                    first_part = file_id_str[:4]
+                    second_part = file_id_str[4:]
+                    # URL encode the filename to handle special characters (spaces, etc.)
+                    encoded_filename = quote(filename)
+                    constructed_url = f"https://edge.forgecdn.net/files/{first_part}/{second_part}/{encoded_filename}"
+                    print(f"Constructed CDN URL: {constructed_url}")
+                    download_url = constructed_url
+                else:
+                    print(f"Error: File ID {file_id} is too short to construct CDN URL")
+                    print(f"File data keys: {list(file_data.keys())}")
+                    return None
 
             # Download file (direct to CurseForge CDN, no proxy needed)
             # Sanitize filename to prevent path traversal
             safe_filename = os.path.basename(filename)
             dest_path = os.path.join(dest_folder, safe_filename)
+
+            print(f"Downloading {filename} from {download_url}")
             response = requests.get(download_url, stream=True, timeout=60)
             response.raise_for_status()
 
@@ -655,10 +703,13 @@ class CurseForgeAPI:
                     if chunk:
                         f.write(chunk)
 
+            print(f"Successfully downloaded to {dest_path}")
             return dest_path
 
         except Exception as e:
-            print(f"Error downloading file: {e}")
+            print(f"Error downloading file (mod {modpack_id}, file {file_id}): {type(e).__name__}: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def get_mod_file_info(self, mod_id: int, file_id: int) -> Optional[Dict]:
