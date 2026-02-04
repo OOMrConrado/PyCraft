@@ -474,9 +474,20 @@ class ModpackManager:
             # Download server pack
             if log_callback:
                 log_callback("Step 2/4: Downloading server pack...\n")
+                log_callback(f"    Modpack ID: {modpack_id}, Server pack file ID: {server_pack_file_id}\n")
 
             temp_dir = Path(server_folder) / ".temp_modpack"
             temp_dir.mkdir(exist_ok=True)
+
+            # Get file info first to provide better error messages
+            file_info = self.curseforge_api.get_mod_file_info(modpack_id, server_pack_file_id)
+            if file_info:
+                if log_callback:
+                    log_callback(f"    File name: {file_info.get('fileName', 'Unknown')}\n")
+                    download_url = file_info.get('downloadUrl')
+                    if not download_url:
+                        log_callback("    ⚠ No direct download URL available from CurseForge API\n")
+                        log_callback("    This may be a restriction by the modpack author\n")
 
             server_pack_file = self.curseforge_api.download_modpack_file(
                 modpack_id, server_pack_file_id, str(temp_dir)
@@ -485,6 +496,10 @@ class ModpackManager:
             if not server_pack_file:
                 if log_callback:
                     log_callback("✗ Error downloading server pack\n")
+                    log_callback("    Check the console output above for detailed error information\n")
+                    if file_info and not file_info.get('downloadUrl'):
+                        log_callback("    The modpack author may have disabled direct downloads\n")
+                        log_callback("    Try downloading manually from CurseForge and extracting to the server folder\n")
                 return False
 
             if log_callback:
