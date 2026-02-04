@@ -87,18 +87,58 @@ class VanillaRunController(BasePage):
         # Get all pending logs (thread-safe)
         logs_to_process = []
         with self._log_lock:
-            # Take up to 10 logs at a time to reduce UI blocking
-            for _ in range(min(10, len(self._thread_log_buffer))):
-                if self._thread_log_buffer:
-                    logs_to_process.append(self._thread_log_buffer.popleft())
+            # Take ALL pending logs for batch processing
+            while self._thread_log_buffer and len(logs_to_process) < 100:
+                logs_to_process.append(self._thread_log_buffer.popleft())
 
         if logs_to_process and hasattr(self, 'console') and self.console:
-            for msg, level in logs_to_process:
-                self._log(self.console, msg, level)
+            # Batch insert for better performance
+            self._log_batch(self.console, logs_to_process)
 
-                # Detect when server is ready
+            # Detect when server is ready
+            for msg, level in logs_to_process:
                 if "Done" in msg and "For help, type" in msg:
                     self.server_ready.emit()
+                    break
+
+    def _log_batch(self, console, logs_batch):
+        """Log multiple messages in a single operation for better performance"""
+        if not logs_batch:
+            return
+
+        from PySide6.QtGui import QTextCursor, QTextCharFormat, QColor
+
+        level_colors = {
+            "normal": "#ffffff",
+            "info": "#60a5fa",
+            "success": "#4ade80",
+            "warning": "#fbbf24",
+            "error": "#f87171"
+        }
+
+        cursor = console.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        # Insert all messages in one go
+        for msg, level in logs_batch:
+            color = level_colors.get(level, "#ffffff")
+            fmt = QTextCharFormat()
+            fmt.setForeground(QColor(color))
+            cursor.insertText(msg, fmt)
+
+        console.setTextCursor(cursor)
+        console.ensureCursorVisible()
+
+        # Limit lines to prevent memory issues
+        max_lines = 1000
+        doc = console.document()
+        if doc.blockCount() > max_lines:
+            cursor = console.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            for _ in range(doc.blockCount() - max_lines):
+                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
+            cursor.removeSelectedText()
+            cursor.deleteChar()
 
     def _build_ui(self):
         """Build the vanilla server run page UI"""
