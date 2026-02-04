@@ -496,11 +496,11 @@ class ModpackManager:
                     log_callback(f"    File name: {file_info.get('fileName', 'Unknown')}\n")
                     download_url = file_info.get('downloadUrl')
                     if not download_url:
-                        log_callback("    ⚠ No direct download URL available from CurseForge API\n")
-                        log_callback("    This may be a restriction by the modpack author\n")
+                        log_callback("    No direct download URL available\n")
+                        log_callback("    Using CDN fallback method...\n")
 
             server_pack_file = self.curseforge_api.download_modpack_file(
-                modpack_id, server_pack_file_id, str(temp_dir)
+                modpack_id, server_pack_file_id, str(temp_dir), log_callback=log_callback
             )
 
             if not server_pack_file:
