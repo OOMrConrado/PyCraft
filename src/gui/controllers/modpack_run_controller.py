@@ -74,9 +74,10 @@ class ModpackRunController(BasePage):
         self._command_history = []
         self._history_index = -1
 
-        # Simple direct logging, no buffers
-
         self._build_ui()
+
+        # Connect log signal for thread-safe logging
+        self._log_signal.connect(self._on_log_signal)
 
     def _build_ui(self):
         """Build the modpack run page UI"""
@@ -717,11 +718,15 @@ class ModpackRunController(BasePage):
     # ============================================================
 
     def _emit_log(self, msg: str, level: str):
-        """Log directly to console"""
+        """Log using signal for thread safety"""
+        self._log_signal.emit(msg, level)
+
+    def _on_log_signal(self, msg: str, level: str):
+        """Handle log signal in main thread"""
         if hasattr(self, 'console') and self.console:
             self._log(self.console, msg, level)
-            QApplication.processEvents()
 
+            # Detect when server is ready
             if "Done" in msg and "For help, type" in msg:
                 self.server_ready.emit()
 
