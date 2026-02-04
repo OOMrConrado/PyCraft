@@ -2388,7 +2388,7 @@ class PyCraftGUI(QMainWindow):
             }}
         """
 
-    def _log(self, console: QTextEdit, msg: str, level: str = "normal", max_lines: int = 500):
+    def _log(self, console: QTextEdit, msg: str, level: str = "normal", max_lines: int = 1000):
         colors = {
             "normal": "#ffffff", "info": "#60a5fa",
             "success": "#4ade80", "warning": "#fbbf24", "error": "#f87171"
@@ -2401,22 +2401,28 @@ class PyCraftGUI(QMainWindow):
         fmt = QTextCharFormat()
         fmt.setForeground(QColor(color))
         cursor.insertText(msg, fmt)
-
-        # Limit console to max_lines to prevent memory issues
-        doc = console.document()
-        line_count = doc.blockCount()
-        if line_count > max_lines:
-            # Remove excess lines from the beginning
-            excess = line_count - max_lines
-            cursor.movePosition(QTextCursor.MoveOperation.Start)
-            for _ in range(excess):
-                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
-            cursor.removeSelectedText()
-            # Move back to end
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-
         console.setTextCursor(cursor)
+
+        # Only check line limit occasionally (every ~100 calls) to avoid slowdown
+        if not hasattr(self, '_log_call_count'):
+            self._log_call_count = {}
+
+        console_id = id(console)
+        self._log_call_count[console_id] = self._log_call_count.get(console_id, 0) + 1
+
+        # Only trim lines every 100 log calls per console
+        if self._log_call_count[console_id] % 100 == 0:
+            doc = console.document()
+            line_count = doc.blockCount()
+            if line_count > max_lines:
+                # Remove excess lines efficiently
+                excess = line_count - max_lines
+                cursor.movePosition(QTextCursor.MoveOperation.Start)
+                cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor, excess)
+                cursor.removeSelectedText()
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+                console.setTextCursor(cursor)
+
         console.ensureCursorVisible()
 
     # Navigation
