@@ -549,9 +549,6 @@ set "PATH=%JAVA_HOME%\\bin;%PATH%"
             True if modified successfully, False otherwise
         """
         try:
-            # Wait a moment for file to be fully written
-            time.sleep(0.5)
-
             # If file doesn't exist, create it directly
             if not os.path.exists(self.eula_path):
                 with open(self.eula_path, 'w', encoding='utf-8') as file:
@@ -1371,16 +1368,36 @@ max-world-size=29999984
                     shell=use_shell
                 )
 
-                # Leer logs en un hilo separado
+                # Single thread with simple batched output
                 def read_output():
                     try:
-                        if log_callback and self.server_process and self.server_process.stdout:
-                            for line in self.server_process.stdout:
-                                log_callback(line)
+                        batch = []
+                        last_flush = time.time()
+
+                        while self.server_process:
+                            # Check if process ended
+                            if self.server_process.poll() is not None:
+                                # Flush any remaining batch
+                                if batch and log_callback:
+                                    log_callback(''.join(batch))
+                                break
+
+                            # Read line
+                            if self.server_process.stdout:
+                                line = self.server_process.stdout.readline()
+                                if line:
+                                    batch.append(line)
+
+                                    # Flush batch every 100ms or 20 lines
+                                    now = time.time()
+                                    if len(batch) >= 20 or (now - last_flush) >= 0.1:
+                                        if log_callback:
+                                            log_callback(''.join(batch))
+                                        batch = []
+                                        last_flush = now
                     except Exception:
                         pass
                     finally:
-                        # Server process has ended - call the on_stopped callback
                         if on_stopped:
                             on_stopped()
 
@@ -2127,7 +2144,6 @@ max-world-size=29999984
                             # Run installer with --installServer
                             install_cmd = [java_executable, "-Djava.awt.headless=true", "-jar", forge_jar, "--installServer"]
                             try:
-                                import subprocess
                                 creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                                 result = subprocess.run(
                                     install_cmd,
@@ -2460,26 +2476,54 @@ max-world-size=29999984
                     stderr=subprocess.STDOUT,
                     stdin=subprocess.PIPE,
                     text=True,
-                    bufsize=1,
+                    bufsize=0,  # Unbuffered for more responsive output
                     creationflags=creation_flags,
                     env=env
                 )
 
-                # Leer logs en un hilo separado
+                # Leer logs con queue para evitar bloqueos
+                output_queue = queue.Queue()
+                stop_event = threading.Event()
+
                 def read_output():
                     try:
-                        if log_callback and self.server_process and self.server_process.stdout:
-                            for line in self.server_process.stdout:
-                                log_callback(line)
+                        while not stop_event.is_set():
+                            if self.server_process and self.server_process.poll() is not None:
+                                # Process ended
+                                stop_event.set()
+                                break
+
+                            if self.server_process and self.server_process.stdout:
+                                try:
+                                    line = self.server_process.stdout.readline()
+                                    if line:
+                                        output_queue.put(line)
+                                    else:
+                                        time.sleep(0.01)
+                                except Exception:
+                                    break
+                    except Exception:
+                        pass
+
+                def process_output():
+                    try:
+                        while not stop_event.is_set() or not output_queue.empty():
+                            try:
+                                line = output_queue.get(timeout=0.1)
+                                if line and log_callback:
+                                    log_callback(line)
+                            except queue.Empty:
+                                continue
                     except Exception:
                         pass
                     finally:
-                        # Server process has ended - call the on_stopped callback
                         if on_stopped:
                             on_stopped()
 
-                thread = threading.Thread(target=read_output, daemon=True)
-                thread.start()
+                read_thread = threading.Thread(target=read_output, daemon=True)
+                process_thread = threading.Thread(target=process_output, daemon=True)
+                read_thread.start()
+                process_thread.start()
 
                 if log_callback:
                     log_callback("Servidor iniciado!\n")
