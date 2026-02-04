@@ -603,7 +603,7 @@ class CurseForgeAPI:
             print(f"Error getting server pack file ID: {e}")
             return None
 
-    def download_modpack_file(self, modpack_id: int, file_id: int, dest_folder: str) -> Optional[str]:
+    def download_modpack_file(self, modpack_id: int, file_id: int, dest_folder: str, log_callback=None) -> Optional[str]:
         """
         Download a modpack file
 
@@ -611,6 +611,7 @@ class CurseForgeAPI:
             modpack_id: Modpack ID
             file_id: File ID
             dest_folder: Destination folder
+            log_callback: Optional callback for logging progress
 
         Returns:
             Path to downloaded file
@@ -623,21 +624,25 @@ class CurseForgeAPI:
             file_data = response.json().get("data")
 
             if not file_data:
-                print(f"Error downloading file: No file data returned from API for mod {modpack_id}, file {file_id}")
+                if log_callback:
+                    log_callback("    Error: No file data returned from API\n")
                 return None
 
             download_url = file_data.get("downloadUrl")
             filename = file_data.get("fileName")
 
             if not filename:
-                print(f"Error downloading file: No filename in file data")
+                if log_callback:
+                    log_callback("    Error: No filename in file data\n")
                 return None
 
             # If no direct download URL, try to construct it using CurseForge CDN pattern
-            # CurseForge CDN URLs follow the pattern: https://edge.forgecdn.net/files/XXXX/YYYY/filename
-            # where file_id is split as XXXX (first 4 digits) and YYYY (remaining digits)
+            used_fallback = False
             if not download_url:
-                print(f"No direct download URL provided, attempting to construct CDN URL...")
+                if log_callback:
+                    log_callback("    Using CDN fallback method...\n")
+                used_fallback = True
+
                 # Split file_id for CDN URL pattern
                 file_id_str = str(file_id)
                 if len(file_id_str) >= 4:
@@ -647,34 +652,47 @@ class CurseForgeAPI:
                     # URL encode the filename to handle special characters (spaces, etc.)
                     encoded_filename = quote(filename)
                     constructed_url = f"https://edge.forgecdn.net/files/{first_part}/{second_part}/{encoded_filename}"
-                    print(f"Constructed CDN URL: {constructed_url}")
                     download_url = constructed_url
                 else:
-                    print(f"Error: File ID {file_id} is too short to construct CDN URL")
-                    print(f"File data keys: {list(file_data.keys())}")
+                    if log_callback:
+                        log_callback(f"    Error: File ID {file_id} is too short to construct CDN URL\n")
                     return None
 
-            # Download file (direct to CurseForge CDN, no proxy needed)
-            # Sanitize filename to prevent path traversal
+            # Download file
             safe_filename = os.path.basename(filename)
             dest_path = os.path.join(dest_folder, safe_filename)
 
-            print(f"Downloading {filename} from {download_url}")
+            if log_callback:
+                log_callback(f"    Downloading {safe_filename}...\n")
+
             response = requests.get(download_url, stream=True, timeout=60)
             response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+            last_progress = 0
 
             with open(dest_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk:
                         f.write(chunk)
+                        downloaded += len(chunk)
 
-            print(f"Successfully downloaded to {dest_path}")
+                        # Report progress every 10%
+                        if total_size > 0 and log_callback:
+                            progress = int((downloaded / total_size) * 100)
+                            if progress >= last_progress + 10:
+                                log_callback(f"    Progress: {progress}%\n")
+                                last_progress = progress
+
+            if log_callback:
+                log_callback(f"    Download complete\n")
+
             return dest_path
 
         except Exception as e:
-            print(f"Error downloading file (mod {modpack_id}, file {file_id}): {type(e).__name__}: {e}")
-            import traceback
-            traceback.print_exc()
+            if log_callback:
+                log_callback(f"    Error downloading: {type(e).__name__}: {e}\n")
             return None
 
     def get_mod_file_info(self, mod_id: int, file_id: int) -> Optional[Dict]:
