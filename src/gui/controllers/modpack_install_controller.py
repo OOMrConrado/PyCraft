@@ -33,7 +33,7 @@ class ModpackInstallController(BasePage):
     # Signals for thread-safe communication
     results_signal = Signal(object)  # list of results
     pagination_signal = Signal(int)  # total results
-    icon_signal = Signal(str, object)  # project_id, QPixmap
+    icon_signal = Signal(str, bytes)  # project_id, image bytes (QPixmap created in main thread)
     version_loaded_signal = Signal(object, object)  # versions, callback
     install_success = Signal(str, str, str)  # name, mc_version, loader
 
@@ -728,26 +728,30 @@ class ModpackInstallController(BasePage):
                 import requests
                 response = requests.get(url, timeout=5)
                 if response.status_code == 200:
-                    pixmap = QPixmap()
-                    pixmap.loadFromData(response.content)
-                    if not pixmap.isNull():
-                        scaled = pixmap.scaled(
-                            56, 56,
-                            Qt.AspectRatioMode.KeepAspectRatio,
-                            Qt.TransformationMode.SmoothTransformation
-                        )
-                        self.icon_cache[project_id] = scaled
-                        self.icon_signal.emit(project_id, scaled)
+                    # Send raw bytes to main thread - QPixmap must be created there
+                    self.icon_signal.emit(project_id, response.content)
             except Exception:
                 pass
 
         threading.Thread(target=load, daemon=True).start()
 
-    def _on_icon_loaded(self, project_id: str, pixmap):
-        """Handle loaded icon"""
-        icon_label = self.findChild(QLabel, f"mp_icon_{project_id}")
-        if icon_label and pixmap:
-            icon_label.setPixmap(pixmap)
+    def _on_icon_loaded(self, project_id: str, image_bytes: bytes):
+        """Handle loaded icon - creates QPixmap in main thread (Qt requirement)"""
+        if project_id in self.icon_cache:
+            return
+
+        pixmap = QPixmap()
+        pixmap.loadFromData(image_bytes)
+        if not pixmap.isNull():
+            scaled = pixmap.scaled(
+                56, 56,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            self.icon_cache[project_id] = scaled
+            icon_label = self.findChild(QLabel, f"mp_icon_{project_id}")
+            if icon_label:
+                icon_label.setPixmap(scaled)
 
     # ============================================================
     # Version Selection
@@ -1039,6 +1043,7 @@ class ModpackInstallController(BasePage):
 
     def _install_modpack(self):
         """Start modpack installation"""
+        print("[DEBUG] _install_modpack: INICIO", flush=True)
         if not self.selected_modpack or not self.modpack_folder:
             return
 
@@ -1046,6 +1051,7 @@ class ModpackInstallController(BasePage):
         version_id = self.selected_mp_version.get("id", "") if self.selected_mp_version else None
         mp_name = self.selected_modpack.get("title", "Unknown")
         source = self.selected_modpack.get("source", "modrinth")
+        print(f"[DEBUG] Modpack: {mp_name}, source: {source}", flush=True)
 
         version_info = self.selected_mp_version or {}
         game_versions = version_info.get("game_versions", [])
@@ -1055,42 +1061,55 @@ class ModpackInstallController(BasePage):
         loader_type = loaders[0] if loaders else "Unknown"
 
         # Check Java compatibility BEFORE starting the thread (shows modal if needed)
+        print("[DEBUG] Verificando Java...", flush=True)
         java_executable = None
         if mc_version and mc_version != "Unknown" and self._check_and_get_java:
             java_executable = self._check_and_get_java(mc_version)
+            print(f"[DEBUG] Java = {java_executable}", flush=True)
             if not java_executable:
                 return  # User cancelled or Java install failed
 
         self.install_btn.setEnabled(False)
+        print("[DEBUG] Lanzando thread de instalacion...", flush=True)
 
         def install():
+            print("[DEBUG] THREAD: Inicio instalacion", flush=True)
             try:
                 self._emit_log(f"\nInstalling {mp_name}...\n", "info")
 
                 if source == "curseforge":
+                    print("[DEBUG] THREAD: Instalando CurseForge...", flush=True)
                     success = self._install_curseforge(project_id, version_info, java_executable)
                 else:
+                    print("[DEBUG] THREAD: Instalando Modrinth...", flush=True)
                     success = self.modpack_manager.install_modrinth_modpack(
                         project_id, version_id, self.modpack_folder,
                         log_callback=lambda m: self._emit_log(m, "normal"),
                         java_executable=java_executable
                     )
 
+                print(f"[DEBUG] THREAD: Resultado = {success}", flush=True)
                 if success:
                     self._emit_log("\n" + "="*50 + "\n", "success")
                     self._emit_log("MODPACK INSTALLED SUCCESSFULLY\n", "success")
                     self._emit_log("="*50 + "\n", "success")
+                    print("[DEBUG] THREAD: Emitiendo signal...", flush=True)
                     self.install_success.emit(mp_name, mc_version, loader_type)
+                    print("[DEBUG] THREAD: Signal emitida", flush=True)
                 else:
                     self._emit_log("Installation failed\n", "error")
 
             except Exception as e:
+                print(f"[DEBUG] THREAD: ERROR: {e}", flush=True)
                 self._emit_log(f"Error: {e}\n", "error")
 
             finally:
+                print("[DEBUG] THREAD: Finally...", flush=True)
                 QTimer.singleShot(0, lambda: self.install_btn.setEnabled(True))
+                print("[DEBUG] THREAD: FIN", flush=True)
 
         threading.Thread(target=install, daemon=True).start()
+        print("[DEBUG] Thread lanzado", flush=True)
 
     def _install_curseforge(self, project_id: str, version_info: dict, java_executable: str = None) -> bool:
         """Install CurseForge modpack"""

@@ -32,6 +32,7 @@ class ClientInstallController(BasePage):
     # Signals
     results_signal = Signal(object)  # search results
     pagination_signal = Signal(int)  # total results
+    icon_signal = Signal(str, bytes, object)  # project_id, image bytes, label
 
     def __init__(
         self,
@@ -65,6 +66,7 @@ class ClientInstallController(BasePage):
         # Connect signals
         self.results_signal.connect(self._show_results)
         self.pagination_signal.connect(self._update_pagination)
+        self.icon_signal.connect(self._on_icon_loaded)
 
         self._build_ui()
 
@@ -511,23 +513,32 @@ class ClientInstallController(BasePage):
         return str(count)
 
     def _load_icon(self, url: str, project_id: str, label: QLabel):
-        """Load icon from URL"""
+        """Load icon from URL - downloads in thread, creates QPixmap in main thread via signal"""
         def load():
             try:
                 import urllib.request
                 req = urllib.request.Request(url, headers={'User-Agent': 'PyCraft/1.0'})
                 data = urllib.request.urlopen(req, timeout=5).read()
-                pixmap = QPixmap()
-                pixmap.loadFromData(data)
-                if not pixmap.isNull():
-                    scaled = pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-                    self.icon_cache[project_id] = scaled
-                    # Use default arg to capture label reference
-                    QTimer.singleShot(0, lambda lbl=label, px=scaled: lbl.setPixmap(px) if lbl else None)
+                self.icon_signal.emit(project_id, data, label)
             except Exception:
                 pass
 
         threading.Thread(target=load, daemon=True).start()
+
+    def _on_icon_loaded(self, project_id: str, data: bytes, label: QLabel):
+        """Handle icon loaded signal - creates QPixmap in main thread"""
+        if project_id in self.icon_cache:
+            if label:
+                label.setPixmap(self.icon_cache[project_id])
+            return
+
+        pixmap = QPixmap()
+        pixmap.loadFromData(data)
+        if not pixmap.isNull():
+            scaled = pixmap.scaled(48, 48, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self.icon_cache[project_id] = scaled
+            if label:
+                label.setPixmap(scaled)
 
     def _open_modpack(self, slug: str):
         """Open modpack page in browser"""
