@@ -73,7 +73,7 @@ class VanillaRunController(BasePage):
         self._thread_log_buffer = deque()
         self._log_lock = threading.Lock()
         self._log_timer = QTimer()
-        self._log_timer.setInterval(50)  # Process logs every 50ms
+        self._log_timer.setInterval(150)  # Process logs every 150ms - reduced UI load
         self._log_timer.timeout.connect(self._process_thread_logs)
         self._log_timer.start()  # Always running to check for new logs
 
@@ -87,8 +87,8 @@ class VanillaRunController(BasePage):
         # Get all pending logs (thread-safe)
         logs_to_process = []
         with self._log_lock:
-            # Take up to 50 logs at a time for server output
-            for _ in range(min(50, len(self._thread_log_buffer))):
+            # Take up to 10 logs at a time to reduce UI blocking
+            for _ in range(min(10, len(self._thread_log_buffer))):
                 if self._thread_log_buffer:
                     logs_to_process.append(self._thread_log_buffer.popleft())
 
@@ -329,10 +329,7 @@ class VanillaRunController(BasePage):
         java_source = "system" if java_executable == "java" else "PyCraft"
         self._log(self.console, f"\nUsing {java_source} Java: {java_executable}\n", "info")
 
-        # Configure online-mode=false automatically for LAN/Hamachi play
-        self.server_manager.set_online_mode(False)
-
-        self._log(self.console, "\n=== STARTING SERVER ===\n", "info")
+        # Disable buttons immediately for responsiveness
         self.start_btn.setEnabled(False)
         self.config_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
@@ -355,6 +352,11 @@ class VanillaRunController(BasePage):
 
         def start():
             try:
+                # Configure online-mode=false in thread to avoid UI freeze
+                self.server_manager.set_online_mode(False)
+
+                self._emit_log("\n=== STARTING SERVER ===\n", "info")
+
                 success = self.server_manager.start_server(
                     ram_mb=self.ram_mb,
                     log_callback=log_callback,

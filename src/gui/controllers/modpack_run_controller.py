@@ -78,7 +78,7 @@ class ModpackRunController(BasePage):
         self._thread_log_buffer = deque()
         self._log_lock = threading.Lock()
         self._log_timer = QTimer()
-        self._log_timer.setInterval(50)  # Process logs every 50ms
+        self._log_timer.setInterval(150)  # Process logs every 150ms - reduced UI load
         self._log_timer.timeout.connect(self._process_thread_logs)
         self._log_timer.start()  # Always running to check for new logs
 
@@ -92,8 +92,8 @@ class ModpackRunController(BasePage):
         # Get all pending logs (thread-safe)
         logs_to_process = []
         with self._log_lock:
-            # Take up to 50 logs at a time for server output
-            for _ in range(min(50, len(self._thread_log_buffer))):
+            # Take up to 10 logs at a time to reduce UI blocking
+            for _ in range(min(10, len(self._thread_log_buffer))):
                 if self._thread_log_buffer:
                     logs_to_process.append(self._thread_log_buffer.popleft())
 
@@ -395,21 +395,27 @@ class ModpackRunController(BasePage):
 
     def _start_server(self):
         """Start the modded server"""
+        print("[DEBUG] _start_server: INICIO", flush=True)
         if not self.server_manager:
+            print("[DEBUG] No server_manager", flush=True)
             return
 
-        # Get Minecraft version
+        # Get Minecraft version (quick check, should be cached)
+        print("[DEBUG] Detectando version MC...", flush=True)
         mc_version = None
         if self.server_path:
             mc_version = VersionDetector.detect_mc_version(self.server_path)
+        print(f"[DEBUG] MC version = {mc_version}", flush=True)
 
         if not mc_version:
             mc_version = "1.20"
             self._log(self.console, "\nCould not detect MC version, assuming Java 17+ required\n", "warning")
 
-        # Check Java compatibility
+        # Check Java compatibility - this may show a modal, must be in main thread
+        print("[DEBUG] Verificando Java...", flush=True)
         if self._check_and_get_java:
             java_executable = self._check_and_get_java(mc_version)
+            print(f"[DEBUG] Java = {java_executable}", flush=True)
             if not java_executable:
                 return
         else:
@@ -419,30 +425,14 @@ class ModpackRunController(BasePage):
         self.server_manager.java_executable = java_executable
         java_source = "system" if java_executable == "java" else "PyCraft"
         self._log(self.console, f"\nUsing {java_source} Java: {java_executable}\n", "info")
+        print("[DEBUG] Preparando para iniciar...", flush=True)
 
-        # Accept EULA if needed
-        eula_path = os.path.join(self.server_path, "eula.txt")
-        if os.path.exists(eula_path):
-            try:
-                with open(eula_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                if 'eula=false' in content:
-                    self._log(self.console, "Accepting EULA automatically...\n", "info")
-                    self.server_manager.accept_eula()
-            except Exception:
-                pass
-
-        # Configure online-mode=false
-        self.server_manager.set_online_mode(False)
-
-        # Detect server type
-        server_type = self.server_manager.detect_server_type()
-        if server_type == "unknown":
-            self._log(self.console, "Could not detect server type (Forge/Fabric).", "error")
-            return
-
-        self._log(self.console, "\n=== STARTING SERVER ===\n", "info")
         self._server_started_successfully = False
+
+        # Disable start, enable stop immediately for responsiveness
+        self.start_btn.setEnabled(False)
+        self.config_btn.setEnabled(False)
+        self.stop_btn.setEnabled(True)
 
         def on_stopped():
             try:
@@ -455,13 +445,42 @@ class ModpackRunController(BasePage):
                 self._server_started_successfully = True
             self._emit_log(line, "normal")
 
-        # Disable start, enable stop
-        self.start_btn.setEnabled(False)
-        self.config_btn.setEnabled(False)
-        self.stop_btn.setEnabled(True)
-
         def start():
+            print("[DEBUG] THREAD: Inicio", flush=True)
             try:
+                # Move file operations to thread to avoid UI freeze
+                # Accept EULA if needed
+                print("[DEBUG] THREAD: Verificando EULA...", flush=True)
+                eula_path = os.path.join(self.server_path, "eula.txt")
+                if os.path.exists(eula_path):
+                    try:
+                        with open(eula_path, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                        if 'eula=false' in content:
+                            self._emit_log("Accepting EULA automatically...\n", "info")
+                            self.server_manager.accept_eula()
+                    except Exception:
+                        pass
+                print("[DEBUG] THREAD: EULA OK", flush=True)
+
+                # Configure online-mode=false
+                print("[DEBUG] THREAD: set_online_mode...", flush=True)
+                self.server_manager.set_online_mode(False)
+                print("[DEBUG] THREAD: online_mode OK", flush=True)
+
+                # Detect server type
+                print("[DEBUG] THREAD: detect_server_type...", flush=True)
+                server_type = self.server_manager.detect_server_type()
+                print(f"[DEBUG] THREAD: server_type = {server_type}", flush=True)
+
+                if server_type == "unknown":
+                    self._emit_log("Could not detect server type (Forge/Fabric).\n", "error")
+                    self.server_started.emit(False)
+                    return
+
+                self._emit_log("\n=== STARTING SERVER ===\n", "info")
+
+                print(f"[DEBUG] THREAD: Iniciando {server_type}...", flush=True)
                 if server_type in ("forge", "fabric", "neoforge", "quilt"):
                     success = self.server_manager.start_modded_server(
                         server_type=server_type,
@@ -478,12 +497,16 @@ class ModpackRunController(BasePage):
                         detached=True,
                         on_stopped=on_stopped
                     )
+                print(f"[DEBUG] THREAD: success = {success}", flush=True)
                 self.server_started.emit(success)
             except Exception as e:
+                print(f"[DEBUG] THREAD: ERROR: {e}", flush=True)
                 self._emit_log(f"\n[ERROR] Failed to start server: {e}\n", "error")
                 self.server_started.emit(False)
 
+        print("[DEBUG] Lanzando thread...", flush=True)
         threading.Thread(target=start, daemon=True).start()
+        print("[DEBUG] Thread lanzado, FIN _start_server", flush=True)
 
     def on_server_started(self, success: bool):
         """Handle server started event (call from main thread)"""
