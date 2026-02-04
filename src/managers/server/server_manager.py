@@ -2127,7 +2127,6 @@ max-world-size=29999984
                             # Run installer with --installServer
                             install_cmd = [java_executable, "-Djava.awt.headless=true", "-jar", forge_jar, "--installServer"]
                             try:
-                                import subprocess
                                 creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                                 result = subprocess.run(
                                     install_cmd,

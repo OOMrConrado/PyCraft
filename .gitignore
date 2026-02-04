@@ -50,6 +50,13 @@ logs/
 *.tmp
 nul
 
+# Testing
+tests/
+pytest.ini
+
+# Personal notes
+reddit.md
+
 # Minecraft Server files
 server_test/
 test_servers/
