@@ -1,8 +1,19 @@
-# PyCraft - Minecraft Server Manager
+<h1 align="center">PyCraft</h1>
 
-**Español** | [English](README.md)
+<p align="center">
+  <strong>Minecraft Server Manager</strong><br/>
+  Una herramienta intuitiva para crear y gestionar servidores de Minecraft vanilla y con modpacks
+</p>
 
-**Una herramienta intuitiva para crear y gestionar servidores de Minecraft vanilla y con modpacks**
+<p align="center">
+  <strong>Español</strong> | <a href="README.md">English</a>
+</p>
+
+
+
+<p align="center">
+  <img width="250" height="250" alt="logo" src="https://github.com/user-attachments/assets/2fc1bd73-98b5-447f-b163-8f1e6fa88b09" />
+</p>
 
 PyCraft simplifica la creación de servidores de Minecraft, permitiéndote descargar, configurar e iniciar servidores vanilla o con modpacks de forma automática. Con soporte para Forge, Fabric, NeoForge, Quilt, y búsqueda integrada de modpacks de Modrinth.
 
@@ -36,6 +47,15 @@ PyCraft simplifica la creación de servidores de Minecraft, permitiéndote desca
 - **Editor de Config**: Editor integrado de server.properties (habilitado tras primera ejecución)
 - **Feedback Visual**: Animaciones de botones e indicadores de estado
 - **Operaciones Thread-safe**: Gestión confiable del servidor con threading apropiado
+
+## Capturas de Pantalla
+
+<p align="center">
+  <img width="700" alt="MainMenu" src="https://github.com/user-attachments/assets/047b8b87-97d6-4cee-b6eb-790f92a8a4c4" />
+  <br/>
+  <em>Interfaz principal</em>
+</p>
+
 
 ---
 
@@ -213,7 +233,7 @@ Este proyecto está bajo la Licencia MIT. Ver [LICENSE](LICENSE) para más detal
 ## Agradecimientos
 
 - [Mojang](https://www.minecraft.net/) - Por Minecraft
-- [Modrinth](https://modrinth.com/) - Por su excelente API de modpacks
+- [Modrinth](https://modrinth.com/) - Por su API de modpacks
 - [CurseForge](https://www.curseforge.com/) - Por su plataforma y API de modpacks
 - [PySide6](https://www.qt.io/qt-for-python) - Por el framework Qt
 - [QtAwesome](https://github.com/spyder-ide/qtawesome) - Por la biblioteca de iconos
