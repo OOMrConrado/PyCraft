@@ -10,6 +10,9 @@ class MinecraftAPIHandler:
     """Maneja las peticiones a la API de Mojang para obtener versiones de Minecraft"""
 
     VERSION_MANIFEST_URL = "https://launchermeta.mojang.com/mc/game/version_manifest.json"
+    # Minecraft 1.2.5 (released 2012-03-29) was the first version with an official
+    # server.jar in Mojang's manifest. Earlier versions cannot be installed as a server.
+    FIRST_SERVER_JAR_DATE = "2012-03-29"
 
     def __init__(self):
         self.versions_cache = None
@@ -33,10 +36,13 @@ class MinecraftAPIHandler:
         if not self.versions_cache:
             return []
 
-        # Filtrar solo las versiones tipo "release"
+        # Only keep releases that ship a server.jar (1.2.5+). Mojang never
+        # published an official server.jar for earlier releases, so we filter by
+        # release date to avoid showing versions that cannot be installed as a server.
         releases = [
             version for version in self.versions_cache.get("versions", [])
             if version.get("type") == "release"
+            and version.get("releaseTime", "") >= self.FIRST_SERVER_JAR_DATE
         ]
         return releases
 
