@@ -14,11 +14,15 @@ const CURSEFORGE_API_BASE = 'https://api.curseforge.com';
 const MINECRAFT_GAME_ID = '432';
 const MODPACK_CLASS_ID = '4471';
 
-// Rate limit configuration
+// Rate limit configuration.
+// Tuned for heavy but legitimate PyCraft usage:
+//   A 400-mod modpack install uses ~40 batch calls + ~400 file-info calls (~440/install).
+//   Power users testing ~10 modpacks/day stay well under 30k/day.
+// The global cap protects the CurseForge API key's 100k/day ceiling.
 const RATE_LIMITS = {
-  perIpPerMinute: 600,      // Allows fast modpack installation
-  perIpPerDay: 5000,        // Prevents individual abuse
-  globalPerDay: 85000,      // Protects CurseForge API limit (100k)
+  perIpPerMinute: 1000,     // Burst-friendly for parallel downloaders
+  perIpPerDay: 30000,       // Generous for heavy testers, still caps abuse at ~35% of global
+  globalPerDay: 85000,      // Protects CurseForge API limit (100k/day) with 15% safety margin
 };
 
 // Allowed endpoints (whitelist for security)
@@ -49,20 +53,19 @@ function getGlobalDayKey() {
   return `global:day:${day}`;
 }
 
-// Check and update rate limits
+// Check rate limits and return current counts. The caller is responsible for
+// scheduling the increment writes via ctx.waitUntil so they don't block the response.
 async function checkRateLimit(ip, kv) {
   const minuteKey = getMinuteKey(ip);
   const dayKey = getDayKey(ip);
   const globalKey = getGlobalDayKey();
 
-  // Get current counts
   const [minuteCount, dayCount, globalCount] = await Promise.all([
     kv.get(minuteKey).then(v => parseInt(v) || 0),
     kv.get(dayKey).then(v => parseInt(v) || 0),
     kv.get(globalKey).then(v => parseInt(v) || 0),
   ]);
 
-  // Check limits
   if (minuteCount >= RATE_LIMITS.perIpPerMinute) {
     return {
       allowed: false,
@@ -87,21 +90,26 @@ async function checkRateLimit(ip, kv) {
     };
   }
 
-  // Increment counters (fire and forget for performance)
-  await Promise.all([
-    kv.put(minuteKey, String(minuteCount + 1), { expirationTtl: 120 }),      // Expire after 2 min
-    kv.put(dayKey, String(dayCount + 1), { expirationTtl: 86400 }),          // Expire after 24h
-    kv.put(globalKey, String(globalCount + 1), { expirationTtl: 86400 }),    // Expire after 24h
-  ]);
-
   return {
     allowed: true,
+    counts: { minuteCount, dayCount, globalCount },
+    keys: { minuteKey, dayKey, globalKey },
     remaining: {
       minute: RATE_LIMITS.perIpPerMinute - minuteCount - 1,
       day: RATE_LIMITS.perIpPerDay - dayCount - 1,
       global: RATE_LIMITS.globalPerDay - globalCount - 1,
     },
   };
+}
+
+// Schedule the counter increments after the response is sent.
+function scheduleIncrement(ctx, kv, rateLimit) {
+  const { keys, counts } = rateLimit;
+  ctx.waitUntil(Promise.all([
+    kv.put(keys.minuteKey, String(counts.minuteCount + 1), { expirationTtl: 120 }),
+    kv.put(keys.dayKey, String(counts.dayCount + 1), { expirationTtl: 86400 }),
+    kv.put(keys.globalKey, String(counts.globalCount + 1), { expirationTtl: 86400 }),
+  ]));
 }
 
 function isAllowedPath(pathname) {
@@ -131,111 +139,118 @@ function getClientIP(request) {
          'unknown';
 }
 
+const CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, User-Agent',
+  'Access-Control-Max-Age': '86400',
+};
+
+function jsonResponse(body, status = 200, extraHeaders = {}) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      ...CORS_HEADERS,
+      ...extraHeaders,
+    },
+  });
+}
+
 export default {
-  async fetch(request, env) {
-    // Handle CORS preflight
+  async fetch(request, env, ctx) {
+    // CORS preflight
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        headers: {
-          'Access-Control-Allow-Origin': '*',
-          'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-          'Access-Control-Max-Age': '86400',
-        },
-      });
-    }
-
-    // Only allow GET and POST
-    if (!['GET', 'POST'].includes(request.method)) {
-      return new Response(JSON.stringify({ error: 'Method not allowed' }), {
-        status: 405,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Verify API key is configured
-    const apiKey = env.CURSEFORGE_API_KEY;
-    if (!apiKey) {
-      return new Response(JSON.stringify({ error: 'API Key not configured' }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      });
+      return new Response(null, { headers: CORS_HEADERS });
     }
 
     const url = new URL(request.url);
     const pathname = url.pathname;
 
-    // Verify path is allowed
-    if (!isAllowedPath(pathname)) {
-      return new Response(JSON.stringify({ error: 'Path not allowed' }), {
-        status: 403,
-        headers: { 'Content-Type': 'application/json' },
-      });
+    // Public health endpoint — no auth, no rate limit, useful for monitoring.
+    if (pathname === '/health' || pathname === '/') {
+      return jsonResponse({
+        status: 'ok',
+        service: 'pycraft-curseforge-proxy',
+        limits: {
+          perIpPerMinute: RATE_LIMITS.perIpPerMinute,
+          perIpPerDay: RATE_LIMITS.perIpPerDay,
+        },
+      }, 200, { 'Cache-Control': 'public, max-age=60' });
     }
 
-    // Validate search parameters
+    if (!['GET', 'POST'].includes(request.method)) {
+      return jsonResponse({ error: 'Method not allowed' }, 405);
+    }
+
+    // Soft User-Agent gate — enable by setting REQUIRE_PYCRAFT_UA="1" in the worker env.
+    // This is light protection: trivial to forge, but blocks casual scrapers that find the URL.
+    if (env.REQUIRE_PYCRAFT_UA === '1') {
+      const ua = request.headers.get('User-Agent') || '';
+      if (!ua.toLowerCase().includes('pycraft')) {
+        return jsonResponse({ error: 'Forbidden' }, 403);
+      }
+    }
+
+    // Verify API key is configured (server-side misconfiguration — generic message)
+    const apiKey = env.CURSEFORGE_API_KEY;
+    if (!apiKey) {
+      return jsonResponse({ error: 'Service unavailable' }, 503);
+    }
+
+    if (!isAllowedPath(pathname)) {
+      return jsonResponse({ error: 'Path not allowed' }, 403);
+    }
+
     const validation = validateSearchParams(url);
     if (!validation.valid) {
-      return new Response(JSON.stringify({ error: validation.error }), {
-        status: 400,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-      });
+      return jsonResponse({ error: validation.error }, 400);
     }
 
-    // Check rate limits
     const clientIP = getClientIP(request);
     const rateLimit = await checkRateLimit(clientIP, env.RATE_LIMIT);
 
     if (!rateLimit.allowed) {
-      return new Response(JSON.stringify({
-        error: rateLimit.error,
-        retryAfter: rateLimit.retryAfter,
-      }), {
-        status: 429,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-          'Retry-After': String(rateLimit.retryAfter),
-        },
-      });
+      return jsonResponse(
+        { error: rateLimit.error, retryAfter: rateLimit.retryAfter },
+        429,
+        { 'Retry-After': String(rateLimit.retryAfter) },
+      );
     }
 
-    // Build target URL
     const targetUrl = `${CURSEFORGE_API_BASE}${pathname}${url.search}`;
 
     try {
-      // Prepare headers for CurseForge
       const headers = {
         'Accept': 'application/json',
         'x-api-key': apiKey,
       };
 
-      // Prepare body if POST
       let body = null;
       if (request.method === 'POST') {
         headers['Content-Type'] = 'application/json';
         body = await request.text();
       }
 
-      // Make request to CurseForge
       const response = await fetch(targetUrl, {
         method: request.method,
-        headers: headers,
-        body: body,
+        headers,
+        body,
       });
 
-      // Get response
       const data = await response.text();
 
-      // Return with CORS headers and rate limit info
+      // Only count successful upstream calls against the budget — failures from
+      // CurseForge shouldn't punish the user.
+      if (response.ok) {
+        scheduleIncrement(ctx, env.RATE_LIMIT, rateLimit);
+      }
+
       return new Response(data, {
         status: response.status,
         headers: {
           'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
+          ...CORS_HEADERS,
           'Cache-Control': 'public, max-age=300',
           'X-RateLimit-Remaining-Minute': String(rateLimit.remaining.minute),
           'X-RateLimit-Remaining-Day': String(rateLimit.remaining.day),
@@ -243,16 +258,9 @@ export default {
       });
 
     } catch (error) {
-      return new Response(JSON.stringify({
-        error: 'Proxy error',
-        message: error.message
-      }), {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': '*',
-        },
-      });
+      // Don't leak internal error details to clients.
+      console.error('Upstream fetch failed:', error);
+      return jsonResponse({ error: 'Upstream request failed' }, 502);
     }
   },
 };

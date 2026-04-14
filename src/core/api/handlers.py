@@ -5,6 +5,15 @@ import os
 from pathlib import Path
 from urllib.parse import quote
 
+try:
+    from ..__version__ import __version__ as _PYCRAFT_VERSION
+except Exception:
+    _PYCRAFT_VERSION = "0.0.0"
+
+# User-Agent sent to the CurseForge proxy. The proxy can require it to contain
+# "PyCraft" (via REQUIRE_PYCRAFT_UA=1) to filter out casual scrapers.
+PYCRAFT_USER_AGENT = f"PyCraft/{_PYCRAFT_VERSION} (github.com/OOMrConrado/PyCraft)"
+
 
 class MinecraftAPIHandler:
     """Maneja las peticiones a la API de Mojang para obtener versiones de Minecraft"""
@@ -376,7 +385,8 @@ class CurseForgeAPI:
         """
         # API key is no longer needed - proxy handles it
         self.headers = {
-            "Accept": "application/json"
+            "Accept": "application/json",
+            "User-Agent": PYCRAFT_USER_AGENT,
         }
 
     def set_api_key(self, api_key: str):
